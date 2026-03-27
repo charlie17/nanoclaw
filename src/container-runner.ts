@@ -222,9 +222,16 @@ function buildVolumeMounts(
   return mounts;
 }
 
+// Change 3: Detect untrusted content that requires write tool stripping.
+// Checks for the frontmatter flag stamped by Change 2.
+function hasUntrustedContent(prompt: string): boolean {
+  return /trust:\s*untrusted/i.test(prompt);
+}
+
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  stripWriteTools?: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -246,6 +253,11 @@ function buildContainerArgs(
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  }
+
+  // Change 3: Signal agent-runner to strip write-capable tools when processing untrusted content
+  if (stripWriteTools) {
+    args.push('-e', 'NANOCLAW_STRIP_WRITE_TOOLS=1');
   }
 
   // Runtime-specific args for host gateway resolution
@@ -288,7 +300,12 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  // Change 3: Strip Write/Edit/Bash when main group processes untrusted (web-sourced) content
+  const stripWriteTools = input.isMain && hasUntrustedContent(input.prompt);
+  if (stripWriteTools) {
+    logger.info({ group: group.name }, 'Untrusted content detected — stripping write tools');
+  }
+  const containerArgs = buildContainerArgs(mounts, containerName, stripWriteTools);
 
   logger.debug(
     {

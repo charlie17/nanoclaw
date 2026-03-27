@@ -3,7 +3,7 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE, VAULT_RESEARCH_PATH } from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
@@ -23,6 +23,32 @@ export interface IpcDeps {
     registeredJids: Set<string>,
   ) => void;
   onTasksChanged: () => void;
+}
+
+// Change 2: Stamp untrusted frontmatter on every web-sourced file written by the host.
+// Called by the save_research handler — never called by container code.
+function stampUntrustedFrontmatter(content: string, query: string, sourceUrl?: string): string {
+  const stripped = content.replace(/^---\n[\s\S]*?\n---\n/, '');
+  const escape = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const lines = [
+    '---',
+    'source: web',
+    'trust: untrusted',
+    `retrieved: ${new Date().toISOString()}`,
+    `query: "${escape(query)}"`,
+    ...(sourceUrl ? [`url: "${escape(sourceUrl)}"`] : []),
+    '---',
+  ];
+  return lines.join('\n') + '\n' + stripped;
+}
+
+// Change 1 (sanitization): Rewrite inline images and flag bare external URLs.
+// Applied before writing any web-sourced file to vault. ~10 lines.
+function sanitizeWebContent(content: string): string {
+  let out = content.normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '');
+  out = out.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '[Image: $1]($2)');
+  out = out.replace(/(?<![(\[])(https?:\/\/\S+)/g, '⚠ external: $1');
+  return out;
 }
 
 let ipcWatcherRunning = false;
@@ -81,7 +107,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text);
+                  // Change 4: Wrap non-main group messages in structural XML.
+                  // Defense-in-depth signal: Daystrom can see research content is from Riker.
+                  const outText = isMain
+                    ? data.text
+                    : `<research-result source="${sourceGroup}" trust="untrusted">\n${data.text}\n</research-result>`;
+                  await deps.sendMessage(data.chatJid, outText);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
@@ -173,6 +204,11 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For save_research (Change 1)
+    filename?: string;
+    content?: string;
+    query?: string;
+    sourceUrl?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -461,6 +497,42 @@ export async function processTaskIpc(
         );
       }
       break;
+
+    // Change 1: Research-to-vault direct write.
+    // Host writes the file; the model never handles the save.
+    case 'save_research': {
+      if (isMain) {
+        logger.warn({ sourceGroup }, 'save_research blocked: only non-main groups may save research');
+        break;
+      }
+      if (!data.filename || !data.content || !data.query) {
+        logger.warn({ sourceGroup }, 'save_research: missing required fields (filename, content, query)');
+        break;
+      }
+      if (/[\0]/.test(data.filename)) {
+        logger.warn({ sourceGroup }, 'save_research: null byte in filename blocked');
+        break;
+      }
+      const researchDir = path.resolve(VAULT_RESEARCH_PATH, sourceGroup);
+      const targetPath = path.resolve(researchDir, data.filename);
+      if (!targetPath.startsWith(researchDir + path.sep) && targetPath !== researchDir) {
+        logger.warn({ targetPath, researchDir }, 'save_research: path traversal attempt blocked');
+        break;
+      }
+      try {
+        const stamped = stampUntrustedFrontmatter(
+          sanitizeWebContent(data.content),
+          data.query,
+          data.sourceUrl,
+        );
+        fs.mkdirSync(researchDir, { recursive: true });
+        fs.writeFileSync(targetPath, stamped, 'utf-8');
+        logger.info({ sourceGroup, targetPath }, 'Research file saved with untrusted frontmatter');
+      } catch (err) {
+        logger.error({ sourceGroup, file: data.filename, err }, 'Failed to save research file');
+      }
+      break;
+    }
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');

@@ -401,16 +401,25 @@ async function runQuery(
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
-      allowedTools: [
-        'Bash',
-        'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        'WebSearch', 'WebFetch',
-        'Task', 'TaskOutput', 'TaskStop',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'TodoWrite', 'ToolSearch', 'Skill',
-        'NotebookEdit',
-        'mcp__nanoclaw__*'
-      ],
+      // Change 3: Strip write-capable tools when host signals untrusted content is in context.
+      // NANOCLAW_STRIP_WRITE_TOOLS=1 is set by container-runner.ts when trust:untrusted detected.
+      allowedTools: (() => {
+        const all = [
+          'Bash',
+          'Read', 'Write', 'Edit', 'Glob', 'Grep',
+          'WebSearch', 'WebFetch',
+          'Task', 'TaskOutput', 'TaskStop',
+          'TeamCreate', 'TeamDelete', 'SendMessage',
+          'TodoWrite', 'ToolSearch', 'Skill',
+          'NotebookEdit',
+          'mcp__nanoclaw__*',
+        ];
+        if (process.env.NANOCLAW_STRIP_WRITE_TOOLS === '1') {
+          const strip = new Set(['Write', 'Edit', 'Bash']);
+          return all.filter(t => !strip.has(t));
+        }
+        return all;
+      })(),
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
