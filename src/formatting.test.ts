@@ -12,6 +12,12 @@ import {
 } from './router.js';
 import { NewMessage } from './types.js';
 
+function getTriggerPattern(trigger: string | undefined): RegExp {
+  if (!trigger) return TRIGGER_PATTERN;
+  const escaped = trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped}\\b`, 'i');
+}
+
 function makeMsg(overrides: Partial<NewMessage> = {}): NewMessage {
   return {
     id: '1',
