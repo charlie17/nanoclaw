@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 
 import {
   ASSISTANT_NAME,
-  getTriggerPattern,
   TRIGGER_PATTERN,
 } from './config.js';
 import {
