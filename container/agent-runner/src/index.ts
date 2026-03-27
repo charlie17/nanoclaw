@@ -368,11 +368,20 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
 
-  // Load global CLAUDE.md as additional system context (shared across all groups)
+  // Load CLAUDE.md into the system prompt for authoritative behavior enforcement.
+  // Project-level CLAUDE.md (loaded by SDK via cwd) has lower priority than the system prompt
+  // and can be overridden by strong model behavioral defaults. Injecting it explicitly ensures
+  // constraints (e.g. Phase 1 Riker/web restrictions) are respected.
+  //
+  // Non-main groups: inject global CLAUDE.md (shared crew context)
+  // Main group: inject the group's own CLAUDE.md (Daystrom-specific constraints)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
-  let globalClaudeMd: string | undefined;
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
-    globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
+  const groupClaudeMdPath = '/workspace/group/CLAUDE.md';
+  let systemPromptAppend: string | undefined;
+  if (containerInput.isMain && fs.existsSync(groupClaudeMdPath)) {
+    systemPromptAppend = fs.readFileSync(groupClaudeMdPath, 'utf-8');
+  } else if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
+    systemPromptAppend = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
   // Discover additional directories mounted at /workspace/extra/*
@@ -398,8 +407,8 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
+      systemPrompt: systemPromptAppend
+        ? { type: 'preset' as const, preset: 'claude_code' as const, append: systemPromptAppend }
         : undefined,
       // Trifecta tool enforcement. Two independent strip signals from container-runner.ts:
       //   NANOCLAW_STRIP_WEB_TOOLS=1   — set unconditionally for main group (Daystrom)
