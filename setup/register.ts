@@ -177,7 +177,7 @@ export async function run(args: string[]): Promise<void> {
           `ASSISTANT_NAME="${parsed.assistantName}"`,
         );
       } else {
-        envContent += `\nASSISTANT_NAME="${parsed.assistantName}"`;
+        envContent += `\nASSISTANT_NAME="${parsed.assistantName}"\n`;
       }
       fs.writeFileSync(envFile, envContent);
     } else {
