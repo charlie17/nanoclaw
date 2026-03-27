@@ -232,6 +232,7 @@ function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   stripWriteTools?: boolean,
+  stripWebTools?: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -255,9 +256,17 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
-  // Change 3: Signal agent-runner to strip write-capable tools when processing untrusted content
+  // Change 3: Strip write-capable tools when processing untrusted (web-sourced) content
   if (stripWriteTools) {
     args.push('-e', 'NANOCLAW_STRIP_WRITE_TOOLS=1');
+  }
+
+  // Trifecta enforcement: Main group (Daystrom) never has web access — that is Riker's role.
+  // This is unconditional and independent of untrusted-content detection.
+  // Together with container network isolation (Phase 1.5 required), this is the two-layer
+  // trifecta guarantee: no single container may have vault + web + external comms simultaneously.
+  if (stripWebTools) {
+    args.push('-e', 'NANOCLAW_STRIP_WEB_TOOLS=1');
   }
 
   // Runtime-specific args for host gateway resolution
@@ -305,7 +314,10 @@ export async function runContainerAgent(
   if (stripWriteTools) {
     logger.info({ group: group.name }, 'Untrusted content detected — stripping write tools');
   }
-  const containerArgs = buildContainerArgs(mounts, containerName, stripWriteTools);
+  // Trifecta enforcement: WebSearch/WebFetch stripped unconditionally from main group.
+  // Riker handles all web research; Daystrom must never have web access.
+  const stripWebTools = input.isMain;
+  const containerArgs = buildContainerArgs(mounts, containerName, stripWriteTools, stripWebTools);
 
   logger.debug(
     {

@@ -401,8 +401,11 @@ async function runQuery(
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
-      // Change 3: Strip write-capable tools when host signals untrusted content is in context.
-      // NANOCLAW_STRIP_WRITE_TOOLS=1 is set by container-runner.ts when trust:untrusted detected.
+      // Trifecta tool enforcement. Two independent strip signals from container-runner.ts:
+      //   NANOCLAW_STRIP_WEB_TOOLS=1   — set unconditionally for main group (Daystrom)
+      //                                  WebSearch/WebFetch are Riker's exclusive domain
+      //   NANOCLAW_STRIP_WRITE_TOOLS=1 — set when trust:untrusted content detected in prompt
+      //                                  Write/Edit/Bash stripped to prevent vault corruption
       allowedTools: (() => {
         const all = [
           'Bash',
@@ -414,11 +417,17 @@ async function runQuery(
           'NotebookEdit',
           'mcp__nanoclaw__*',
         ];
-        if (process.env.NANOCLAW_STRIP_WRITE_TOOLS === '1') {
-          const strip = new Set(['Write', 'Edit', 'Bash']);
-          return all.filter(t => !strip.has(t));
+        const strip = new Set<string>();
+        if (process.env.NANOCLAW_STRIP_WEB_TOOLS === '1') {
+          strip.add('WebSearch');
+          strip.add('WebFetch');
         }
-        return all;
+        if (process.env.NANOCLAW_STRIP_WRITE_TOOLS === '1') {
+          strip.add('Write');
+          strip.add('Edit');
+          strip.add('Bash');
+        }
+        return strip.size > 0 ? all.filter(t => !strip.has(t)) : all;
       })(),
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
