@@ -13,10 +13,22 @@ logs/
 groups/*
 !groups/main/
 !groups/global/
+!groups/daystrom/
+!groups/riker/
+!groups/troi/
+!groups/worf/
 groups/main/*
 groups/global/*
+groups/daystrom/*
+groups/riker/*
+groups/troi/*
+groups/worf/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
+!groups/daystrom/CLAUDE.md
+!groups/riker/CLAUDE.md
+!groups/troi/CLAUDE.md
+!groups/worf/CLAUDE.md
 
 # Secrets
 *.keys.json
