@@ -4,6 +4,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   TIMEZONE,
@@ -62,6 +63,11 @@ import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
+
+// Uhura: colon-prefix privacy routing pattern.
+// Spec ref: Biz Arch §4.2 — Colon-Prefix Privacy Routing
+// Natural prose ("Jen and I...") does NOT trigger — requires colon at message start.
+const PRIVATE_ROUTING_PATTERN = /^(timeline|health|jen|marriage|finance|private):/i;
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -563,6 +569,32 @@ async function main(): Promise<void> {
           return;
         }
       }
+      // Uhura: colon-prefix privacy routing — intercept before storage
+      if (!msg.is_bot_message && PRIVATE_ROUTING_PATTERN.test(trimmed)) {
+        const troiEntry = Object.entries(registeredGroups).find(
+          ([, g]) => g.folder === 'troi',
+        );
+        if (troiEntry) {
+          // Troi is registered (Phase 3+) — store under Troi's JID
+          storeMessage({ ...msg, chat_jid: troiEntry[0] });
+          logger.info({ chatJid, sender: msg.sender }, 'Uhura: routed to Troi');
+        } else {
+          // Phase 1: Troi not yet registered — hold message, notify user
+          const holdDir = path.join(DATA_DIR, 'troi-hold');
+          fs.mkdirSync(holdDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(holdDir, `${Date.now()}.json`),
+            JSON.stringify({ ...msg, routing: 'troi-hold', held_at: new Date().toISOString() }),
+            'utf-8',
+          );
+          logger.info({ chatJid, sender: msg.sender }, 'Uhura: private message held (Troi not yet registered)');
+          findChannel(channels, chatJid)
+            ?.sendMessage(chatJid, 'Private routing is configured but Troi comes online in Phase 3. Your message is held securely.')
+            ?.catch((err) => logger.warn({ err }, 'Uhura: failed to send hold notification'));
+        }
+        return; // Never store private messages under the main group JID
+      }
+
       storeMessage(msg);
     },
     onChatMetadata: (
