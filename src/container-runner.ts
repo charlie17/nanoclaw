@@ -21,8 +21,6 @@ import { logger } from './logger.js';
 import {
   CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
-  NANOCLAW_ISOLATED_HOST_IP,
-  NANOCLAW_ISOLATED_NETWORK,
   hostGatewayArgs,
   readonlyMountArgs,
   stopContainer,

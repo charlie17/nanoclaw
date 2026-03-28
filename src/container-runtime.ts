@@ -15,16 +15,6 @@ export const CONTAINER_RUNTIME_BIN = 'docker';
 export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
 
 /**
- * Trifecta network isolation: isolated Docker network for Daystrom.
- * Created with --internal (no default gateway), so containers have no
- * route to the internet regardless of tool strip or iptables state.
- * Host is reachable at NANOCLAW_ISOLATED_HOST_IP (the bridge gateway).
- * Create once: docker network create --internal --subnet 172.28.0.0/24 --gateway 172.28.0.1 nanoclaw-isolated
- */
-export const NANOCLAW_ISOLATED_NETWORK = 'nanoclaw-isolated';
-export const NANOCLAW_ISOLATED_HOST_IP = '172.28.0.1';
-
-/**
  * Address the credential proxy binds to.
  * Docker Desktop (macOS): 127.0.0.1 — the VM routes host.docker.internal to loopback.
  * Docker (Linux): bind to the docker0 bridge IP so only containers can reach it,
