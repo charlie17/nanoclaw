@@ -21,6 +21,8 @@ import { logger } from './logger.js';
 import {
   CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
+  NANOCLAW_ISOLATED_HOST_IP,
+  NANOCLAW_ISOLATED_NETWORK,
   hostGatewayArgs,
   readonlyMountArgs,
   stopContainer,
@@ -269,8 +271,17 @@ function buildContainerArgs(
     args.push('-e', 'NANOCLAW_STRIP_WEB_TOOLS=1');
   }
 
-  // Runtime-specific args for host gateway resolution
-  args.push(...hostGatewayArgs());
+  // Network isolation and host gateway resolution.
+  // Daystrom (stripWebTools) runs on an --internal Docker network with no internet gateway.
+  // Other containers use the default bridge with host-gateway magic.
+  if (stripWebTools) {
+    args.push('--network', NANOCLAW_ISOLATED_NETWORK);
+    // Internal networks have no default gateway; specify the bridge IP explicitly.
+    // The credential proxy binds to 0.0.0.0 so it is reachable at this address.
+    args.push(`--add-host=${CONTAINER_HOST_GATEWAY}:${NANOCLAW_ISOLATED_HOST_IP}`);
+  } else {
+    args.push(...hostGatewayArgs());
+  }
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
