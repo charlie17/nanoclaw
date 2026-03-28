@@ -21,6 +21,8 @@ import { logger } from './logger.js';
 import {
   CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
+  DAYSTROM_NET,
+  DAYSTROM_NET_GATEWAY,
   hostGatewayArgs,
   readonlyMountArgs,
   stopContainer,
@@ -276,11 +278,17 @@ function buildContainerArgs(
     args.push('-e', 'NANOCLAW_STRIP_WEB_TOOLS=1');
   }
 
-  // Runtime-specific args for host gateway resolution
-  // NOTE: Network isolation (Phase 1.5) is deferred — --internal network approach
-  // had Docker proxy connectivity issues. Will use iptables DOCKER-USER rules instead.
-  // See deviation log in Daystrom-Impl-Plan-Instructions.md.
-  args.push(...hostGatewayArgs());
+  // Network isolation (Phase 1.5, gate 1.5-G1).
+  // Daystrom containers run on daystrom-net (regular bridge). Internet is blocked by
+  // the DOCKER-USER DROP rule in setup-isolation-network.sh — the gateway (172.29.0.1)
+  // remains reachable so the credential proxy works. All other containers use the
+  // default bridge with normal internet access (Riker needs internet for research).
+  if (stripWebTools) {
+    args.push('--network', DAYSTROM_NET);
+    args.push(`--add-host=host.docker.internal:${DAYSTROM_NET_GATEWAY}`);
+  } else {
+    args.push(...hostGatewayArgs());
+  }
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),

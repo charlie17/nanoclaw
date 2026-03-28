@@ -15,6 +15,15 @@ export const CONTAINER_RUNTIME_BIN = 'docker';
 export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
 
 /**
+ * Trifecta network isolation: Daystrom containers run on this bridge.
+ * A regular (non-internal) bridge — host gateway is reachable so the credential
+ * proxy works. Internet is blocked at the host by the DOCKER-USER DROP rule in
+ * setup-isolation-network.sh. The gateway IP is where the proxy is reachable.
+ */
+export const DAYSTROM_NET = 'daystrom-net';
+export const DAYSTROM_NET_GATEWAY = '172.29.0.1';
+
+/**
  * Address the credential proxy binds to.
  * Docker Desktop (macOS): 127.0.0.1 — the VM routes host.docker.internal to loopback.
  * Docker (Linux): bind to the docker0 bridge IP so only containers can reach it,
