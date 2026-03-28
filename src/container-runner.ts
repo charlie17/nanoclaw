@@ -42,6 +42,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  model?: string; // Ensign Ro: override model (e.g. 'claude-haiku-4-5-20251001')
 }
 
 export interface ContainerOutput {
@@ -233,6 +234,7 @@ function buildContainerArgs(
   containerName: string,
   stripWriteTools?: boolean,
   stripWebTools?: boolean,
+  model?: string,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -254,6 +256,11 @@ function buildContainerArgs(
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  }
+
+  // Ensign Ro model routing: use group-configured or intent-detected model (e.g. Haiku)
+  if (model) {
+    args.push('-e', `CLAUDE_MODEL=${model}`);
   }
 
   // Change 3: Strip write-capable tools when processing untrusted (web-sourced) content
@@ -320,7 +327,9 @@ export async function runContainerAgent(
   // Trifecta enforcement: WebSearch/WebFetch stripped unconditionally from main group.
   // Riker handles all web research; Daystrom must never have web access.
   const stripWebTools = input.isMain;
-  const containerArgs = buildContainerArgs(mounts, containerName, stripWriteTools, stripWebTools);
+  // Ensign Ro: use input model override if set, else group-level config model
+  const model = input.model ?? group.containerConfig?.model;
+  const containerArgs = buildContainerArgs(mounts, containerName, stripWriteTools, stripWebTools, model);
 
   logger.debug(
     {

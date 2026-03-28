@@ -60,6 +60,7 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { startClaudeMdWatcher } from './claude-md-watcher.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -68,6 +69,15 @@ export { escapeXml, formatMessages } from './router.js';
 // Spec ref: Biz Arch §4.2 — Colon-Prefix Privacy Routing
 // Natural prose ("Jen and I...") does NOT trigger — requires colon at message start.
 const PRIVATE_ROUTING_PATTERN = /^(timeline|health|jen|marriage|finance|private):/i;
+
+// Ensign Ro: model IDs
+// Spec ref: Impl Plan §1.5-4
+const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
+
+// Ensign Ro: simple-intent patterns that route to Haiku.
+// Short messages matching these patterns are mechanical tasks — no deep reasoning needed.
+// Misclassification risk is one-directional (quality drop, not breakage).
+const ENSIGN_RO_PATTERN = /^(add |log |remember |shopping:|todo:|waiting:|remind |note )/i;
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -187,6 +197,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
 
+  // Ensign Ro: route simple mechanical commands to Haiku for cost savings.
+  // Pattern matches short action phrases — misclassification drops quality, not correctness.
+  // Only applies to main group (Daystrom). Other groups use their group-level model config.
+  const lastUserMessage = missedMessages[missedMessages.length - 1]?.content ?? '';
+  const strippedMessage = lastUserMessage.replace(TRIGGER_PATTERN, '').trim();
+  const isEnsignRo = isMainGroup && ENSIGN_RO_PATTERN.test(strippedMessage);
+  const ensignRoModel = isEnsignRo ? HAIKU_MODEL : undefined;
+
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
@@ -217,7 +235,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
+  const output = await runAgent(group, prompt, chatJid, ensignRoModel, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw =
@@ -225,9 +243,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           ? result.result
           : JSON.stringify(result.result);
       // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      let text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
       if (text) {
+        // Ensign Ro: append attribution footer for Haiku responses
+        if (isEnsignRo) {
+          text += '\n— Ensign Ro (H)';
+        }
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
       }
@@ -274,6 +296,7 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
+  model: string | undefined,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
@@ -325,6 +348,7 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        model,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -679,6 +703,7 @@ async function main(): Promise<void> {
       }
     },
   });
+  startClaudeMdWatcher();
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
