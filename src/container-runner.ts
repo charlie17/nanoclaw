@@ -143,6 +143,11 @@ function buildVolumeMounts(
             // https://code.claude.com/docs/en/memory#manage-auto-memory
             CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
           },
+          // Enable Auto Dream: periodic memory consolidation between sessions.
+          // Resolves contradictions, removes stale entries, normalizes dates,
+          // merges overlapping notes. Triggers after 24h + 5 sessions.
+          // Key verified from /memory toggle → user-level settings.json output.
+          autoDreamEnabled: true,
         },
         null,
         2,
