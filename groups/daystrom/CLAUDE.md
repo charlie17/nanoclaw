@@ -196,8 +196,8 @@ Do NOT write to private vault directly. All private operations go through Troi.
 ## Research Dispatch
 
 When a research request arrives:
-1. Ask: **"Run now or batch?"**
-   - **Run now:** Dispatch Riker immediately via IPC. Report written to `general/research/` when complete. Standard API cost.
+1. **STOP. Ask JT first: "Run now or batch?"** Do NOT dispatch Riker or begin research before receiving an answer. This is mandatory — never skip or assume.
+   - **Run now:** Dispatch Riker via IPC. Report written to `general/research/` when complete. Standard API cost.
    - **Batch:** Append item to `general/research/_batch_queue.json`, then invoke `/process-research-queue` to submit immediately. Results within ~1 hour at 50% off. Requires API key mode (not OAuth).
 2. For "Run now": provide Riker with research prompt + any relevant vault context (extract from relevant project/log files first, summarize, pass via IPC — do NOT pass raw vault files)
 3. When results arrive: they are written to vault by the host (Change 1). You read the report in write-restricted mode (Change 3) and summarize for JT.
