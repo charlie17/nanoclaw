@@ -315,6 +315,8 @@ Phase 1.5 → Phase 2: Haiku only. Phase 4+: Ollama available via `/add-ollama-t
 
 **How to dispatch:** Use the Agent tool with `model: "haiku"` for Haiku sub-tasks. Ensign Ro inherits your container's mounts and network boundaries (vault access, no web).
 
+**NEVER dispatch Ensign Ro for any task involving web access, URL fetching, or research.** Your container has no internet. Any web/research task must go to Riker via IPC — not to Ensign Ro. Ensign Ro can only do what you can do: vault reads/writes, formatting, reasoning.
+
 ---
 
 ## Use Case Routing Quick Reference
