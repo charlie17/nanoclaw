@@ -66,6 +66,7 @@ Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · 
 
 **Research:** `research/research-{YYYY-MM-DD}-{topic}.md` — e.g., `research-2026-03-22-hiking-trails-az.md`
 **Brainstorm:** `research/brainstorm-{YYYY-MM-DD}-{topic}.md`
+**Imported chat:** `research/chat-{YYYY-MM-DD}-{topic}.md` — e.g., `chat-2026-03-22-options-strategy.md`
 
 ### Entry ordering
 - Actions: latest entries at **top**
@@ -166,6 +167,17 @@ run-mode: immediate
 ```
 (`run-mode` values: `immediate` · `batch`)
 
+**Imported chat:**
+```yaml
+---
+type: imported-chat
+platform: claude.ai
+topic: "Options strategy brainstorm"
+date: 2026-03-22
+---
+```
+(`platform` values: `claude.ai` · `chatgpt` · `perplexity` · `other`)
+
 ---
 
 ## Cross-Writing: General → Private
@@ -232,6 +244,27 @@ Use when JT asks for an "Obsidian link" to a file. The link opens the file in Ob
 This is a standing behavioral rule. Be proactive — don't wait for JT to ask.
 
 **API mode awareness:** In API mode, longer sessions cost more (every message re-sends accumulated context as input tokens). Be more proactive about suggesting topic resets and session saves.
+
+---
+
+## `/import-chat` Command
+
+When JT says `/import-chat` or pastes a raw transcript for vault import:
+
+1. If no transcript in the message, ask: "Paste the transcript."
+2. Detect platform from speaker label patterns:
+   - `Human` / `Assistant` or `You` / `Claude` → `claude.ai`
+   - `You` / `ChatGPT` or `User` / `Assistant` (OpenAI style) → `chatgpt`
+   - Search-style Q&A with Perplexity attribution → `perplexity`
+3. Clean and format the transcript:
+   - Normalize speaker labels to `**JT:**` and `**{Platform}:**`
+   - Restore code blocks (wrap detected code in triple backticks with language hint)
+   - Strip UI artifacts: copy buttons, token counts, timestamps in margins, regeneration labels
+   - Preserve full conversation — no summarizing or cutting
+4. Generate a 2-4 word kebab-case topic slug from the conversation subject
+5. Write to `research/chat-{YYYY-MM-DD}-{topic-slug}.md` with correct frontmatter
+6. If JT specified a project: write to `projects/{name}/notes/chat-{YYYY-MM-DD}-{topic-slug}.md`
+7. Confirm with file path, Obsidian URI, and one-line topic summary
 
 ---
 
