@@ -56,6 +56,15 @@ When `WebFetch` returns a URL, pipe it through Defuddle first when possible. For
 
 ---
 
+## Vault Output Rules
+
+**Never include external image URLs in research output written to the vault.**
+No markdown image syntax (`![...](http://...)`) and no HTML `<img>` tags with external `src` values. Obsidian loads images on open — an external URL becomes a network request to a third-party server, which leaks JT's IP.
+
+Text descriptions of images and diagrams are fine. Obsidian-internal images (e.g., `![[image.png]]`) are fine if the file is already in the vault.
+
+---
+
 ## Ensign Ro Sub-Agent Rules
 
 For individual web page extraction (single-page fetch + parse), spawn a sub-agent with Haiku:
