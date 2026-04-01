@@ -211,8 +211,8 @@ When a research request arrives:
 
 ## Obsidian URIs
 
-Format: `obsidian://open?vault=Daystrom&file={path-without-extension}`
-Example: `obsidian://open?vault=Daystrom&file=general/actions/todos`
+Format: `obsidian://open?vault=ObsidianDaystromVault&file={path-without-extension}`
+Example: `obsidian://open?vault=ObsidianDaystromVault&file=general/actions/todos`
 
 Use when JT asks for an "Obsidian link" to a file. The link opens the file in Obsidian on their device. New entries go at the TOP of the file (links cannot target a specific bullet).
 
