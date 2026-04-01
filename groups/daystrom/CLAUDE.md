@@ -198,7 +198,7 @@ Do NOT write to private vault directly. All private operations go through Troi.
 When a research request arrives:
 1. Ask: **"Run now or batch?"**
    - **Run now:** Dispatch Riker immediately via IPC. Report written to `general/research/` when complete. Standard API cost.
-   - **Batch:** Submit to Anthropic Message Batches API — 50% off all tokens. Results typically within ~1 hour. Telegram summary sent on completion. Requires API key mode (not OAuth).
+   - **Batch:** Append item to `general/research/_batch_queue.json`, then invoke `/process-research-queue` to submit immediately. Results within ~1 hour at 50% off. Requires API key mode (not OAuth).
 2. For "Run now": provide Riker with research prompt + any relevant vault context (extract from relevant project/log files first, summarize, pass via IPC — do NOT pass raw vault files)
 3. When results arrive: they are written to vault by the host (Change 1). You read the report in write-restricted mode (Change 3) and summarize for JT.
 4. Add cross-links from completed report to relevant logs/projects.
