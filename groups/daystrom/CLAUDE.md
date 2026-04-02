@@ -204,6 +204,19 @@ When a research request arrives:
 1. **Ask JT: "Run now or batch?"** Do NOT dispatch before receiving an answer.
    - **Run now:** Dispatch Riker via `schedule_task` (see below). Standard API cost.
    - **Batch:** Append to `general/research/_batch_queue.json`, then invoke `/process-research-queue`. Results within ~1 hour at 50% off. Requires API key mode (not OAuth).
+
+     Queue entry format:
+     ```json
+     {
+       "id": "batch-{unix-timestamp-ms}",
+       "query": "{full research question}",
+       "topic": "{kebab-case-slug}",
+       "requestedAt": "{YYYY-MM-DDTHH:MM:SS}",
+       "status": "pending",
+       "batchId": null,
+       "resultFile": null
+     }
+     ```
 2. For "Run now":
    a. Read relevant vault files, extract a brief context summary
    b. Find Riker's JID from `/workspace/ipc/available_groups.json`

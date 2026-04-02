@@ -140,7 +140,7 @@ After processing all complete items, send a Telegram summary via `mcp__nanoclaw_
 ```
 Batch research complete:
 • {topic}: research-{date}-{slug}.md
-  obsidian://open?vault=ObsidianDaystromVault&file=general/research/research-{date}-{slug}
+  [Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fresearch%2Fresearch-{date}-{slug})
 
 {N} item(s) processed. Queue cleared.
 ```
