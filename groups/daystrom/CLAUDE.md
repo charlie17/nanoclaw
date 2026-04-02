@@ -201,39 +201,26 @@ Do NOT write to private vault directly. All private operations go through Troi.
 ## Research Dispatch
 
 When a research request arrives:
-1. **Ask JT: "Run now or batch?"** Do NOT dispatch before receiving an answer.
-   - **Run now:** Dispatch Riker via `schedule_task` (see below). Standard API cost.
-   - **Batch:** Append to `general/research/_batch_queue.json`, then invoke `/process-research-queue`. Results within ~1 hour at 50% off. Requires API key mode (not OAuth).
+1. **Always batch.** Append to `general/research/_batch_queue.json`, then invoke `/process-research-queue`. Results within ~1 hour at 50% off. Requires API key mode (not OAuth).
 
-     Queue entry format:
-     ```json
-     {
-       "id": "batch-{unix-timestamp-ms}",
-       "query": "{full research question}",
-       "topic": "{kebab-case-slug}",
-       "requestedAt": "{YYYY-MM-DDTHH:MM:SS}",
-       "status": "pending",
-       "batchId": null,
-       "resultFile": null
-     }
-     ```
-2. For "Run now":
-   a. Read relevant vault files, extract a brief context summary
-   b. Find Riker's JID from `/workspace/ipc/available_groups.json`
-   c. Call `mcp__nanoclaw__schedule_task`:
-      - `prompt`: research question + context summary + "When done: call save_research with the report, then write a plain-text summary as your final output."
-      - `schedule_type`: `once`
-      - `schedule_value`: current local timestamp (no Z suffix)
-      - `context_mode`: `isolated`
-      - `target_group_jid`: Riker's JID
-      - `return_to_caller`: `true` (results come back to this chat, not Riker's)
-   d. Acknowledge to JT: "Dispatched to Riker — summary will arrive when done."
-3. Riker runs independently. When complete: report saved to `general/research/riker/`, summary delivered to this chat by the host.
-4. Cross-link the report to relevant logs/projects.
+   Queue entry format:
+   ```json
+   {
+     "id": "batch-{unix-timestamp-ms}",
+     "query": "{full research question}",
+     "topic": "{kebab-case-slug}",
+     "requestedAt": "{YYYY-MM-DDTHH:MM:SS}",
+     "status": "pending",
+     "batchId": null,
+     "resultFile": null
+   }
+   ```
+2. Acknowledge to JT: "Queued for batch research — results within ~1 hour."
+3. Cross-link the report to relevant logs/projects when results arrive.
 
-**Trifecta-safe:** Extract vault context as text, pass in the prompt. Riker never sees vault files.
+<!-- "Run now" via Riker is on the roadmap — blocked on NanoClaw upstream fix for return_to_caller group-queue blocking (see daystrom-design/06-issues/nanoclaw-return-to-caller-blocking.md). -->
 
-**Reading list bookmark:** "Bookmark this — (link)" → dispatch Riker with prompt asking for page title only → append to `reference/reading-list.md`: `- Sat 3/22/26: [Page Title](url)`
+**Reading list bookmark:** "Bookmark this — (link)" → append to `reference/reading-list.md`: `- Sat 3/22/26: [Title](url)`. If the page title isn't provided, ask JT for it rather than dispatching a web fetch.
 
 ---
 
