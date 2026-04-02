@@ -81,6 +81,9 @@ Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · 
 - Reference (evergreen): `- Content`
 - Project todos: `- [ ] Item (Sat 3/22/26)`
 
+**Date is always today's date** — use the date the message was received, never the inferred event date. "Last night", "yesterday", etc. stay verbatim in the content and do NOT shift the date prefix backward.
+> "Went to museum last night" (received Thu 4/2/26) → `- Thu 4/2/26: Went to museum last night`
+
 ### Tab indentation
 All sub-bullets in vault files use tab characters (one tab per level). Never spaces. See global §1.7.
 
