@@ -94,11 +94,27 @@ Batch mode is API-key only (not OAuth subscription).
 
 ---
 
-## IPC Response Format
+## Saving Results to Vault
 
-When research is complete, write results to your IPC output directory. The host picks this up and writes to the vault.
+When research is complete, call `mcp__nanoclaw__save_research` to write the report. The host writes the file — you never touch the vault filesystem.
 
-Structure your output as a clean research report in markdown:
+```
+mcp__nanoclaw__save_research:
+  filename:   "research-{YYYY-MM-DD}-{topic-slug}.md"   ← e.g. "research-2026-04-01-hiking-trails-az.md"
+  content:    [your full report in the format below]
+  query:      [the original research topic / question]
+  source_url: [primary URL, optional]
+```
+
+The host stamps untrusted frontmatter and sanitizes images automatically. You do NOT add frontmatter yourself.
+
+After calling `save_research`, write a 3–5 sentence plain-text summary as your final output. The host delivers your text output to JT automatically — do NOT use `send_message` for this (it will be blocked by cross-group IPC authorization).
+
+---
+
+## Report Format
+
+Structure the content argument as:
 
 ```markdown
 # Research: {Topic}
@@ -124,7 +140,7 @@ Requirements:
 - Use section headers to organize findings by subtopic
 - Executive summary first, details second
 - For multi-source research: attribute each finding to its source inline
-- External URLs: leave as-is in your output (the host sanitizes them — image embedding protection via Change 1)
+- External URLs: leave as-is in your content (the host sanitizes them — image embedding protection via Change 1)
 
 ---
 
@@ -150,9 +166,10 @@ The `trust: untrusted` field signals to Daystrom's read pipeline (Change 3) to a
 
 ## Output Location
 
-You do not choose the output location. The host writes your results to:
-- `general/research/research-{YYYY-MM-DD}-{topic}.md` (standard)
-- `general/projects/{name}/notes/{name}-{YYYY-MM-DD}-{topic}.md` (when project-specific, as indicated in the research prompt)
+The host writes your results to:
+- `general/research/riker/research-{YYYY-MM-DD}-{topic-slug}.md` (standard — the `riker/` subfolder is fixed by the host's path policy)
+
+Pass the filename as `research-{YYYY-MM-DD}-{topic-slug}.md` to `save_research`. The host prepends the `riker/` directory automatically.
 
 ---
 

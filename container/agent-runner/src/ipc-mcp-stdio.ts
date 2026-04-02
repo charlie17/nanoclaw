@@ -91,6 +91,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
     context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
     target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
+    return_to_caller: z.boolean().optional().describe('(Main group only) If true, task results are sent back to your chat instead of the target group\'s chat. Use when dispatching to worker groups that have no chat of their own.'),
     script: z.string().optional().describe('Optional bash script to run before waking the agent. Script must output JSON on the last line of stdout: { "wakeAgent": boolean, "data"?: any }. If wakeAgent is false, the agent is not called. Test your script with bash -c "..." before scheduling.'),
   },
   async (args) => {
@@ -130,6 +131,9 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 
     // Non-main groups can only schedule for themselves
     const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+    // return_to_caller: task results go to the caller's chat, not the target group's.
+    // Only main can use this. Default: results go to target group (stock behavior).
+    const returnJid = isMain && args.return_to_caller ? chatJid : undefined;
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -142,6 +146,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       schedule_value: args.schedule_value,
       context_mode: args.context_mode || 'group',
       targetJid,
+      returnJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),
     };
@@ -333,6 +338,47 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 
     return {
       content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
+    };
+  },
+);
+
+server.tool(
+  'save_research',
+  `Save your completed research report to the vault. The host writes the file — you never access vault filesystem directly.
+
+The host will:
+1. Strip external image URLs and flag bare external links
+2. Add untrusted frontmatter (source, trust, retrieved, query fields)
+3. Write to vault/general/research/riker/{filename}
+
+After calling save_research, use send_message to deliver a brief summary to JT.`,
+  {
+    filename: z.string().describe('Output filename. Format: research-{YYYY-MM-DD}-{topic-slug}.md (e.g., "research-2026-04-01-hiking-trails-az.md")'),
+    content: z.string().describe('Full research report in markdown. See IPC Response Format in your CLAUDE.md for the required structure.'),
+    query: z.string().describe('The original research query (used in vault frontmatter)'),
+    source_url: z.string().optional().describe('Primary source URL if applicable'),
+  },
+  async (args) => {
+    if (isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'save_research is for non-main groups only (Riker). Daystrom cannot call this directly.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'save_research',
+      filename: args.filename,
+      content: args.content,
+      query: args.query,
+      sourceUrl: args.source_url,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Research queued for vault write: ${args.filename}. File will appear at vault/general/research/riker/${args.filename} shortly.` }],
     };
   },
 );

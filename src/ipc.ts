@@ -197,6 +197,7 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
+    returnJid?: string; // schedule_task: override chat_jid for result delivery (main only)
     // For register_group
     jid?: string;
     name?: string;
@@ -292,10 +293,13 @@ export async function processTaskIpc(
           data.context_mode === 'group' || data.context_mode === 'isolated'
             ? data.context_mode
             : 'isolated';
+        // returnJid: main can override where results are delivered (e.g., dispatch
+        // a worker group but receive results back in the caller's chat).
+        const chatJid = (isMain && data.returnJid) ? data.returnJid : targetJid;
         createTask({
           id: taskId,
           group_folder: targetFolder,
-          chat_jid: targetJid,
+          chat_jid: chatJid,
           prompt: data.prompt,
           script: data.script || null,
           schedule_type: scheduleType,
