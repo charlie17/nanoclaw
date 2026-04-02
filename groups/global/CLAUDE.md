@@ -28,6 +28,11 @@ Do NOT send an acknowledgment for instant replies (greetings, simple questions a
 Log entries are stored **exactly as submitted** — no modification, enrichment, reformatting, or editorial additions. Write what JT said, nothing more.
 Exception: JT explicitly asks to modify, summarize, or enhance an entry.
 
+**Entry date is always today** — the date prefix in log, action, and reference entries is always the date the message was received (i.e., today), never an inferred event date. If JT says "last night", "yesterday", or names a past date in the content, those words stay verbatim in the content text — they do NOT change the entry date prefix.
+> JT: "Saw Devotchka concert last night" (sent Thu 4/2/26)
+> Correct: `- Thu 4/2/26: Saw Devotchka concert last night`
+> Wrong:   `- Wed 4/1/26: Saw Devotchka concert`
+
 ### 1.2 Confirm Before Splitting
 When a message has dual nature (e.g., both a log entry and an action item), recognize this and prompt for quick confirmation before splitting into two writes. Do not split automatically, do not silently ignore the secondary intent.
 > JT: "Took Pops to the doctor, need to follow up on bloodwork"

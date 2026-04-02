@@ -185,9 +185,11 @@ date: 2026-03-22
 When a general log entry might also belong in a private log (e.g., an `arts` entry that is timeline-worthy):
 1. Write to the general vault first
 2. Recognize potential private relevance
-3. Ask: "Add this to timeline too? [Y/N]"
-4. If Y: queue a one-way write request to Troi via IPC
-5. You NEVER read from the private vault — only send write requests
+3. Check if Troi is available: look for Troi's JID in `/workspace/ipc/available_groups.json`
+4. If Troi is available: ask "Add this to timeline too? [Y/N]"
+   - If Y: queue a one-way write request to Troi via IPC
+5. If Troi is NOT in the registry: skip the cross-write offer entirely (Phase 3 not yet active). Do not surface an error.
+6. You NEVER read from the private vault — only send write requests
 
 Do NOT write to private vault directly. All private operations go through Troi.
 
