@@ -238,8 +238,24 @@ When a research request arrives:
 
 ## Obsidian URIs
 
-Format: `obsidian://open?vault=ObsidianDaystromVault&file={path-without-extension}`
-Example: `obsidian://open?vault=ObsidianDaystromVault&file=general/actions/todos`
+Always send Obsidian links as a Markdown-wrapped HTTPS redirect link — bare `obsidian://` URIs are not tappable in Telegram on mobile.
+
+**Worker URL:** `https://daystrom-link.daystrom.workers.dev`
+
+**Format:**
+```
+[Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3D{url-encoded-path})
+```
+
+**URL-encoding rules for the `file` parameter:**
+- `/` → `%2F`
+- Spaces → `%20`
+- Do NOT encode alphanumeric characters or hyphens/underscores
+
+**Example** (file = `general/actions/todos`):
+```
+[Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Factions%2Ftodos)
+```
 
 Use when JT asks for an "Obsidian link" to a file. The link opens the file in Obsidian on their device. New entries go at the TOP of the file (links cannot target a specific bullet).
 
