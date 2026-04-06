@@ -31,6 +31,8 @@ export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
   model?: string;   // Override model for this group (e.g. 'claude-haiku-4-5-20251001')
+  network?: string;  // Docker network name (e.g. 'troi-net'). Default: daystrom-net or bridge.
+  baseUrl?: string;  // Override ANTHROPIC_BASE_URL (e.g. 'http://ollama:11434/v1'). Default: credential proxy.
 }
 
 export interface RegisteredGroup {

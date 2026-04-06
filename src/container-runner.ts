@@ -242,27 +242,36 @@ function buildContainerArgs(
   stripWriteTools?: boolean,
   stripWebTools?: boolean,
   model?: string,
+  baseUrl?: string,
+  network?: string,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Route API traffic through the credential proxy (containers never see real secrets)
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-  );
-
-  // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
-  const authMode = detectAuthMode();
-  if (authMode === 'api-key') {
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+  if (baseUrl) {
+    // Ollama (or other local model) path: point directly at the model endpoint,
+    // no credential proxy needed. Ollama doesn't validate the API key.
+    args.push('-e', `ANTHROPIC_BASE_URL=${baseUrl}`);
+    args.push('-e', 'ANTHROPIC_API_KEY=ollama');
   } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    // Route API traffic through the credential proxy (containers never see real secrets)
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    );
+
+    // Mirror the host's auth method with a placeholder value.
+    // API key mode: SDK sends x-api-key, proxy replaces with real key.
+    // OAuth mode:   SDK exchanges placeholder token for temp API key,
+    //               proxy injects real OAuth token on that exchange request.
+    const authMode = detectAuthMode();
+    if (authMode === 'api-key') {
+      args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+    } else {
+      args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    }
   }
 
   // Ensign Ro model routing: use group-configured or intent-detected model (e.g. Haiku)
@@ -288,7 +297,10 @@ function buildContainerArgs(
   // the DOCKER-USER DROP rule in setup-isolation-network.sh — the gateway (172.29.0.1)
   // remains reachable so the credential proxy works. All other containers use the
   // default bridge with normal internet access (Riker needs internet for research).
-  if (stripWebTools) {
+  // Groups with a custom network (e.g. troi-net) use it directly — no gateway needed.
+  if (network) {
+    args.push('--network', network);
+  } else if (stripWebTools) {
     args.push('--network', DAYSTROM_NET);
     args.push(`--add-host=host.docker.internal:${DAYSTROM_NET_GATEWAY}`);
   } else {
@@ -342,7 +354,7 @@ export async function runContainerAgent(
   const stripWebTools = input.isMain;
   // Ensign Ro: use input model override if set, else group-level config model
   const model = input.model ?? group.containerConfig?.model;
-  const containerArgs = buildContainerArgs(mounts, containerName, stripWriteTools, stripWebTools, model);
+  const containerArgs = buildContainerArgs(mounts, containerName, stripWriteTools, stripWebTools, model, group.containerConfig?.baseUrl, group.containerConfig?.network);
 
   logger.debug(
     {
