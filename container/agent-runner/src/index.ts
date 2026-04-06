@@ -400,10 +400,22 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Per-group model override (e.g. Troi → Mistral via Ollama).
+  // The host's container-runner.ts injects CLAUDE_MODEL when group.containerConfig.model is set.
+  // The SDK does NOT honor a `model` key in `.claude/settings.json` (verified empirically 2026-04-06):
+  // settingSources reads project settings but `model` is not among the honored keys at the query layer.
+  // The only reliable per-query model override is to pass `model` directly in query() options.
+  // When CLAUDE_MODEL is unset, omit the option entirely so the SDK uses its default Claude model.
+  const modelOverride = process.env.CLAUDE_MODEL || undefined;
+  if (modelOverride) {
+    log(`Model override from CLAUDE_MODEL: ${modelOverride}`);
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
       cwd: '/workspace/group',
+      ...(modelOverride ? { model: modelOverride } : {}),
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
