@@ -342,12 +342,20 @@ export async function runContainerAgent(
   // JT: Source: charlie17/nanoclaw commit 15e7d62.
   const stripWriteTools = input.isMain && hasUntrustedContent(input.prompt);
   if (stripWriteTools) {
-    logger.info({ group: group.name }, 'Untrusted content detected — stripping write tools');
+    logger.info(
+      { group: group.name },
+      'Untrusted content detected — stripping write tools',
+    );
   }
   // JT: Trifecta — WebSearch/WebFetch stripped unconditionally for main group.
   // JT: Source: charlie17/nanoclaw commit f0b7efe.
   const stripWebTools = input.isMain;
-  const containerArgs = buildContainerArgs(mounts, containerName, stripWriteTools, stripWebTools);
+  const containerArgs = buildContainerArgs(
+    mounts,
+    containerName,
+    stripWriteTools,
+    stripWebTools,
+  );
 
   logger.debug(
     {
