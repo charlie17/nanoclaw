@@ -18,9 +18,12 @@ import {
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
+// JT: Trifecta network isolation constants (4d2827c).
 import {
   CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
+  DAYSTROM_NET,
+  DAYSTROM_NET_GATEWAY,
   hostGatewayArgs,
   readonlyMountArgs,
   stopContainer,
@@ -241,9 +244,17 @@ function buildVolumeMounts(
   return mounts;
 }
 
+// JT: Trifecta Change 3 — detect untrusted content that requires write-tool stripping.
+// JT: Source: charlie17/nanoclaw commit 15e7d62 (custom/daystrom-v1-archive).
+function hasUntrustedContent(prompt: string): boolean {
+  return /trust:\s*untrusted/i.test(prompt);
+}
+
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  stripWriteTools?: boolean,
+  stripWebTools?: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -267,8 +278,28 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
-  // Runtime-specific args for host gateway resolution
-  args.push(...hostGatewayArgs());
+  // JT: Trifecta Change 3 — strip write-capable tools when processing untrusted content.
+  // JT: Source: charlie17/nanoclaw commit 15e7d62.
+  if (stripWriteTools) {
+    args.push('-e', 'NANOCLAW_STRIP_WRITE_TOOLS=1');
+  }
+
+  // JT: Trifecta — strip web tools unconditionally for main group (Daystrom).
+  // JT: WebSearch/WebFetch are Riker's exclusive domain — Daystrom must never have web access.
+  // JT: Source: charlie17/nanoclaw commit f0b7efe.
+  if (stripWebTools) {
+    args.push('-e', 'NANOCLAW_STRIP_WEB_TOOLS=1');
+  }
+
+  // JT: Trifecta network isolation (Phase 1.5 gate 1.5-G1).
+  // JT: Daystrom containers run on daystrom-net; internet blocked by DOCKER-USER DROP.
+  // JT: Source: charlie17/nanoclaw commit 4d2827c.
+  if (stripWebTools) {
+    args.push('--network', DAYSTROM_NET);
+    args.push(`--add-host=host.docker.internal:${DAYSTROM_NET_GATEWAY}`);
+  } else {
+    args.push(...hostGatewayArgs());
+  }
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
@@ -307,7 +338,16 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  // JT: Trifecta Change 3 — strip Write/Edit/Bash when main group processes untrusted content.
+  // JT: Source: charlie17/nanoclaw commit 15e7d62.
+  const stripWriteTools = input.isMain && hasUntrustedContent(input.prompt);
+  if (stripWriteTools) {
+    logger.info({ group: group.name }, 'Untrusted content detected — stripping write tools');
+  }
+  // JT: Trifecta — WebSearch/WebFetch stripped unconditionally for main group.
+  // JT: Source: charlie17/nanoclaw commit f0b7efe.
+  const stripWebTools = input.isMain;
+  const containerArgs = buildContainerArgs(mounts, containerName, stripWriteTools, stripWebTools);
 
   logger.debug(
     {

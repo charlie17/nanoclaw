@@ -449,27 +449,47 @@ async function runQuery(
             append: globalClaudeMd,
           }
         : undefined,
-      allowedTools: [
-        'Bash',
-        'Read',
-        'Write',
-        'Edit',
-        'Glob',
-        'Grep',
-        'WebSearch',
-        'WebFetch',
-        'Task',
-        'TaskOutput',
-        'TaskStop',
-        'TeamCreate',
-        'TeamDelete',
-        'SendMessage',
-        'TodoWrite',
-        'ToolSearch',
-        'Skill',
-        'NotebookEdit',
-        'mcp__nanoclaw__*',
-      ],
+      // JT: Trifecta tool enforcement — two independent strip signals from container-runner.ts.
+      // JT: Source: charlie17/nanoclaw commit f0b7efe (custom/daystrom-v1-archive).
+      // Trifecta tool enforcement. Two independent strip signals from container-runner.ts:
+      //   NANOCLAW_STRIP_WEB_TOOLS=1   — set unconditionally for main group (Daystrom)
+      //                                  WebSearch/WebFetch are Riker's exclusive domain
+      //   NANOCLAW_STRIP_WRITE_TOOLS=1 — set when trust:untrusted content detected in prompt
+      //                                  Write/Edit/Bash stripped to prevent vault corruption
+      allowedTools: (() => {
+        const all = [
+          'Bash',
+          'Read',
+          'Write',
+          'Edit',
+          'Glob',
+          'Grep',
+          'WebSearch',
+          'WebFetch',
+          'Task',
+          'TaskOutput',
+          'TaskStop',
+          'TeamCreate',
+          'TeamDelete',
+          'SendMessage',
+          'TodoWrite',
+          'ToolSearch',
+          'Skill',
+          'NotebookEdit',
+          'mcp__nanoclaw__*',
+        ];
+        const strip = new Set<string>();
+        if (process.env.NANOCLAW_STRIP_WEB_TOOLS === '1') {
+          strip.add('WebSearch');
+          strip.add('WebFetch');
+        }
+        if (process.env.NANOCLAW_STRIP_WRITE_TOOLS === '1') {
+          strip.add('Write');
+          strip.add('Edit');
+          strip.add('Bash');
+        }
+        return strip.size > 0 ? all.filter((t) => !strip.has(t)) : all;
+      })(),
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
