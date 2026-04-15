@@ -244,16 +244,9 @@ function buildVolumeMounts(
   return mounts;
 }
 
-// JT: Trifecta Change 3 — detect untrusted content that requires write-tool stripping.
-// JT: Source: charlie17/nanoclaw commit 15e7d62 (custom/daystrom-v1-archive).
-function hasUntrustedContent(prompt: string): boolean {
-  return /trust:\s*untrusted/i.test(prompt);
-}
-
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
-  stripWriteTools?: boolean,
   stripWebTools?: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
@@ -276,12 +269,6 @@ function buildContainerArgs(
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
-  }
-
-  // JT: Trifecta Change 3 — strip write-capable tools when processing untrusted content.
-  // JT: Source: charlie17/nanoclaw commit 15e7d62.
-  if (stripWriteTools) {
-    args.push('-e', 'NANOCLAW_STRIP_WRITE_TOOLS=1');
   }
 
   // JT: Trifecta — strip web tools unconditionally for main group (Daystrom).
@@ -338,22 +325,12 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  // JT: Trifecta Change 3 — strip Write/Edit/Bash when main group processes untrusted content.
-  // JT: Source: charlie17/nanoclaw commit 15e7d62.
-  const stripWriteTools = input.isMain && hasUntrustedContent(input.prompt);
-  if (stripWriteTools) {
-    logger.info(
-      { group: group.name },
-      'Untrusted content detected — stripping write tools',
-    );
-  }
   // JT: Trifecta — WebSearch/WebFetch stripped unconditionally for main group.
   // JT: Source: charlie17/nanoclaw commit f0b7efe.
   const stripWebTools = input.isMain;
   const containerArgs = buildContainerArgs(
     mounts,
     containerName,
-    stripWriteTools,
     stripWebTools,
   );
 
