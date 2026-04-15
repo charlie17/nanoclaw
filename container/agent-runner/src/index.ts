@@ -452,7 +452,6 @@ async function runQuery(
       // JT: Trifecta tool enforcement — strip web tools unconditionally for main (Daystrom).
       // JT: Source: charlie17/nanoclaw commit f0b7efe (custom/daystrom-v1-archive).
       //   NANOCLAW_STRIP_WEB_TOOLS=1 — set unconditionally for main group
-      //                                WebSearch/WebFetch are Riker's exclusive domain
       allowedTools: (() => {
         const all = [
           'Bash',

@@ -272,7 +272,6 @@ function buildContainerArgs(
   }
 
   // JT: Trifecta — strip web tools unconditionally for main group (Daystrom).
-  // JT: WebSearch/WebFetch are Riker's exclusive domain — Daystrom must never have web access.
   // JT: Source: charlie17/nanoclaw commit f0b7efe.
   if (stripWebTools) {
     args.push('-e', 'NANOCLAW_STRIP_WEB_TOOLS=1');
