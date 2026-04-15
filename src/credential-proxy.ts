@@ -53,9 +53,7 @@ function checkToolsAndChoice(
         'type' in tool &&
         typeof (tool as Record<string, unknown>).type === 'string'
       ) {
-        const typeNormalized = String(
-          (tool as Record<string, unknown>).type,
-        )
+        const typeNormalized = String((tool as Record<string, unknown>).type)
           .trim()
           .toLowerCase();
         if (WEB_SEARCH_RE.test(typeNormalized)) {
