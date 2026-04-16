@@ -317,7 +317,10 @@ export class WebChannel implements Channel {
     try {
       validateBridgeConfig(NANOCLAW_WEB_HOST, NANOCLAW_TOKEN); // D-S1.1
     } catch (err) {
-      logger.warn({ host: NANOCLAW_WEB_HOST }, '[bridge] Refusing to start: NANOCLAW_TOKEN required on non-loopback bind');
+      logger.warn(
+        { host: NANOCLAW_WEB_HOST },
+        '[bridge] Refusing to start: NANOCLAW_TOKEN required on non-loopback bind',
+      );
       throw err;
     }
     this.server = http.createServer((req, res) => {
@@ -397,9 +400,7 @@ export class WebChannel implements Channel {
     const now = Date.now();
     const rec = this.authAttempts.get(ip);
     if (rec && now < rec.resetAt && rec.count >= RATE_LIMIT_MAX) {
-      res
-        .writeHead(429, { 'Retry-After': '60' })
-        .end('Too Many Requests');
+      res.writeHead(429, { 'Retry-After': '60' }).end('Too Many Requests');
       return false;
     }
 
@@ -441,7 +442,10 @@ export class WebChannel implements Channel {
         const oldest = this.authAttempts.keys().next().value;
         if (oldest !== undefined) this.authAttempts.delete(oldest);
       }
-      this.authAttempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+      this.authAttempts.set(ip, {
+        count: 1,
+        resetAt: now + RATE_LIMIT_WINDOW_MS,
+      });
     }
   }
 
@@ -556,7 +560,9 @@ export class WebChannel implements Channel {
   ): Promise<void> {
     if (!NANOCLAW_TOKEN) {
       // Auth disabled — cookie not needed
-      res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}');
+      res
+        .writeHead(200, { 'Content-Type': 'application/json' })
+        .end('{"ok":true}');
       return;
     }
     let body: string;
@@ -596,11 +602,7 @@ export class WebChannel implements Channel {
     res.end('{"ok":true}');
   }
 
-  private handleSse(
-    req: IncomingMessage,
-    res: ServerResponse,
-    url: URL,
-  ): void {
+  private handleSse(req: IncomingMessage, res: ServerResponse, url: URL): void {
     const raw = url.searchParams.get('sid');
     const sid = raw === null ? 'default' : sanitizeSid(raw);
     if (sid === null) {

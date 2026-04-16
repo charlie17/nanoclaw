@@ -1,6 +1,14 @@
 import http from 'http';
 import type { AddressInfo } from 'net';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 // ── Mocks (must precede all imports from mocked modules) ──────────────────────
 
@@ -28,7 +36,12 @@ vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Daystrom',
 }));
 
-import { checkToken, sanitizeSid, validateBridgeConfig, WebChannel } from './web.js';
+import {
+  checkToken,
+  sanitizeSid,
+  validateBridgeConfig,
+  WebChannel,
+} from './web.js';
 import type { ChannelOpts } from './registry.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -45,7 +58,11 @@ function req(
   port: number,
   opts: http.RequestOptions,
   body?: string,
-): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
+): Promise<{
+  status: number;
+  headers: http.IncomingHttpHeaders;
+  body: string;
+}> {
   return new Promise((resolve, reject) => {
     const r = http.request({ hostname: '127.0.0.1', port, ...opts }, (res) => {
       const chunks: Buffer[] = [];
@@ -151,7 +168,11 @@ describe('WebChannel HTTP', () => {
   beforeAll(async () => {
     channel = new WebChannel(makeOpts());
     await channel.connect();
-    port = ((channel as unknown as { server: http.Server }).server.address() as AddressInfo).port;
+    port = (
+      (
+        channel as unknown as { server: http.Server }
+      ).server.address() as AddressInfo
+    ).port;
   });
 
   afterAll(async () => {
@@ -167,7 +188,9 @@ describe('WebChannel HTTP', () => {
   it('GET / returns 200 + CSP header without auth', async () => {
     const res = await req(port, { method: 'GET', path: '/' });
     expect(res.status).toBe(200);
-    expect(res.headers['content-security-policy']).toContain("default-src 'self'");
+    expect(res.headers['content-security-policy']).toContain(
+      "default-src 'self'",
+    );
     expect(res.body).toContain('<!DOCTYPE html>');
   });
 
@@ -212,7 +235,10 @@ describe('WebChannel HTTP', () => {
       {
         method: 'POST',
         path: '/auth/login',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body).toString() },
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body).toString(),
+        },
       },
       body,
     );
@@ -229,7 +255,10 @@ describe('WebChannel HTTP', () => {
       {
         method: 'POST',
         path: '/auth/login',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body).toString() },
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body).toString(),
+        },
       },
       body,
     );
@@ -242,7 +271,9 @@ describe('WebChannel HTTP', () => {
     // Use a dedicated channel so rate-limit state is isolated
     const rl = new WebChannel(makeOpts());
     await rl.connect();
-    const rlPort = ((rl as unknown as { server: http.Server }).server.address() as AddressInfo).port;
+    const rlPort = (
+      (rl as unknown as { server: http.Server }).server.address() as AddressInfo
+    ).port;
 
     try {
       for (let i = 0; i < 5; i++) {
