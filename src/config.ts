@@ -11,6 +11,9 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'TZ',
+  'NANOCLAW_WEB_PORT',
+  'NANOCLAW_WEB_HOST',
+  'NANOCLAW_TOKEN',
 ]);
 
 export const ASSISTANT_NAME =
@@ -98,3 +101,13 @@ function resolveConfigTimezone(): string {
   return 'UTC';
 }
 export const TIMEZONE = resolveConfigTimezone();
+
+// Bridge web channel — spec §5.5 (D-91, Impl-16, 2026-04-16)
+export const NANOCLAW_WEB_PORT = parseInt(
+  process.env.NANOCLAW_WEB_PORT || envConfig.NANOCLAW_WEB_PORT || '3099',
+  10,
+);
+export const NANOCLAW_WEB_HOST =
+  process.env.NANOCLAW_WEB_HOST || envConfig.NANOCLAW_WEB_HOST || '127.0.0.1';
+export const NANOCLAW_TOKEN =
+  process.env.NANOCLAW_TOKEN || envConfig.NANOCLAW_TOKEN || '';
