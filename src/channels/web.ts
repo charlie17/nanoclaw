@@ -571,7 +571,8 @@ export class WebChannel implements Channel {
     }
     const ip = req.socket.remoteAddress ?? 'unknown';
     const now = Date.now();
-    if (this.isRateLimited(ip, now)) { // D-S1d.3: check before collectBody
+    if (this.isRateLimited(ip, now)) {
+      // D-S1d.3: check before collectBody
       res.writeHead(429, { 'Retry-After': '60' }).end('Too Many Requests');
       return;
     }

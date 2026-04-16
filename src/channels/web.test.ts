@@ -38,10 +38,18 @@ const mockConfig = vi.hoisted(() => ({
 }));
 
 vi.mock('../config.js', () => ({
-  get NANOCLAW_TOKEN() { return mockConfig.NANOCLAW_TOKEN; },
-  get NANOCLAW_WEB_HOST() { return mockConfig.NANOCLAW_WEB_HOST; },
-  get NANOCLAW_WEB_PORT() { return mockConfig.NANOCLAW_WEB_PORT; },
-  get ASSISTANT_NAME() { return mockConfig.ASSISTANT_NAME; },
+  get NANOCLAW_TOKEN() {
+    return mockConfig.NANOCLAW_TOKEN;
+  },
+  get NANOCLAW_WEB_HOST() {
+    return mockConfig.NANOCLAW_WEB_HOST;
+  },
+  get NANOCLAW_WEB_PORT() {
+    return mockConfig.NANOCLAW_WEB_PORT;
+  },
+  get ASSISTANT_NAME() {
+    return mockConfig.ASSISTANT_NAME;
+  },
 }));
 
 import {
@@ -399,7 +407,9 @@ describe('WebChannel HTTP', () => {
     const noAuth = new WebChannel(makeOpts());
     await noAuth.connect();
     const naPort = (
-      (noAuth as unknown as { server: http.Server }).server.address() as AddressInfo
+      (
+        noAuth as unknown as { server: http.Server }
+      ).server.address() as AddressInfo
     ).port;
 
     try {
@@ -418,8 +428,8 @@ describe('WebChannel HTTP', () => {
       }
       // State assertion: no rate-limit accounting occurred
       expect(
-        (noAuth as unknown as { authAttempts: Map<string, unknown> }).authAttempts
-          .size,
+        (noAuth as unknown as { authAttempts: Map<string, unknown> })
+          .authAttempts.size,
       ).toBe(0);
     } finally {
       await noAuth.disconnect();
