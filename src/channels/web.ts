@@ -398,8 +398,7 @@ export class WebChannel implements Channel {
     if (!NANOCLAW_TOKEN) return true; // loopback-only trust model — D-S1.1
     const ip = req.socket.remoteAddress ?? 'unknown';
     const now = Date.now();
-    const rec = this.authAttempts.get(ip);
-    if (rec && now < rec.resetAt && rec.count >= RATE_LIMIT_MAX) {
+    if (this.isRateLimited(ip, now)) {
       res.writeHead(429, { 'Retry-After': '60' }).end('Too Many Requests');
       return false;
     }
@@ -425,6 +424,11 @@ export class WebChannel implements Channel {
       .end('Unauthorized');
     logger.info({ ip }, '[bridge] Auth failed');
     return false;
+  }
+
+  private isRateLimited(ip: string, now: number): boolean {
+    const rec = this.authAttempts.get(ip);
+    return !!(rec && now < rec.resetAt && rec.count >= RATE_LIMIT_MAX);
   }
 
   private recordFailedAuth(ip: string, now: number): void {
@@ -565,6 +569,12 @@ export class WebChannel implements Channel {
         .end('{"ok":true}');
       return;
     }
+    const ip = req.socket.remoteAddress ?? 'unknown';
+    const now = Date.now();
+    if (this.isRateLimited(ip, now)) { // D-S1d.3: check before collectBody
+      res.writeHead(429, { 'Retry-After': '60' }).end('Too Many Requests');
+      return;
+    }
     let body: string;
     try {
       body = await collectBody(req, BODY_LIMIT);
@@ -585,6 +595,8 @@ export class WebChannel implements Channel {
 
     const provided = parsed.token ?? '';
     if (!checkToken(provided, NANOCLAW_TOKEN)) {
+      this.recordFailedAuth(ip, now);
+      logger.info({ ip }, '[bridge] Auth failed (login)');
       res.writeHead(401).end('Unauthorized');
       return;
     }

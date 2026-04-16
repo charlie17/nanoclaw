@@ -2,6 +2,7 @@ import http from 'http';
 import type { AddressInfo } from 'net';
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -29,11 +30,18 @@ vi.mock('../db.js', () => ({
   getMessagesSince: vi.fn(() => []),
 }));
 
-vi.mock('../config.js', () => ({
+const mockConfig = vi.hoisted(() => ({
   NANOCLAW_TOKEN: 'test-secret-token',
   NANOCLAW_WEB_HOST: '127.0.0.1',
   NANOCLAW_WEB_PORT: 0,
   ASSISTANT_NAME: 'Daystrom',
+}));
+
+vi.mock('../config.js', () => ({
+  get NANOCLAW_TOKEN() { return mockConfig.NANOCLAW_TOKEN; },
+  get NANOCLAW_WEB_HOST() { return mockConfig.NANOCLAW_WEB_HOST; },
+  get NANOCLAW_WEB_PORT() { return mockConfig.NANOCLAW_WEB_PORT; },
+  get ASSISTANT_NAME() { return mockConfig.ASSISTANT_NAME; },
 }));
 
 import {
@@ -181,6 +189,10 @@ describe('WebChannel HTTP', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    mockConfig.NANOCLAW_TOKEN = 'test-secret-token';
   });
 
   // ── GET / — SPA (no auth required) ────────────────────────────────────────
@@ -349,5 +361,68 @@ describe('WebChannel HTTP', () => {
       headers: { Cookie: 'nanoclaw_token=%E0%A4%A' },
     });
     expect(res.status).toBe(401);
+  });
+
+  // ── D-S1d: /auth/login rate-limit ─────────────────────────────────────────
+
+  it('/auth/login rate-limit fires on 6th bad-token attempt', async () => {
+    const rl = new WebChannel(makeOpts());
+    await rl.connect();
+    const rlPort = (
+      (rl as unknown as { server: http.Server }).server.address() as AddressInfo
+    ).port;
+
+    try {
+      const loginBody = JSON.stringify({ token: 'wrong' });
+      const loginOpts = {
+        method: 'POST',
+        path: '/auth/login',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(loginBody).toString(),
+        },
+      };
+      for (let i = 0; i < 5; i++) {
+        const r = await req(rlPort, loginOpts, loginBody);
+        expect(r.status).toBe(401);
+      }
+      const r6 = await req(rlPort, loginOpts, loginBody);
+      expect(r6.status).toBe(429);
+      expect(r6.headers['retry-after']).toBe('60');
+    } finally {
+      await rl.disconnect();
+    }
+  });
+
+  it('does not rate-limit /auth/login when NANOCLAW_TOKEN is empty', async () => {
+    mockConfig.NANOCLAW_TOKEN = '';
+    const noAuth = new WebChannel(makeOpts());
+    await noAuth.connect();
+    const naPort = (
+      (noAuth as unknown as { server: http.Server }).server.address() as AddressInfo
+    ).port;
+
+    try {
+      const body = JSON.stringify({ token: 'anything' });
+      const opts = {
+        method: 'POST',
+        path: '/auth/login',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body).toString(),
+        },
+      };
+      for (let i = 0; i < 10; i++) {
+        const r = await req(naPort, opts, body);
+        expect(r.status).toBe(200);
+      }
+      // State assertion: no rate-limit accounting occurred
+      expect(
+        (noAuth as unknown as { authAttempts: Map<string, unknown> }).authAttempts
+          .size,
+      ).toBe(0);
+    } finally {
+      await noAuth.disconnect();
+    }
   });
 });
