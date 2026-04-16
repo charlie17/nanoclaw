@@ -235,6 +235,35 @@ export function updateChatName(chatJid: string, name: string): void {
   ).run(chatJid, name, new Date().toISOString());
 }
 
+// JT: Database.Database from better-sqlite3 — upstream-owned type (used via module-private `db`)
+
+export function deleteChat(jid: string): number {
+  // D-S2.15: atomic delete — messages first, then chat row
+  const txn = db.transaction(() => {
+    const count = (
+      db.prepare('DELETE FROM messages WHERE chat_jid = ?').run(jid)
+        .changes as number
+    );
+    db.prepare('DELETE FROM chats WHERE jid = ?').run(jid);
+    return count;
+  });
+  return txn();
+}
+
+export function deleteMessage(id: string, chatJid: string): boolean {
+  const result = db
+    .prepare('DELETE FROM messages WHERE id = ? AND chat_jid = ?')
+    .run(id, chatJid);
+  return (result.changes as number) > 0;
+}
+
+export function clearChatMessages(jid: string): number {
+  const result = db
+    .prepare('DELETE FROM messages WHERE chat_jid = ?')
+    .run(jid);
+  return result.changes as number;
+}
+
 export interface ChatInfo {
   jid: string;
   name: string;

@@ -28,6 +28,24 @@ vi.mock('../db.js', () => ({
   storeChatMetadata: vi.fn(),
   getAllChats: vi.fn(() => []),
   getMessagesSince: vi.fn(() => []),
+  updateChatName: vi.fn(),
+  setRouterState: vi.fn(),
+  deleteChat: vi.fn(),
+  deleteMessage: vi.fn(() => true),
+  clearChatMessages: vi.fn(() => 3),
+}));
+
+// vi.hoisted: allows per-test group folder path override (same pattern as mockConfig)
+const mockGroupFolder = vi.hoisted(() => ({
+  path: '/tmp/test-groups/daystrom',
+}));
+
+vi.mock('../group-folder.js', () => ({
+  resolveGroupFolderPath: vi.fn(() => mockGroupFolder.path),
+}));
+
+vi.mock('node:fs/promises', () => ({
+  writeFile: vi.fn(),
 }));
 
 const mockConfig = vi.hoisted(() => ({
@@ -52,8 +70,18 @@ vi.mock('../config.js', () => ({
   },
 }));
 
+import { writeFile } from 'node:fs/promises';
+import {
+  deleteMessage as dbDeleteMessage,
+  updateChatName,
+  setRouterState,
+  deleteChat,
+  clearChatMessages,
+} from '../db.js';
 import {
   checkToken,
+  isAllowedExtension,
+  sanitizeFilename,
   sanitizeSid,
   validateBridgeConfig,
   WebChannel,
@@ -434,5 +462,382 @@ describe('WebChannel HTTP', () => {
     } finally {
       await noAuth.disconnect();
     }
+  });
+});
+
+// ── sanitizeFilename ──────────────────────────────────────────────────────────
+
+describe('sanitizeFilename', () => {
+  it('strips Unicode control characters', () => {
+    expect(sanitizeFilename('\x00hello.txt')).toBe('hello.txt');
+  });
+
+  it('strips forward slash', () => {
+    expect(sanitizeFilename('foo/bar.txt')).toBe('foobar.txt');
+  });
+
+  it('strips backslash', () => {
+    expect(sanitizeFilename('foo\\bar.txt')).toBe('foobar.txt');
+  });
+
+  it('path.basename belt removes leading traversal after sep-strip', () => {
+    // After sep-strip, '../etc/passwd.txt' -> '....etcpasswd.txt'; basename is a no-op there.
+    // Absolute path '/etc/passwd.txt' -> 'etcpasswd.txt' after sep-strip.
+    const result = sanitizeFilename('/etc/passwd.txt');
+    expect(result).not.toBeNull();
+    expect(result).not.toContain('/');
+    expect(result).not.toContain('\\');
+  });
+
+  it('trims and collapses whitespace', () => {
+    expect(sanitizeFilename('  hello   world.txt  ')).toBe('hello world.txt');
+  });
+
+  it('caps at 200 characters', () => {
+    const long = 'a'.repeat(201) + '.txt';
+    const result = sanitizeFilename(long);
+    expect(result).not.toBeNull();
+    expect(result!.length).toBeLessThanOrEqual(200);
+  });
+
+  it('returns null on empty post-sanitize', () => {
+    expect(sanitizeFilename('\x00\x01\x02')).toBeNull();
+  });
+
+  it('passes normal filename unchanged', () => {
+    expect(sanitizeFilename('receipt-2026.pdf')).toBe('receipt-2026.pdf');
+  });
+});
+
+// ── isAllowedExtension ────────────────────────────────────────────────────────
+
+describe('isAllowedExtension', () => {
+  it.each([
+    'photo.jpg',
+    'photo.jpeg',
+    'image.png',
+    'animation.gif',
+    'picture.webp',
+    'photo.heic',
+    'doc.pdf',
+    'notes.md',
+    'readme.txt',
+    'data.csv',
+    'config.json',
+    'settings.yaml',
+    'settings.yml',
+    'report.docx',
+    'slides.pptx',
+    'sheet.xlsx',
+    'archive.zip',
+  ])('allows %s', (filename) => {
+    expect(isAllowedExtension(filename)).toBe(true);
+  });
+
+  it('allows .tar.gz two-dot extension', () => {
+    expect(isAllowedExtension('archive.tar.gz')).toBe(true);
+  });
+
+  it('is case-insensitive (.PDF, .JPEG)', () => {
+    expect(isAllowedExtension('report.PDF')).toBe(true);
+    expect(isAllowedExtension('photo.JPEG')).toBe(true);
+  });
+
+  it('rejects .exe', () => {
+    expect(isAllowedExtension('malware.exe')).toBe(false);
+  });
+
+  it('rejects .sh', () => {
+    expect(isAllowedExtension('script.sh')).toBe(false);
+  });
+
+  it('rejects .js', () => {
+    expect(isAllowedExtension('code.js')).toBe(false);
+  });
+
+  it('rejects .env', () => {
+    expect(isAllowedExtension('.env')).toBe(false);
+  });
+
+  it('rejects empty string', () => {
+    expect(isAllowedExtension('')).toBe(false);
+  });
+});
+
+// ── Upload + session affordance integration tests ─────────────────────────────
+
+describe('WebChannel HTTP — upload + affordances', () => {
+  let uploadChannel: WebChannel;
+  let uploadOpts: ChannelOpts;
+  let uploadPort: number;
+
+  beforeAll(async () => {
+    uploadOpts = {
+      onMessage: vi.fn(),
+      onChatMetadata: vi.fn(),
+      registeredGroups: vi.fn(() => ({
+        daystrom: {
+          name: 'Daystrom',
+          folder: 'daystrom',
+          trigger: '',
+          added_at: '',
+          isMain: true,
+        },
+      })),
+    };
+    uploadChannel = new WebChannel(uploadOpts);
+    await uploadChannel.connect();
+    uploadPort = (
+      (uploadChannel as unknown as { server: http.Server }).server.address() as AddressInfo
+    ).port;
+  });
+
+  afterAll(async () => {
+    await uploadChannel.disconnect();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGroupFolder.path = '/tmp/test-groups/daystrom';
+    // Re-apply registeredGroups mock (cleared by clearAllMocks)
+    vi.mocked(uploadOpts.registeredGroups).mockReturnValue({
+      daystrom: {
+        name: 'Daystrom',
+        folder: 'daystrom',
+        trigger: '',
+        added_at: '',
+        isMain: true,
+      },
+    });
+    vi.mocked(dbDeleteMessage).mockReturnValue(true);
+    vi.mocked(clearChatMessages).mockReturnValue(3);
+  });
+
+  afterEach(() => {
+    mockGroupFolder.path = '/tmp/test-groups/daystrom';
+  });
+
+  function authHeaders(extra?: Record<string, string>) {
+    return {
+      Authorization: 'Bearer test-secret-token',
+      'Content-Type': 'application/json',
+      ...extra,
+    };
+  }
+
+  function uploadBody(opts: {
+    sid?: string;
+    filename?: string;
+    data?: string;
+  }) {
+    return JSON.stringify({
+      sid: opts.sid ?? 'abc123',
+      filename: opts.filename ?? 'receipt.pdf',
+      data: opts.data ?? Buffer.from('hello').toString('base64'),
+    });
+  }
+
+  // ── Upload ─────────────────────────────────────────────────────────────────
+
+  it('POST /chat/upload disallowed extension returns 400 with extension field', async () => {
+    vi.mocked(writeFile).mockResolvedValue(undefined);
+    const body = uploadBody({ filename: 'malware.exe' });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/upload', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(400);
+    const parsed = JSON.parse(r.body) as { error: string; extension: string };
+    expect(parsed.error).toBe('Extension not allowed');
+    expect(parsed.extension).toBe('.exe');
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('POST /chat/upload valid file returns 200 and synthesizes NewMessage (D-83)', async () => {
+    vi.mocked(writeFile).mockResolvedValue(undefined);
+    const body = uploadBody({ filename: 'receipt.pdf' });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/upload', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(200);
+    expect(uploadOpts.onMessage).toHaveBeenCalledTimes(1);
+    const [, msg] = vi.mocked(uploadOpts.onMessage).mock.calls[0] as [string, { content: string }];
+    expect(msg.content).toMatch(/^Uploaded a file:/);
+  });
+
+  it('POST /chat/upload body too large returns 413', async () => {
+    const big = JSON.stringify({ sid: 'abc123', filename: 'f.pdf', data: 'x'.repeat(10_000_001) });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/upload', headers: authHeaders({ 'Content-Length': Buffer.byteLength(big).toString() }) },
+      big,
+    );
+    expect(r.status).toBe(413);
+  });
+
+  it('POST /chat/upload quarantine path returns 403 — no write, no onMessage (C3 bulletproof)', async () => {
+    // Simulate a misconfigured mount: groupDir resolves into quarantine
+    mockGroupFolder.path = '/home/ubuntu/vault/groups/quarantine/uploads';
+    vi.mocked(uploadOpts.registeredGroups).mockReturnValue({
+      daystrom: { name: 'Daystrom', folder: 'daystrom', trigger: '', added_at: '', isMain: true },
+    });
+    vi.mocked(writeFile).mockResolvedValue(undefined);
+    const body = uploadBody({ filename: 'receipt.pdf' });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/upload', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(403);
+    expect(writeFile).not.toHaveBeenCalled(); // no fs write
+    expect(uploadOpts.onMessage).not.toHaveBeenCalled(); // no IPC synthesis
+  });
+
+  it('POST /chat/upload EEXIST collision retries with timestamp suffix', async () => {
+    const eexist = Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+    vi.mocked(writeFile)
+      .mockRejectedValueOnce(eexist)
+      .mockResolvedValueOnce(undefined);
+    const body = uploadBody({ filename: 'receipt.pdf' });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/upload', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(200);
+    expect(writeFile).toHaveBeenCalledTimes(2);
+    const secondCallPath = (vi.mocked(writeFile).mock.calls[1] as [string, ...unknown[]])[0];
+    expect(secondCallPath).toMatch(/-\d+\.pdf$/);
+  });
+
+  // ── Session name ───────────────────────────────────────────────────────────
+
+  it('POST /chat/session-name valid returns 200 and calls updateChatName', async () => {
+    const body = JSON.stringify({ sid: 'abc123', name: 'My Notes' });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/session-name', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(200);
+    expect(updateChatName).toHaveBeenCalledWith('local@web-abc123', 'My Notes');
+  });
+
+  it('POST /chat/session-name empty-post-sanitize name returns 400', async () => {
+    const body = JSON.stringify({ sid: 'abc123', name: '\x00\x01' });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/session-name', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(400);
+  });
+
+  // ── Session order ──────────────────────────────────────────────────────────
+
+  it('POST /chat/session-order valid array returns 200 and persists via setRouterState', async () => {
+    const body = JSON.stringify({ order: ['abc123', 'def456'] });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/session-order', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(200);
+    expect(setRouterState).toHaveBeenCalledWith(
+      'web_session_order',
+      JSON.stringify(['abc123', 'def456']),
+    );
+  });
+
+  it('POST /chat/session-order invalid sid in array returns 400', async () => {
+    const body = JSON.stringify({ order: ['abc123', 'bad sid!'] });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/session-order', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(400);
+  });
+
+  // ── Delete session ─────────────────────────────────────────────────────────
+
+  it('POST /chat/delete-session returns 200 and calls deleteChat', async () => {
+    const body = JSON.stringify({ sid: 'abc123' });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/delete-session', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(200);
+    expect(deleteChat).toHaveBeenCalledWith('local@web-abc123');
+  });
+
+  // ── Delete message ─────────────────────────────────────────────────────────
+
+  it('POST /chat/delete-message found returns 200', async () => {
+    vi.mocked(dbDeleteMessage).mockReturnValue(true);
+    const body = JSON.stringify({ sid: 'abc123', id: 'msg-001' });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/delete-message', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(200);
+  });
+
+  it('POST /chat/delete-message not found returns 404', async () => {
+    vi.mocked(dbDeleteMessage).mockReturnValue(false);
+    const body = JSON.stringify({ sid: 'abc123', id: 'msg-999' });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/delete-message', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(404);
+  });
+
+  // ── Clear history ──────────────────────────────────────────────────────────
+
+  it('POST /chat/clear-history returns 200 and calls clearChatMessages', async () => {
+    const body = JSON.stringify({ sid: 'abc123' });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/clear-history', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(200);
+    expect(clearChatMessages).toHaveBeenCalledWith('local@web-abc123');
+  });
+
+  // ── Cancel ─────────────────────────────────────────────────────────────────
+
+  it('POST /chat/cancel returns 200', async () => {
+    const body = JSON.stringify({ sid: 'abc123' });
+    const r = await req(
+      uploadPort,
+      { method: 'POST', path: '/chat/cancel', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      body,
+    );
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body)).toMatchObject({ ok: true });
+  });
+
+  // ── HEAD aliasing ──────────────────────────────────────────────────────────
+
+  it('HEAD / returns 200 with CSP header and empty body', async () => {
+    const r = await req(uploadPort, { method: 'HEAD', path: '/' });
+    expect(r.status).toBe(200);
+    expect(r.headers['content-security-policy']).toContain("default-src 'self'");
+    expect(r.body).toBe('');
+  });
+
+  it('HEAD /manifest.json returns 200 with content-type application/json and empty body', async () => {
+    const r = await req(uploadPort, { method: 'HEAD', path: '/manifest.json' });
+    expect(r.status).toBe(200);
+    expect(r.headers['content-type']).toContain('application/json');
+    expect(r.body).toBe('');
   });
 });
