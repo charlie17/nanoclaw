@@ -759,7 +759,12 @@ export class WebChannel implements Channel {
       }
       throw err;
     }
-    let parsed: { sid?: string; filename?: string; data?: string; mimeType?: string };
+    let parsed: {
+      sid?: string;
+      filename?: string;
+      data?: string;
+      mimeType?: string;
+    };
     try {
       parsed = JSON.parse(body) as typeof parsed;
     } catch {
@@ -786,7 +791,9 @@ export class WebChannel implements Channel {
         : path.extname(sanitized).toLowerCase();
       res
         .writeHead(400, { 'Content-Type': 'application/json' })
-        .end(JSON.stringify({ error: 'Extension not allowed', extension: ext }));
+        .end(
+          JSON.stringify({ error: 'Extension not allowed', extension: ext }),
+        );
       return;
     }
 
@@ -807,7 +814,10 @@ export class WebChannel implements Channel {
 
     // C3: D-90 quarantine explicit reject BEFORE clamp (defense-in-depth over infra exclusion)
     if (target.toLowerCase().includes(QUARANTINE_MARKER)) {
-      logger.warn({ sid, filename: parsed.filename }, '[bridge] Upload rejected — path resolves into quarantine');
+      logger.warn(
+        { sid, filename: parsed.filename },
+        '[bridge] Upload rejected — path resolves into quarantine',
+      );
       res.writeHead(403).end('Forbidden \u2014 quarantine path');
       return;
     }
@@ -842,7 +852,10 @@ export class WebChannel implements Channel {
       try {
         await writeFile(finalTarget, buf, { flag: 'wx' });
       } catch (err2) {
-        logger.error({ err: err2, sid }, '[bridge] Upload collision retry failed');
+        logger.error(
+          { err: err2, sid },
+          '[bridge] Upload collision retry failed',
+        );
         res.writeHead(500).end('Internal Server Error');
         return;
       }
@@ -889,7 +902,9 @@ export class WebChannel implements Channel {
     try {
       parsed = JSON.parse(await collectBody(req, BODY_LIMIT)) as typeof parsed;
     } catch (err) {
-      res.writeHead(err instanceof BodyTooLargeError ? 413 : 400).end('Bad Request');
+      res
+        .writeHead(err instanceof BodyTooLargeError ? 413 : 400)
+        .end('Bad Request');
       return;
     }
     const sid = sanitizeSid(parsed.sid);
@@ -912,7 +927,9 @@ export class WebChannel implements Channel {
         JSON.stringify({ sid, name }),
       );
     }
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}');
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end('{"ok":true}');
   }
 
   private async handleSessionOrder(
@@ -923,10 +940,15 @@ export class WebChannel implements Channel {
     try {
       parsed = JSON.parse(await collectBody(req, BODY_LIMIT)) as typeof parsed;
     } catch (err) {
-      res.writeHead(err instanceof BodyTooLargeError ? 413 : 400).end('Bad Request');
+      res
+        .writeHead(err instanceof BodyTooLargeError ? 413 : 400)
+        .end('Bad Request');
       return;
     }
-    if (!Array.isArray(parsed.order) || parsed.order.length > SESSION_ORDER_MAX) {
+    if (
+      !Array.isArray(parsed.order) ||
+      parsed.order.length > SESSION_ORDER_MAX
+    ) {
       res.writeHead(400).end('Invalid order');
       return;
     }
@@ -948,7 +970,9 @@ export class WebChannel implements Channel {
         JSON.stringify({ order }),
       );
     }
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}');
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end('{"ok":true}');
   }
 
   private async handleDeleteSession(
@@ -959,7 +983,9 @@ export class WebChannel implements Channel {
     try {
       parsed = JSON.parse(await collectBody(req, BODY_LIMIT)) as typeof parsed;
     } catch (err) {
-      res.writeHead(err instanceof BodyTooLargeError ? 413 : 400).end('Bad Request');
+      res
+        .writeHead(err instanceof BodyTooLargeError ? 413 : 400)
+        .end('Bad Request');
       return;
     }
     const sid = sanitizeSid(parsed.sid);
@@ -994,7 +1020,9 @@ export class WebChannel implements Channel {
         JSON.stringify({ removed: sid }),
       );
     }
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}');
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end('{"ok":true}');
   }
 
   private async handleDeleteMessage(
@@ -1005,7 +1033,9 @@ export class WebChannel implements Channel {
     try {
       parsed = JSON.parse(await collectBody(req, BODY_LIMIT)) as typeof parsed;
     } catch (err) {
-      res.writeHead(err instanceof BodyTooLargeError ? 413 : 400).end('Bad Request');
+      res
+        .writeHead(err instanceof BodyTooLargeError ? 413 : 400)
+        .end('Bad Request');
       return;
     }
     const sid = sanitizeSid(parsed.sid);
@@ -1033,7 +1063,9 @@ export class WebChannel implements Channel {
       'message_deleted',
       JSON.stringify({ id }),
     );
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}');
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end('{"ok":true}');
   }
 
   private async handleClearHistory(
@@ -1044,7 +1076,9 @@ export class WebChannel implements Channel {
     try {
       parsed = JSON.parse(await collectBody(req, BODY_LIMIT)) as typeof parsed;
     } catch (err) {
-      res.writeHead(err instanceof BodyTooLargeError ? 413 : 400).end('Bad Request');
+      res
+        .writeHead(err instanceof BodyTooLargeError ? 413 : 400)
+        .end('Bad Request');
       return;
     }
     const sid = sanitizeSid(parsed.sid);
@@ -1073,7 +1107,9 @@ export class WebChannel implements Channel {
     try {
       parsed = JSON.parse(await collectBody(req, BODY_LIMIT)) as typeof parsed;
     } catch (err) {
-      res.writeHead(err instanceof BodyTooLargeError ? 413 : 400).end('Bad Request');
+      res
+        .writeHead(err instanceof BodyTooLargeError ? 413 : 400)
+        .end('Bad Request');
       return;
     }
     const sid = sanitizeSid(parsed.sid);
@@ -1089,7 +1125,9 @@ export class WebChannel implements Channel {
       'cancelled',
       JSON.stringify({ sid }),
     );
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}');
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end('{"ok":true}');
   }
 
   private async handleAuthLogin(

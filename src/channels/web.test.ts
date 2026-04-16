@@ -588,7 +588,9 @@ describe('WebChannel HTTP — upload + affordances', () => {
     uploadChannel = new WebChannel(uploadOpts);
     await uploadChannel.connect();
     uploadPort = (
-      (uploadChannel as unknown as { server: http.Server }).server.address() as AddressInfo
+      (
+        uploadChannel as unknown as { server: http.Server }
+      ).server.address() as AddressInfo
     ).port;
   });
 
@@ -644,7 +646,13 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = uploadBody({ filename: 'malware.exe' });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/upload', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/upload',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(400);
@@ -659,20 +667,39 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = uploadBody({ filename: 'receipt.pdf' });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/upload', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/upload',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(200);
     expect(uploadOpts.onMessage).toHaveBeenCalledTimes(1);
-    const [, msg] = vi.mocked(uploadOpts.onMessage).mock.calls[0] as [string, { content: string }];
+    const [, msg] = vi.mocked(uploadOpts.onMessage).mock.calls[0] as [
+      string,
+      { content: string },
+    ];
     expect(msg.content).toMatch(/^Uploaded a file:/);
   });
 
   it('POST /chat/upload body too large returns 413', async () => {
-    const big = JSON.stringify({ sid: 'abc123', filename: 'f.pdf', data: 'x'.repeat(10_000_001) });
+    const big = JSON.stringify({
+      sid: 'abc123',
+      filename: 'f.pdf',
+      data: 'x'.repeat(10_000_001),
+    });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/upload', headers: authHeaders({ 'Content-Length': Buffer.byteLength(big).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/upload',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(big).toString(),
+        }),
+      },
       big,
     );
     expect(r.status).toBe(413);
@@ -682,13 +709,25 @@ describe('WebChannel HTTP — upload + affordances', () => {
     // Simulate a misconfigured mount: groupDir resolves into quarantine
     mockGroupFolder.path = '/home/ubuntu/vault/groups/quarantine/uploads';
     vi.mocked(uploadOpts.registeredGroups).mockReturnValue({
-      daystrom: { name: 'Daystrom', folder: 'daystrom', trigger: '', added_at: '', isMain: true },
+      daystrom: {
+        name: 'Daystrom',
+        folder: 'daystrom',
+        trigger: '',
+        added_at: '',
+        isMain: true,
+      },
     });
     vi.mocked(writeFile).mockResolvedValue(undefined);
     const body = uploadBody({ filename: 'receipt.pdf' });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/upload', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/upload',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(403);
@@ -704,12 +743,20 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = uploadBody({ filename: 'receipt.pdf' });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/upload', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/upload',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(200);
     expect(writeFile).toHaveBeenCalledTimes(2);
-    const secondCallPath = (vi.mocked(writeFile).mock.calls[1] as [string, ...unknown[]])[0];
+    const secondCallPath = (
+      vi.mocked(writeFile).mock.calls[1] as [string, ...unknown[]]
+    )[0];
     expect(secondCallPath).toMatch(/-\d+\.pdf$/);
   });
 
@@ -719,7 +766,13 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = JSON.stringify({ sid: 'abc123', name: 'My Notes' });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/session-name', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/session-name',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(200);
@@ -730,7 +783,13 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = JSON.stringify({ sid: 'abc123', name: '\x00\x01' });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/session-name', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/session-name',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(400);
@@ -742,7 +801,13 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = JSON.stringify({ order: ['abc123', 'def456'] });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/session-order', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/session-order',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(200);
@@ -756,7 +821,13 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = JSON.stringify({ order: ['abc123', 'bad sid!'] });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/session-order', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/session-order',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(400);
@@ -768,7 +839,13 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = JSON.stringify({ sid: 'abc123' });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/delete-session', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/delete-session',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(200);
@@ -782,7 +859,13 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = JSON.stringify({ sid: 'abc123', id: 'msg-001' });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/delete-message', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/delete-message',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(200);
@@ -793,7 +876,13 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = JSON.stringify({ sid: 'abc123', id: 'msg-999' });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/delete-message', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/delete-message',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(404);
@@ -805,7 +894,13 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = JSON.stringify({ sid: 'abc123' });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/clear-history', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/clear-history',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(200);
@@ -818,7 +913,13 @@ describe('WebChannel HTTP — upload + affordances', () => {
     const body = JSON.stringify({ sid: 'abc123' });
     const r = await req(
       uploadPort,
-      { method: 'POST', path: '/chat/cancel', headers: authHeaders({ 'Content-Length': Buffer.byteLength(body).toString() }) },
+      {
+        method: 'POST',
+        path: '/chat/cancel',
+        headers: authHeaders({
+          'Content-Length': Buffer.byteLength(body).toString(),
+        }),
+      },
       body,
     );
     expect(r.status).toBe(200);
@@ -830,7 +931,9 @@ describe('WebChannel HTTP — upload + affordances', () => {
   it('HEAD / returns 200 with CSP header and empty body', async () => {
     const r = await req(uploadPort, { method: 'HEAD', path: '/' });
     expect(r.status).toBe(200);
-    expect(r.headers['content-security-policy']).toContain("default-src 'self'");
+    expect(r.headers['content-security-policy']).toContain(
+      "default-src 'self'",
+    );
     expect(r.body).toBe('');
   });
 

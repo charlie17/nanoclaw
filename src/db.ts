@@ -240,10 +240,8 @@ export function updateChatName(chatJid: string, name: string): void {
 export function deleteChat(jid: string): number {
   // D-S2.15: atomic delete — messages first, then chat row
   const txn = db.transaction(() => {
-    const count = (
-      db.prepare('DELETE FROM messages WHERE chat_jid = ?').run(jid)
-        .changes as number
-    );
+    const count = db.prepare('DELETE FROM messages WHERE chat_jid = ?').run(jid)
+      .changes as number;
     db.prepare('DELETE FROM chats WHERE jid = ?').run(jid);
     return count;
   });
@@ -258,9 +256,7 @@ export function deleteMessage(id: string, chatJid: string): boolean {
 }
 
 export function clearChatMessages(jid: string): number {
-  const result = db
-    .prepare('DELETE FROM messages WHERE chat_jid = ?')
-    .run(jid);
+  const result = db.prepare('DELETE FROM messages WHERE chat_jid = ?').run(jid);
   return result.changes as number;
 }
 
