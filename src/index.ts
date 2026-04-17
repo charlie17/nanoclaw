@@ -190,12 +190,19 @@ export function _setRegisteredGroups(
   registeredGroups = groups;
 }
 
+// JT: D-92 — route local@web-* JIDs to main group (D-S5.1/D-S5.2)
+export function resolveGroupForJid(chatJid: string, groups: Record<string, RegisteredGroup>): RegisteredGroup | undefined {
+  if (groups[chatJid] !== undefined) return groups[chatJid];
+  if (chatJid.startsWith('local@web-')) return Object.values(groups).find((g) => g.isMain);
+  return undefined;
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
  */
 async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const group = registeredGroups[chatJid];
+  const group = resolveGroupForJid(chatJid, registeredGroups); // JT: D-92 — route local@web-* JIDs to main group (D-S5.1)
   if (!group) return true;
 
   const channel = findChannel(channels, chatJid);
@@ -425,7 +432,11 @@ async function startMessageLoop(): Promise<void> {
 
   while (true) {
     try {
-      const jids = Object.keys(registeredGroups);
+      // JT: D-92 — expand poll set to include web JIDs (D-S5.2)
+      const webJids = getAllChats()
+        .filter((c) => c.channel === 'web')
+        .map((c) => c.jid);
+      const jids = [...Object.keys(registeredGroups), ...webJids];
       const { messages, newTimestamp } = getNewMessages(
         jids,
         lastTimestamp,
@@ -451,7 +462,7 @@ async function startMessageLoop(): Promise<void> {
         }
 
         for (const [chatJid, groupMessages] of messagesByGroup) {
-          const group = registeredGroups[chatJid];
+          const group = resolveGroupForJid(chatJid, registeredGroups); // JT: D-92 — route local@web-* JIDs to main group (D-S5.1)
           if (!group) continue;
 
           const channel = findChannel(channels, chatJid);
