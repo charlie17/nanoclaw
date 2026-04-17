@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import http from 'http';
 import type { AddressInfo } from 'net';
 import {
@@ -102,6 +104,7 @@ vi.mock('net', () => ({
 }));
 
 vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn(),
   writeFile: vi.fn(),
   readdir: vi.fn(),
   stat: vi.fn(),
@@ -131,7 +134,7 @@ vi.mock('../config.js', () => ({
   CREDENTIAL_PROXY_PORT: 3001,
 }));
 
-import { readdir, stat, statfs, writeFile } from 'node:fs/promises';
+import { readFile, readdir, stat, statfs, writeFile } from 'node:fs/promises';
 import {
   clearChatMessages,
   deleteChat,
@@ -1017,6 +1020,9 @@ describe('WebChannel HTTP — dashboard surface', () => {
   // Fresh server per test — avoids module-level dashCache cross-contamination
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+    );
     netMock.reset();
     execFileMock.stdout = 'container-a,running\n';
     execFileMock.shouldFail = false;
@@ -1203,6 +1209,127 @@ describe('WebChannel HTTP — dashboard surface', () => {
     });
     const body = JSON.parse(r.body) as { available: unknown };
     expect(body.available).toBe(false);
+  });
+
+  // ── collectRateLimit: RL-1 through RL-5 (D-S4.15) ───────────────────────────
+
+  it('GET /dash/health: RL-1 — readFile ENOENT → rate_limit null', async () => {
+    vi.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' }),
+    );
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/health',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as Record<string, unknown>;
+    expect(body.rate_limit).toBeNull();
+  });
+
+  it('GET /dash/health: RL-2 — readFile returns invalid JSON → rate_limit null', async () => {
+    vi.mocked(readFile).mockResolvedValue('not valid json' as never);
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/health',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as Record<string, unknown>;
+    expect(body.rate_limit).toBeNull();
+  });
+
+  it('GET /dash/health: RL-3 — state file missing state field → rate_limit null', async () => {
+    vi.mocked(readFile).mockResolvedValue(
+      JSON.stringify({ since: '2026-04-17T14:06:10Z', collected_at: '2026-04-17T14:06:10Z' }) as never,
+    );
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/health',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as Record<string, unknown>;
+    expect(body.rate_limit).toBeNull();
+  });
+
+  it('GET /dash/health: RL-4 — valid ok state → rate_limit populated', async () => {
+    vi.mocked(readFile).mockResolvedValue(
+      JSON.stringify({
+        state: 'ok',
+        since: '2026-04-17T14:06:10Z',
+        last_hit_at: null,
+        last_signature: null,
+        last_notify_transition_since: null,
+        collected_at: '2026-04-17T14:06:10Z',
+      }) as never,
+    );
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/health',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as Record<string, unknown>;
+    const rl = body.rate_limit as Record<string, unknown>;
+    expect(rl).not.toBeNull();
+    expect(rl['state']).toBe('ok');
+    expect(rl['since']).toBe('2026-04-17T14:06:10Z');
+    expect(rl['last_hit_at']).toBeNull();
+  });
+
+  it('GET /dash/health: RL-5 — valid rate-limited state → rate_limit populated', async () => {
+    vi.mocked(readFile).mockResolvedValue(
+      JSON.stringify({
+        state: 'rate-limited',
+        since: '2026-04-17T14:06:10Z',
+        last_hit_at: '2026-04-17T14:06:10Z',
+        last_signature: 'rate_limit_error',
+        last_notify_transition_since: '2026-04-17T14:06:10Z',
+        collected_at: '2026-04-17T14:06:10Z',
+      }) as never,
+    );
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/health',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as Record<string, unknown>;
+    const rl = body.rate_limit as Record<string, unknown>;
+    expect(rl).not.toBeNull();
+    expect(rl['state']).toBe('rate-limited');
+    expect(rl['since']).toBe('2026-04-17T14:06:10Z');
+    expect(rl['last_hit_at']).toBe('2026-04-17T14:06:10Z');
+  });
+
+  // ── RL-6: fmtRl formatter render paths (D-S3.13 / D-S4.14) ─────────────────────
+
+  it('fmtRl formatter: null → unknown, ok → OK, rate-limited with age + null fallback', () => {
+    // Mirror of the SPA fmtRl(rl) function defined in web.ts template
+    function fmtRl(rl: { state: string; last_hit_at: string | null } | null): string {
+      if (rl == null) return 'unknown';
+      if (rl.state === 'ok') return 'OK';
+      if (!rl.last_hit_at) return 'rate-limited';
+      const m = Math.floor((Date.now() - new Date(rl.last_hit_at).getTime()) / 60000);
+      return 'rate-limited ' + (m < 1 ? '<1m' : m + 'm') + ' ago';
+    }
+    expect(fmtRl(null)).toBe('unknown');
+    expect(fmtRl({ state: 'ok', last_hit_at: null })).toBe('OK');
+    expect(fmtRl({ state: 'rate-limited', last_hit_at: null })).toBe('rate-limited');
+    const threeMinAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    expect(fmtRl({ state: 'rate-limited', last_hit_at: threeMinAgo })).toBe('rate-limited 3m ago');
+    const justNow = new Date(Date.now() - 30 * 1000).toISOString();
+    expect(fmtRl({ state: 'rate-limited', last_hit_at: justNow })).toBe('rate-limited <1m ago');
+  });
+
+  it('fmtRl production mirror: SPA_HTML contains the expected fmtRl body verbatim', async () => {
+    const source = await fs.promises.readFile(
+      path.join(import.meta.dirname, 'web.ts'), 'utf8'
+    );
+    expect(source).toContain(
+      "function fmtRl(rl){if(rl==null)return'unknown';if(rl.state==='ok')return'OK';if(!rl.last_hit_at)return'rate-limited';var m=Math.floor((Date.now()-new Date(rl.last_hit_at).getTime())/60000);return'rate-limited '+(m<1?'<1m':m+'m')+' ago';}"
+    );
   });
 
   // ── C13: /dash/health is strictly read-only ───────────────────────────────────

@@ -9,7 +9,7 @@ import http from 'http';
 import type { IncomingMessage, ServerResponse } from 'http';
 import net from 'net';
 import type { AddressInfo } from 'net';
-import { readdir, stat, statfs, writeFile } from 'node:fs/promises';
+import { readFile, readdir, stat, statfs, writeFile } from 'node:fs/promises';
 import os from 'os';
 import path from 'node:path';
 
@@ -415,6 +415,57 @@ async function collectVaultStats(
   return { vault_root: vaultRoot, total_files, by_folder, collected_at };
 }
 
+let rateLimitFirstReadLogged = false; // D-S4.20 once-on-first-read guard
+
+// D-S4.15: reads ~/daystrom-ops/state/rate-limit-state.json written by laforge-rate-watch
+async function collectRateLimit(): Promise<{
+  state: string;
+  since: string;
+  last_hit_at: string | null;
+} | null> {
+  const statePath = path.join(
+    os.homedir(),
+    'daystrom-ops',
+    'state',
+    'rate-limit-state.json',
+  );
+  let raw: string;
+  try {
+    raw = await readFile(statePath, 'utf8');
+  } catch {
+    return null;
+  }
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    logger.warn('[bridge] /dash/health: rate-limit state file JSON parse error');
+    return null;
+  }
+  if (
+    (parsed['state'] !== 'ok' && parsed['state'] !== 'rate-limited') ||
+    typeof parsed['since'] !== 'string' ||
+    !Number.isFinite(Date.parse(parsed['since'] as string))
+  ) {
+    return null;
+  }
+  const lastHitAtRaw = parsed['last_hit_at'];
+  const lastHitAt =
+    typeof lastHitAtRaw === 'string' && Number.isFinite(Date.parse(lastHitAtRaw))
+      ? lastHitAtRaw
+      : null;
+  if (!rateLimitFirstReadLogged) {
+    rateLimitFirstReadLogged = true;
+    logger.info('[bridge] /dash/health: rate-limit state file first successful read');
+  }
+  logger.debug('[bridge] /dash/health: rate_limit populated from state file');
+  return {
+    state: parsed['state'] as string,
+    since: parsed['since'] as string,
+    last_hit_at: lastHitAt,
+  };
+}
+
 // ── SPA HTML ─────────────────────────────────────────────────────────────────
 
 /* eslint-disable no-useless-escape */
@@ -702,6 +753,7 @@ var vBody=document.getElementById('dc-vault-body'),vFoot=document.getElementById
 var cBody=document.getElementById('dc-cost-body'),cFoot=document.getElementById('dc-cost-foot');
 
 function tsAgo(iso){if(!iso)return'';var d=Math.round((Date.now()-new Date(iso).getTime())/1000);return d<2?'just now':d+'s ago';}
+function fmtRl(rl){if(rl==null)return'unknown';if(rl.state==='ok')return'OK';if(!rl.last_hit_at)return'rate-limited';var m=Math.floor((Date.now()-new Date(rl.last_hit_at).getTime())/60000);return'rate-limited '+(m<1?'<1m':m+'m')+' ago';}
 
 function renderHealth(d){
   hBody.innerHTML='';
@@ -712,7 +764,7 @@ function renderHealth(d){
     ['Memory',d.mem?Math.round((d.mem.total_bytes-d.mem.free_bytes)/1048576)+'MB / '+Math.round(d.mem.total_bytes/1048576)+'MB':'—'],
     ['Disk',d.disk?Math.round(d.disk.free_bytes/1073741824)+'GB free':'—'],
     ['Proxy',d.proxy_reachable?'reachable':'unreachable'],
-    ['Rate limit',d.rate_limit!=null?String(d.rate_limit):'unknown'],
+    ['Rate limit',fmtRl(d.rate_limit)],
   ];
   if(d.containers&&d.containers.length){rows.push(['Containers',d.containers.map(function(c){return c.name+'='+c.state;}).join('; ')]);}
   rows.forEach(function(r){var row=mk('div','dr','');row.appendChild(mk('span','dk',r[0]));row.appendChild(mk('span','',r[1]));hBody.appendChild(row);});
@@ -1724,11 +1776,13 @@ export class WebChannel implements Channel {
     let payload: object;
     try {
       payload = await this.getOrCollect('health', async () => {
-        const [host, containerResult, proxyReachable] = await Promise.all([
-          collectHostMetrics(),
-          collectContainerStatus(),
-          probeProxyReachable(CREDENTIAL_PROXY_PORT),
-        ]);
+        const [host, containerResult, proxyReachable, rateLimit] =
+          await Promise.all([
+            collectHostMetrics(),
+            collectContainerStatus(),
+            probeProxyReachable(CREDENTIAL_PROXY_PORT),
+            collectRateLimit(),
+          ]);
         const containers = containerResult ?? [];
         const containerFailed = containerResult === null;
         const allRunning =
@@ -1753,7 +1807,7 @@ export class WebChannel implements Channel {
           proxy_reachable: proxyReachable,
           last_anthropic_round_trip: null,
           last_readwise_round_trip: null,
-          rate_limit: null,
+          rate_limit: rateLimit,
           collected_at: new Date().toISOString(),
         };
       });
