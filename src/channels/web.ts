@@ -3,15 +3,19 @@
 // Specific patterns lifted from rozek/nanoclaw@9311ff1 with inline attribution
 // ("Pattern from rozek/nanoclaw@9311ff1 — <purpose>"). Bulk authorship is ours.
 
+import { execFile as execFileRaw } from 'node:child_process';
 import crypto from 'crypto';
 import http from 'http';
 import type { IncomingMessage, ServerResponse } from 'http';
+import net from 'net';
 import type { AddressInfo } from 'net';
-import { writeFile } from 'node:fs/promises';
+import { readdir, stat, statfs, writeFile } from 'node:fs/promises';
+import os from 'os';
 import path from 'node:path';
 
 import {
   ASSISTANT_NAME,
+  CREDENTIAL_PROXY_PORT,
   NANOCLAW_TOKEN,
   NANOCLAW_WEB_HOST,
   NANOCLAW_WEB_PORT,
@@ -47,6 +51,7 @@ const HISTORY_LIMIT = 500;
 const SESSION_ORDER_MAX = 500;
 const SID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const RESERVED_SID = 'cron';
+const DASH_CACHE_TTL_MS = 5_000; // D-S3.10
 // D-S1.13
 const CSP =
   "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:";
@@ -186,6 +191,212 @@ function parseCookie(cookieHeader: string, name: string): string | null {
   return null;
 }
 
+// ── Dashboard metric types ────────────────────────────────────────────────────
+
+interface Container {
+  name: string;
+  state: string;
+}
+
+interface HostMetrics {
+  uptime_sec: number;
+  load_avg: [number, number, number];
+  mem: { total_bytes: number; free_bytes: number; used_pct: number };
+  disk: { mount: string; total_bytes: number; free_bytes: number; used_pct: number } | null;
+}
+
+interface VaultFolderEntry {
+  folder: string;
+  file_count: number;
+  last_modified: string;
+}
+
+interface VaultStatsPayload {
+  vault_root: string;
+  total_files: number;
+  by_folder: VaultFolderEntry[];
+  collected_at: string;
+  error?: string;
+}
+
+// dashCache and dashHealthLoggedOnce live on WebChannel instance — see class below
+
+// ── Dashboard metric collectors ───────────────────────────────────────────────
+
+function runExecFile(cmd: string, args: string[], timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFileRaw(
+      cmd,
+      args,
+      { timeout: timeoutMs, encoding: 'utf8' },
+      (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout as string);
+      },
+    );
+  });
+}
+
+async function collectHostMetrics(): Promise<HostMetrics> {
+  const load_avg = os.loadavg() as [number, number, number]; // [0,0,0] on Windows — D-S3.6
+  const total_bytes = os.totalmem();
+  const free_bytes = os.freemem();
+  const used_pct = Math.round(((total_bytes - free_bytes) / total_bytes) * 100);
+  const uptime_sec = Math.round(os.uptime());
+
+  let disk: HostMetrics['disk'] = null;
+  try {
+    const sf = await statfs('/');
+    const total_disk = sf.blocks * sf.bsize;
+    const free_disk = sf.bavail * sf.bsize;
+    if (total_disk > 0) {
+      disk = {
+        mount: '/',
+        total_bytes: total_disk,
+        free_bytes: free_disk,
+        used_pct: Math.round(((total_disk - free_disk) / total_disk) * 100),
+      };
+    }
+  } catch {
+    // statfs unavailable — fall back to df -B1 / (D-S3.6)
+    try {
+      const dfOut = await runExecFile('df', ['-B1', '/'], 500);
+      const lines = dfOut.trim().split('\n');
+      if (lines.length >= 2) {
+        const parts = lines[1].trim().split(/\s+/);
+        if (parts.length >= 4) {
+          const totalDf = parseInt(parts[1], 10);
+          const usedDf = parseInt(parts[2], 10);
+          const availDf = parseInt(parts[3], 10);
+          if (!isNaN(totalDf) && totalDf > 0 && !isNaN(availDf)) {
+            disk = {
+              mount: '/',
+              total_bytes: totalDf,
+              free_bytes: availDf,
+              used_pct: Math.round((usedDf / totalDf) * 100),
+            };
+          }
+        }
+      }
+    } catch {
+      disk = null; // both paths failed — D-S3.6
+    }
+  }
+
+  return { uptime_sec, load_avg, mem: { total_bytes, free_bytes, used_pct }, disk };
+}
+
+// Returns null on timeout/error (caller maps to degraded status) — D-S3.7
+async function collectContainerStatus(): Promise<Container[] | null> {
+  try {
+    const out = await runExecFile(
+      'docker',
+      ['ps', '--format', '{{.Names}},{{.State}}'],
+      800,
+    );
+    const containers: Container[] = [];
+    for (const line of out.trim().split('\n')) {
+      if (!line.trim()) continue;
+      const comma = line.indexOf(',');
+      if (comma === -1) continue;
+      const name = line.slice(0, comma).trim();
+      const state = line.slice(comma + 1).trim();
+      if (name) containers.push({ name, state });
+    }
+    return containers;
+  } catch {
+    logger.warn('[bridge] Container inspect failed — docker ps timeout or error');
+    return null;
+  }
+}
+
+// TCP probe only — no HTTP request to avoid triggering D-90 body-rule — D-S3.8
+function probeProxyReachable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect(port, '127.0.0.1');
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, 300);
+    socket.on('connect', () => {
+      clearTimeout(timer);
+      socket.end();
+      resolve(true);
+    });
+    socket.on('error', () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
+async function countFilesRecursive(
+  dir: string,
+): Promise<{ count: number; maxMtimeMs: number }> {
+  let count = 0;
+  let maxMtimeMs = 0;
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isFile()) {
+      count++;
+      try {
+        const st = await stat(fullPath);
+        if (st.mtimeMs > maxMtimeMs) maxMtimeMs = st.mtimeMs;
+      } catch {
+        // stat failure — skip this file's mtime
+      }
+    } else if (entry.isDirectory()) {
+      try {
+        const sub = await countFilesRecursive(fullPath);
+        count += sub.count;
+        if (sub.maxMtimeMs > maxMtimeMs) maxMtimeMs = sub.maxMtimeMs;
+      } catch {
+        // inaccessible subdirectory — skip
+      }
+    }
+  }
+  return { count, maxMtimeMs };
+}
+
+async function collectVaultStats(vaultRoot: string): Promise<VaultStatsPayload> {
+  const collected_at = new Date().toISOString();
+
+  let topFolders: string[];
+  try {
+    const entries = await readdir(vaultRoot, { withFileTypes: true });
+    topFolders = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return {
+      vault_root: vaultRoot,
+      total_files: 0,
+      by_folder: [],
+      collected_at,
+      error: 'vault root not found',
+    };
+  }
+
+  const by_folder: VaultFolderEntry[] = [];
+  let total_files = 0;
+
+  for (const folder of topFolders) {
+    const folderPath = path.join(vaultRoot, folder);
+    try {
+      const { count, maxMtimeMs } = await countFilesRecursive(folderPath);
+      total_files += count;
+      by_folder.push({
+        folder,
+        file_count: count,
+        last_modified: maxMtimeMs > 0 ? new Date(maxMtimeMs).toISOString() : '',
+      });
+    } catch {
+      // missing folder — omit row per D-S3.4
+    }
+  }
+
+  return { vault_root: vaultRoot, total_files, by_folder, collected_at };
+}
+
 // ── SPA HTML ─────────────────────────────────────────────────────────────────
 
 /* eslint-disable no-useless-escape */
@@ -242,6 +453,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #cancel-btn{padding:.5rem .7rem;border:1px solid var(--bd);border-radius:12px;background:none;color:var(--fg);cursor:pointer;font-size:.88rem;flex-shrink:0;display:none}
 #send{padding:.5rem 1rem;border:none;border-radius:12px;background:var(--bub-u);color:#fff;cursor:pointer;font-size:.94rem;flex-shrink:0;font-weight:500}
 #send:disabled,#inp:disabled,#cancel-btn:disabled{opacity:.45;cursor:default}
+#app.show{display:flex;flex-direction:column}
+#tnav{display:flex;gap:.35rem;padding:.35rem .6rem;border-bottom:1px solid var(--bd);flex-shrink:0}
+.nb{border:none;background:none;cursor:pointer;font-size:.85rem;padding:.25rem .65rem;border-radius:6px;color:var(--fg);opacity:.55;font-weight:500}
+.nb.active{background:var(--bub-u);color:#fff;opacity:1}
+#ca{flex:1;display:flex;flex-direction:row;overflow:hidden;min-width:0}
+#app.view-dash #ca{display:none}
+#dash-panel{flex:1;overflow-y:auto;padding:1rem;display:none}
+#app.view-dash #dash-panel{display:block}
+.dc{background:var(--sb);border:1px solid var(--bd);border-radius:10px;margin-bottom:.75rem}
+.dch{padding:.55rem .85rem;font-weight:600;font-size:.88rem;border-bottom:1px solid var(--bd)}
+.dcb{padding:.7rem .85rem;font-size:.85rem;line-height:1.55}
+.dcf{padding:.3rem .85rem;font-size:.76rem;opacity:.5;border-top:1px solid var(--bd)}
+.dr{display:flex;justify-content:space-between;padding:.1rem 0}
+.dk{opacity:.65}
 </style>
 </head>
 <body>
@@ -254,20 +479,31 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 </div>
 <div id="app">
-  <div id="sidebar">
-    <div id="sh"><span>Chats</span><button id="new-btn" title="New chat">+</button></div>
-    <div id="sl"></div>
-    <div id="sf"><button id="ch-btn" title="Clear history">\u{1F5D1}</button><button id="dm-btn" title="Toggle dark mode">\u{1F319}</button></div>
+  <div id="tnav">
+    <button class="nb active" id="nav-chat">Chat</button>
+    <button class="nb" id="nav-dash">Dash</button>
   </div>
-  <div id="chat">
-    <div id="msgs"></div>
-    <div id="typing">${ASSISTANT_NAME} is thinking\u2026</div>
-    <div id="ia">
-      <label id="up-lbl" title="Attach file">\u{1F4CE}<input type="file" id="file-inp" style="display:none" accept=".jpg,.jpeg,.png,.gif,.webp,.heic,.pdf,.md,.txt,.csv,.json,.yaml,.yml,.docx,.pptx,.xlsx,.zip"></label>
-      <textarea id="inp" placeholder="Message ${ASSISTANT_NAME}\u2026" rows="2"></textarea>
-      <button id="cancel-btn">Cancel</button>
-      <button id="send">Send</button>
+  <div id="ca">
+    <div id="sidebar">
+      <div id="sh"><span>Chats</span><button id="new-btn" title="New chat">+</button></div>
+      <div id="sl"></div>
+      <div id="sf"><button id="ch-btn" title="Clear history">\u{1F5D1}</button><button id="dm-btn" title="Toggle dark mode">\u{1F319}</button></div>
     </div>
+    <div id="chat">
+      <div id="msgs"></div>
+      <div id="typing">${ASSISTANT_NAME} is thinking\u2026</div>
+      <div id="ia">
+        <label id="up-lbl" title="Attach file">\u{1F4CE}<input type="file" id="file-inp" style="display:none" accept=".jpg,.jpeg,.png,.gif,.webp,.heic,.pdf,.md,.txt,.csv,.json,.yaml,.yml,.docx,.pptx,.xlsx,.zip"></label>
+        <textarea id="inp" placeholder="Message ${ASSISTANT_NAME}\u2026" rows="2"></textarea>
+        <button id="cancel-btn">Cancel</button>
+        <button id="send">Send</button>
+      </div>
+    </div>
+  </div>
+  <div id="dash-panel">
+    <div class="dc" id="dc-health"><div class="dch">Health</div><div class="dcb" id="dc-health-body">Loading\u2026</div><div class="dcf" id="dc-health-foot"></div></div>
+    <div class="dc" id="dc-vault"><div class="dch">Vault Stats</div><div class="dcb" id="dc-vault-body">Loading\u2026</div><div class="dcf" id="dc-vault-foot"></div></div>
+    <div class="dc" id="dc-cost"><div class="dch">Cost</div><div class="dcb" id="dc-cost-body">Loading\u2026</div><div class="dcf" id="dc-cost-foot"></div></div>
   </div>
 </div>
 <script>
@@ -440,6 +676,88 @@ function clearHistory(){
 
 function init(){loadSessions();loadHistory();connectSse();}
 fetch('/chat/sessions').then(function(r){r.ok?showApp():showLogin('');}).catch(function(){showLogin('');});
+
+// ── Dashboard — D-S3.11/D-S3.12/D-S3.13/D-S3.14 ──────────────────────────────
+var dashTimer=null;
+var hBody=document.getElementById('dc-health-body'),hFoot=document.getElementById('dc-health-foot');
+var vBody=document.getElementById('dc-vault-body'),vFoot=document.getElementById('dc-vault-foot');
+var cBody=document.getElementById('dc-cost-body'),cFoot=document.getElementById('dc-cost-foot');
+
+function tsAgo(iso){if(!iso)return'';var d=Math.round((Date.now()-new Date(iso).getTime())/1000);return d<2?'just now':d+'s ago';}
+
+function renderHealth(d){
+  hBody.innerHTML='';
+  var rows=[
+    ['Status',d.status],
+    ['Uptime',Math.floor(d.uptime_sec/3600)+'h '+Math.floor((d.uptime_sec%3600)/60)+'m'],
+    ['Load avg',(d.load_avg||[0,0,0]).map(function(v){return v.toFixed(2);}).join(', ')],
+    ['Memory',d.mem?Math.round((d.mem.total_bytes-d.mem.free_bytes)/1048576)+'MB / '+Math.round(d.mem.total_bytes/1048576)+'MB':'—'],
+    ['Disk',d.disk?Math.round(d.disk.free_bytes/1073741824)+'GB free':'—'],
+    ['Proxy',d.proxy_reachable?'reachable':'unreachable'],
+    ['Rate limit',d.rate_limit!=null?String(d.rate_limit):'unknown'],
+  ];
+  if(d.containers&&d.containers.length){rows.push(['Containers',d.containers.map(function(c){return c.name+'='+c.state;}).join('; ')]);}
+  rows.forEach(function(r){var row=mk('div','dr','');row.appendChild(mk('span','dk',r[0]));row.appendChild(mk('span','',r[1]));hBody.appendChild(row);});
+  hFoot.textContent='Updated '+tsAgo(d.collected_at);
+}
+
+function renderVault(d){
+  vBody.innerHTML='';
+  if(d.error){vBody.textContent=d.error;vFoot.textContent='';return;}
+  var tot=mk('div','dr','');tot.appendChild(mk('span','dk','Total files'));tot.appendChild(mk('span','',String(d.total_files)));vBody.appendChild(tot);
+  (d.by_folder||[]).forEach(function(f){var row=mk('div','dr','');row.appendChild(mk('span','dk',f.folder));row.appendChild(mk('span','',f.file_count+' files'));vBody.appendChild(row);});
+  vFoot.textContent='Updated '+tsAgo(d.collected_at);
+}
+
+function renderCost(d){
+  cBody.innerHTML='';
+  var av=mk('div','dr','');av.appendChild(mk('span','dk','Available'));av.appendChild(mk('span','',d.available?'yes':'no'));cBody.appendChild(av);
+  if(!d.available&&d.reason){var rr=mk('div','dr','');rr.appendChild(mk('span','dk','Reason'));rr.appendChild(mk('span','',d.reason));cBody.appendChild(rr);}
+  cFoot.textContent='Updated '+tsAgo(d.collected_at);
+}
+
+function setCardErr(body,foot){
+  var prev=body.innerHTML;body.innerHTML='';
+  if(prev){var s=document.createElement('del');s.innerHTML=prev;body.appendChild(s);}
+  body.appendChild(mk('span','','Unavailable \u2014 retrying in 15s'));
+  foot.textContent='';
+}
+
+async function loadDash(){
+  try{var rh=await api('/dash/health');if(rh&&rh.ok){renderHealth(await rh.json());}else{setCardErr(hBody,hFoot);}}catch(e){setCardErr(hBody,hFoot);}
+  try{var rv=await api('/dash/vault-stats');if(rv&&rv.ok){renderVault(await rv.json());}else{setCardErr(vBody,vFoot);}}catch(e){setCardErr(vBody,vFoot);}
+  try{var rc=await api('/dash/cost');if(rc&&rc.ok){renderCost(await rc.json());}else{setCardErr(cBody,cFoot);}}catch(e){setCardErr(cBody,cFoot);}
+}
+
+function handleDashVis(){
+  if(document.visibilityState==='hidden'){if(dashTimer){clearInterval(dashTimer);dashTimer=null;}}
+  else{loadDash();if(!dashTimer)dashTimer=setInterval(loadDash,15000);}
+}
+
+function startDashPoll(){
+  if(dashTimer)clearInterval(dashTimer);
+  loadDash();
+  dashTimer=setInterval(loadDash,15000);
+  document.addEventListener('visibilitychange',handleDashVis);
+}
+
+function stopDashPoll(){
+  if(dashTimer){clearInterval(dashTimer);dashTimer=null;}
+  document.removeEventListener('visibilitychange',handleDashVis);
+}
+
+function setView(v){
+  var a=document.getElementById('app');
+  a.classList.toggle('view-dash',v==='dash');
+  document.getElementById('nav-chat').classList.toggle('active',v!=='dash');
+  document.getElementById('nav-dash').classList.toggle('active',v==='dash');
+  if(v==='dash')startDashPoll();else stopDashPoll();
+}
+
+window.addEventListener('hashchange',function(){setView(location.hash==='#/dash'?'dash':'chat');});
+document.getElementById('nav-chat').onclick=function(){location.hash='#/';};
+document.getElementById('nav-dash').onclick=function(){location.hash='#/dash';};
+if(location.hash==='#/dash')setView('dash');
 })();
 </script>
 </body>
@@ -457,6 +775,9 @@ export class WebChannel implements Channel {
   private clientsBySid = new Map<string, Set<ServerResponse>>();
   private typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private authAttempts = new Map<string, { count: number; resetAt: number }>();
+  // D-S3.10: per-instance cache so test isolation works (module-level cache crosses instances)
+  private dashCache = new Map<string, { payload: unknown; expiresAt: number }>();
+  private dashHealthLoggedOnce = false;
 
   constructor(opts: ChannelOpts) {
     this.opts = opts;
@@ -638,6 +959,20 @@ export class WebChannel implements Channel {
     }
 
     if (!this.authorizeRequest(req, res)) return;
+
+    // D-S3.1: /dash/* routes — GET-only, read-only, no mutation — D-S3.2 shared auth gate above
+    if (method === 'GET' && urlPath === '/dash/health') {
+      await this.handleDashHealth(res);
+      return;
+    }
+    if (method === 'GET' && urlPath === '/dash/vault-stats') {
+      await this.handleDashVaultStats(res);
+      return;
+    }
+    if (method === 'GET' && urlPath === '/dash/cost') {
+      await this.handleDashCost(res);
+      return;
+    }
 
     if (method === 'GET' && urlPath === '/chat/events') {
       this.handleSse(req, res, url);
@@ -1345,6 +1680,92 @@ export class WebChannel implements Channel {
         );
       }
     }
+  }
+
+  // ── Dashboard helpers ─────────────────────────────────────────────────────────
+
+  private async getOrCollect<T>(key: string, collector: () => Promise<T>): Promise<T> {
+    const now = Date.now();
+    const hit = this.dashCache.get(key);
+    if (hit && now < hit.expiresAt) return hit.payload as T;
+    const payload = await collector();
+    this.dashCache.set(key, { payload, expiresAt: now + DASH_CACHE_TTL_MS });
+    return payload;
+  }
+
+  // ── Dashboard handlers — D-S3.1/D-S3.15: read-only, no writes, no broadcasts ──
+
+  private async handleDashHealth(res: ServerResponse): Promise<void> {
+    logger.debug('[bridge] GET /dash/health');
+    let payload: object;
+    try {
+      payload = await this.getOrCollect('health', async () => {
+        const [host, containerResult, proxyReachable] = await Promise.all([
+          collectHostMetrics(),
+          collectContainerStatus(),
+          probeProxyReachable(CREDENTIAL_PROXY_PORT),
+        ]);
+        const containers = containerResult ?? [];
+        const containerFailed = containerResult === null;
+        const allRunning = !containerFailed && containers.every((c) => c.state === 'running');
+        const status: 'ok' | 'degraded' | 'unreachable' =
+          containerFailed || !allRunning || !proxyReachable ? 'degraded' : 'ok';
+
+        if (!this.dashHealthLoggedOnce) {
+          this.dashHealthLoggedOnce = true;
+          logger.info('[bridge] /dash/health: first successful collection after start');
+        }
+
+        return {
+          status,
+          uptime_sec: host.uptime_sec,
+          load_avg: host.load_avg,
+          mem: host.mem,
+          disk: host.disk,
+          containers,
+          proxy_reachable: proxyReachable,
+          last_anthropic_round_trip: null,
+          last_readwise_round_trip: null,
+          rate_limit: null,
+          collected_at: new Date().toISOString(),
+        };
+      });
+    } catch {
+      logger.warn('[bridge] /dash/health: host metrics unavailable');
+      payload = {
+        status: 'unreachable',
+        uptime_sec: 0,
+        load_avg: [0, 0, 0],
+        mem: { total_bytes: 0, free_bytes: 0, used_pct: 0 },
+        disk: null,
+        containers: [],
+        proxy_reachable: false,
+        last_anthropic_round_trip: null,
+        last_readwise_round_trip: null,
+        rate_limit: null,
+        collected_at: new Date().toISOString(),
+      };
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(payload));
+  }
+
+  private async handleDashVaultStats(res: ServerResponse): Promise<void> {
+    logger.debug('[bridge] GET /dash/vault-stats');
+    const vaultRoot = path.join(os.homedir(), 'vault'); // D-S3.9
+    const payload = await this.getOrCollect('vault-stats', () => collectVaultStats(vaultRoot));
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(payload));
+  }
+
+  private async handleDashCost(res: ServerResponse): Promise<void> {
+    logger.debug('[bridge] GET /dash/cost');
+    // D-S3.17/D-71: static skip-with-notice stub — never fabricate values
+    const payload = await this.getOrCollect('cost', async () => ({
+      available: false as const,
+      reason: 'cost telemetry source not yet wired (D-71)',
+      spec_refs: ['SA §3e', 'SA §12.3', 'SA §12.4'],
+      collected_at: new Date().toISOString(),
+    }));
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(payload));
   }
 
   // ── Typing indicator ──────────────────────────────────────────────────────

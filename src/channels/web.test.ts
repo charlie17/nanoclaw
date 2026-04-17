@@ -44,8 +44,65 @@ vi.mock('../group-folder.js', () => ({
   resolveGroupFolderPath: vi.fn(() => mockGroupFolder.path),
 }));
 
+// vi.hoisted: controls execFile behavior per test (shouldFail → timeout path)
+const execFileMock = vi.hoisted(() => ({
+  stdout: 'container-a,running\n',
+  shouldFail: false,
+}));
+
+vi.mock('node:child_process', () => ({
+  execFile: vi.fn(
+    (
+      _cmd: string,
+      _args: string[],
+      _opts: unknown,
+      cb: (err: Error | null, stdout: string, stderr: string) => void,
+    ) => {
+      if (execFileMock.shouldFail) cb(new Error('Command timed out'), '', '');
+      else cb(null, execFileMock.stdout, '');
+    },
+  ),
+}));
+
+// vi.hoisted: controls net.connect socket behavior per test (proxyUp flag)
+const netMock = vi.hoisted(() => {
+  const h: Record<string, Array<(...a: unknown[]) => void>> = {};
+  const socket = {
+    on(e: string, cb: (...a: unknown[]) => void) {
+      (h[e] = h[e] || []).push(cb);
+      return socket;
+    },
+    end: vi.fn(),
+    destroy: vi.fn(),
+  };
+  return {
+    socket,
+    h,
+    proxyUp: true,
+    reset() {
+      Object.keys(h).forEach((k) => delete h[k]);
+      this.proxyUp = true;
+    },
+  };
+});
+
+vi.mock('net', () => ({
+  default: {
+    connect: vi.fn((_p: number, _ho: string) => {
+      setTimeout(() => {
+        if (netMock.proxyUp) (netMock.h['connect'] || []).forEach((c) => c());
+        else (netMock.h['error'] || []).forEach((c) => c(new Error('ECONNREFUSED')));
+      }, 0);
+      return netMock.socket;
+    }),
+  },
+}));
+
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn(),
+  readdir: vi.fn(),
+  stat: vi.fn(),
+  statfs: vi.fn(),
 }));
 
 const mockConfig = vi.hoisted(() => ({
@@ -68,15 +125,17 @@ vi.mock('../config.js', () => ({
   get ASSISTANT_NAME() {
     return mockConfig.ASSISTANT_NAME;
   },
+  CREDENTIAL_PROXY_PORT: 3001,
 }));
 
-import { writeFile } from 'node:fs/promises';
+import { readdir, stat, statfs, writeFile } from 'node:fs/promises';
 import {
-  deleteMessage as dbDeleteMessage,
-  updateChatName,
-  setRouterState,
-  deleteChat,
   clearChatMessages,
+  deleteChat,
+  deleteMessage as dbDeleteMessage,
+  setRouterState,
+  storeChatMetadata,
+  updateChatName,
 } from '../db.js';
 import {
   checkToken,
@@ -942,5 +1001,224 @@ describe('WebChannel HTTP — upload + affordances', () => {
     expect(r.status).toBe(200);
     expect(r.headers['content-type']).toContain('application/json');
     expect(r.body).toBe('');
+  });
+});
+
+// ── Dashboard surface integration tests (Batch 2.2 Step 3) ───────────────────
+
+describe('WebChannel HTTP — dashboard surface', () => {
+  let dashChannel: WebChannel;
+  let dashPort: number;
+  let dashOpts: ChannelOpts;
+
+  // Fresh server per test — avoids module-level dashCache cross-contamination
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    netMock.reset();
+    execFileMock.stdout = 'container-a,running\n';
+    execFileMock.shouldFail = false;
+    // statfs: plain-number disk stats — nit 2 (D-S3.6, no BigInt)
+    vi.mocked(statfs).mockResolvedValue({
+      bsize: 4096,
+      blocks: 10000,
+      bavail: 5000,
+      bfree: 5100,
+      ffree: 1000,
+      files: 2000,
+      favail: 900,
+      f_frsize: 4096,
+      namemax: 255,
+      type: 0,
+    } as unknown as Awaited<ReturnType<typeof statfs>>);
+    vi.mocked(readdir).mockResolvedValue(
+      [] as unknown as Awaited<ReturnType<typeof readdir>>,
+    );
+    dashOpts = makeOpts();
+    dashChannel = new WebChannel(dashOpts);
+    await dashChannel.connect();
+    dashPort = (
+      (dashChannel as unknown as { server: http.Server }).server.address() as AddressInfo
+    ).port;
+  });
+
+  afterEach(async () => {
+    await dashChannel.disconnect();
+  });
+
+  function authH(extra?: Record<string, string>) {
+    return { Authorization: 'Bearer test-secret-token', ...extra };
+  }
+
+  // ── Auth gate: unauthenticated × 3 ───────────────────────────────────────────
+
+  it('GET /dash/health: unauthenticated → 401', async () => {
+    const r = await req(dashPort, { method: 'GET', path: '/dash/health' });
+    expect(r.status).toBe(401);
+  });
+
+  it('GET /dash/vault-stats: unauthenticated → 401', async () => {
+    const r = await req(dashPort, { method: 'GET', path: '/dash/vault-stats' });
+    expect(r.status).toBe(401);
+  });
+
+  it('GET /dash/cost: unauthenticated → 401', async () => {
+    const r = await req(dashPort, { method: 'GET', path: '/dash/cost' });
+    expect(r.status).toBe(401);
+  });
+
+  // ── /dash/health: authed + all healthy → ok ──────────────────────────────────
+
+  it('GET /dash/health: authed + healthy → 200 + D-S3.3 shape + status ok', async () => {
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/health',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as Record<string, unknown>;
+    expect(body.status).toBe('ok');
+    expect(typeof body.uptime_sec).toBe('number');
+    expect(Array.isArray(body.load_avg)).toBe(true);
+    expect(body.mem).toBeTruthy();
+    expect(body.proxy_reachable).toBe(true);
+    expect(body.rate_limit).toBeNull();
+    expect(body.last_anthropic_round_trip).toBeNull();
+    expect(body.last_readwise_round_trip).toBeNull();
+    expect('collected_at' in body).toBe(true);
+  });
+
+  // ── /dash/health: container-inspect timeout → degraded ───────────────────────
+
+  it('GET /dash/health: container-inspect timeout → 200 + containers [] + degraded', async () => {
+    execFileMock.shouldFail = true;
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/health',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as Record<string, unknown>;
+    expect(body.status).toBe('degraded');
+    expect(body.containers).toEqual([]);
+  });
+
+  // ── /dash/health: proxy unreachable → degraded ───────────────────────────────
+
+  it('GET /dash/health: proxy unreachable → 200 + proxy_reachable false + degraded', async () => {
+    netMock.proxyUp = false;
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/health',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as Record<string, unknown>;
+    expect(body.proxy_reachable).toBe(false);
+    expect(body.status).toBe('degraded');
+  });
+
+  // ── /dash/vault-stats: authed + vault populated ───────────────────────────────
+
+  it('GET /dash/vault-stats: authed + vault populated → 200 + D-S3.4 shape', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([
+        {
+          name: 'general',
+          isDirectory: () => true,
+          isFile: () => false,
+          isSymbolicLink: () => false,
+        } as unknown,
+      ] as unknown as Awaited<ReturnType<typeof readdir>>)
+      .mockResolvedValueOnce([
+        {
+          name: 'note.md',
+          isDirectory: () => false,
+          isFile: () => true,
+          isSymbolicLink: () => false,
+        } as unknown,
+      ] as unknown as Awaited<ReturnType<typeof readdir>>);
+    vi.mocked(stat).mockResolvedValue({
+      mtimeMs: 1_700_000_000_000,
+    } as unknown as Awaited<ReturnType<typeof stat>>);
+
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/vault-stats',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as Record<string, unknown>;
+    expect(typeof body.vault_root).toBe('string');
+    expect(Array.isArray(body.by_folder)).toBe(true);
+    expect(body.total_files).toBe(1);
+    expect('collected_at' in body).toBe(true);
+  });
+
+  // ── /dash/vault-stats: missing vault root → graceful 200 ─────────────────────
+
+  it('GET /dash/vault-stats: vault root missing → 200 + by_folder [] + error field', async () => {
+    vi.mocked(readdir).mockRejectedValue(
+      Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+    );
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/vault-stats',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as Record<string, unknown>;
+    expect(body.by_folder).toEqual([]);
+    expect(typeof body.error).toBe('string');
+  });
+
+  // ── /dash/cost: authed → D-71 stub shape ─────────────────────────────────────
+
+  it('GET /dash/cost: authed → 200 + D-71 skip-with-notice shape', async () => {
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/cost',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as Record<string, unknown>;
+    expect(body.available).toBe(false);
+    expect(typeof body.reason).toBe('string');
+    expect(Array.isArray(body.spec_refs)).toBe(true);
+    expect('collected_at' in body).toBe(true);
+    expect('spend' in body).toBe(false);
+  });
+
+  // ── /dash/cost: D-71 regression gate ─────────────────────────────────────────
+
+  it('GET /dash/cost: available is unconditionally false (D-71 regression gate)', async () => {
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/cost',
+      headers: authH(),
+    });
+    const body = JSON.parse(r.body) as { available: unknown };
+    expect(body.available).toBe(false);
+  });
+
+  // ── C13: /dash/health is strictly read-only ───────────────────────────────────
+
+  it('GET /dash/health: C13 — zero mutating db calls + zero onMessage (bulletproof)', async () => {
+    await req(dashPort, {
+      method: 'GET',
+      path: '/dash/health',
+      headers: authH(),
+    });
+    // no FS writes
+    expect(writeFile).not.toHaveBeenCalled();
+    // no onMessage
+    expect(dashOpts.onMessage).not.toHaveBeenCalled();
+    // no mutating db exports (6 mockable imports; storeMessage is not imported
+    // into web.ts — absence verified via source-level grep, not mock spy)
+    expect(storeChatMetadata).not.toHaveBeenCalled();
+    expect(updateChatName).not.toHaveBeenCalled();
+    expect(setRouterState).not.toHaveBeenCalled();
+    expect(deleteChat).not.toHaveBeenCalled();
+    expect(dbDeleteMessage).not.toHaveBeenCalled();
+    expect(clearChatMessages).not.toHaveBeenCalled();
   });
 });
