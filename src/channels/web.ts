@@ -439,7 +439,9 @@ async function collectRateLimit(): Promise<{
   try {
     parsed = JSON.parse(raw) as Record<string, unknown>;
   } catch {
-    logger.warn('[bridge] /dash/health: rate-limit state file JSON parse error');
+    logger.warn(
+      '[bridge] /dash/health: rate-limit state file JSON parse error',
+    );
     return null;
   }
   if (
@@ -451,12 +453,15 @@ async function collectRateLimit(): Promise<{
   }
   const lastHitAtRaw = parsed['last_hit_at'];
   const lastHitAt =
-    typeof lastHitAtRaw === 'string' && Number.isFinite(Date.parse(lastHitAtRaw))
+    typeof lastHitAtRaw === 'string' &&
+    Number.isFinite(Date.parse(lastHitAtRaw))
       ? lastHitAtRaw
       : null;
   if (!rateLimitFirstReadLogged) {
     rateLimitFirstReadLogged = true;
-    logger.info('[bridge] /dash/health: rate-limit state file first successful read');
+    logger.info(
+      '[bridge] /dash/health: rate-limit state file first successful read',
+    );
   }
   logger.debug('[bridge] /dash/health: rate_limit populated from state file');
   return {

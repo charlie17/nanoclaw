@@ -1241,7 +1241,10 @@ describe('WebChannel HTTP — dashboard surface', () => {
 
   it('GET /dash/health: RL-3 — state file missing state field → rate_limit null', async () => {
     vi.mocked(readFile).mockResolvedValue(
-      JSON.stringify({ since: '2026-04-17T14:06:10Z', collected_at: '2026-04-17T14:06:10Z' }) as never,
+      JSON.stringify({
+        since: '2026-04-17T14:06:10Z',
+        collected_at: '2026-04-17T14:06:10Z',
+      }) as never,
     );
     const r = await req(dashPort, {
       method: 'GET',
@@ -1307,28 +1310,39 @@ describe('WebChannel HTTP — dashboard surface', () => {
 
   it('fmtRl formatter: null → unknown, ok → OK, rate-limited with age + null fallback', () => {
     // Mirror of the SPA fmtRl(rl) function defined in web.ts template
-    function fmtRl(rl: { state: string; last_hit_at: string | null } | null): string {
+    function fmtRl(
+      rl: { state: string; last_hit_at: string | null } | null,
+    ): string {
       if (rl == null) return 'unknown';
       if (rl.state === 'ok') return 'OK';
       if (!rl.last_hit_at) return 'rate-limited';
-      const m = Math.floor((Date.now() - new Date(rl.last_hit_at).getTime()) / 60000);
+      const m = Math.floor(
+        (Date.now() - new Date(rl.last_hit_at).getTime()) / 60000,
+      );
       return 'rate-limited ' + (m < 1 ? '<1m' : m + 'm') + ' ago';
     }
     expect(fmtRl(null)).toBe('unknown');
     expect(fmtRl({ state: 'ok', last_hit_at: null })).toBe('OK');
-    expect(fmtRl({ state: 'rate-limited', last_hit_at: null })).toBe('rate-limited');
+    expect(fmtRl({ state: 'rate-limited', last_hit_at: null })).toBe(
+      'rate-limited',
+    );
     const threeMinAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
-    expect(fmtRl({ state: 'rate-limited', last_hit_at: threeMinAgo })).toBe('rate-limited 3m ago');
+    expect(fmtRl({ state: 'rate-limited', last_hit_at: threeMinAgo })).toBe(
+      'rate-limited 3m ago',
+    );
     const justNow = new Date(Date.now() - 30 * 1000).toISOString();
-    expect(fmtRl({ state: 'rate-limited', last_hit_at: justNow })).toBe('rate-limited <1m ago');
+    expect(fmtRl({ state: 'rate-limited', last_hit_at: justNow })).toBe(
+      'rate-limited <1m ago',
+    );
   });
 
   it('fmtRl production mirror: SPA_HTML contains the expected fmtRl body verbatim', async () => {
     const source = await fs.promises.readFile(
-      path.join(import.meta.dirname, 'web.ts'), 'utf8'
+      path.join(import.meta.dirname, 'web.ts'),
+      'utf8',
     );
     expect(source).toContain(
-      "function fmtRl(rl){if(rl==null)return'unknown';if(rl.state==='ok')return'OK';if(!rl.last_hit_at)return'rate-limited';var m=Math.floor((Date.now()-new Date(rl.last_hit_at).getTime())/60000);return'rate-limited '+(m<1?'<1m':m+'m')+' ago';}"
+      "function fmtRl(rl){if(rl==null)return'unknown';if(rl.state==='ok')return'OK';if(!rl.last_hit_at)return'rate-limited';var m=Math.floor((Date.now()-new Date(rl.last_hit_at).getTime())/60000);return'rate-limited '+(m<1?'<1m':m+'m')+' ago';}",
     );
   });
 
