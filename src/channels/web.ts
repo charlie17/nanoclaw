@@ -202,7 +202,12 @@ interface HostMetrics {
   uptime_sec: number;
   load_avg: [number, number, number];
   mem: { total_bytes: number; free_bytes: number; used_pct: number };
-  disk: { mount: string; total_bytes: number; free_bytes: number; used_pct: number } | null;
+  disk: {
+    mount: string;
+    total_bytes: number;
+    free_bytes: number;
+    used_pct: number;
+  } | null;
 }
 
 interface VaultFolderEntry {
@@ -223,7 +228,11 @@ interface VaultStatsPayload {
 
 // ── Dashboard metric collectors ───────────────────────────────────────────────
 
-function runExecFile(cmd: string, args: string[], timeoutMs: number): Promise<string> {
+function runExecFile(
+  cmd: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     execFileRaw(
       cmd,
@@ -283,7 +292,12 @@ async function collectHostMetrics(): Promise<HostMetrics> {
     }
   }
 
-  return { uptime_sec, load_avg, mem: { total_bytes, free_bytes, used_pct }, disk };
+  return {
+    uptime_sec,
+    load_avg,
+    mem: { total_bytes, free_bytes, used_pct },
+    disk,
+  };
 }
 
 // Returns null on timeout/error (caller maps to degraded status) — D-S3.7
@@ -305,7 +319,9 @@ async function collectContainerStatus(): Promise<Container[] | null> {
     }
     return containers;
   } catch {
-    logger.warn('[bridge] Container inspect failed — docker ps timeout or error');
+    logger.warn(
+      '[bridge] Container inspect failed — docker ps timeout or error',
+    );
     return null;
   }
 }
@@ -359,7 +375,9 @@ async function countFilesRecursive(
   return { count, maxMtimeMs };
 }
 
-async function collectVaultStats(vaultRoot: string): Promise<VaultStatsPayload> {
+async function collectVaultStats(
+  vaultRoot: string,
+): Promise<VaultStatsPayload> {
   const collected_at = new Date().toISOString();
 
   let topFolders: string[];
@@ -776,7 +794,10 @@ export class WebChannel implements Channel {
   private typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private authAttempts = new Map<string, { count: number; resetAt: number }>();
   // D-S3.10: per-instance cache so test isolation works (module-level cache crosses instances)
-  private dashCache = new Map<string, { payload: unknown; expiresAt: number }>();
+  private dashCache = new Map<
+    string,
+    { payload: unknown; expiresAt: number }
+  >();
   private dashHealthLoggedOnce = false;
 
   constructor(opts: ChannelOpts) {
@@ -1684,7 +1705,10 @@ export class WebChannel implements Channel {
 
   // ── Dashboard helpers ─────────────────────────────────────────────────────────
 
-  private async getOrCollect<T>(key: string, collector: () => Promise<T>): Promise<T> {
+  private async getOrCollect<T>(
+    key: string,
+    collector: () => Promise<T>,
+  ): Promise<T> {
     const now = Date.now();
     const hit = this.dashCache.get(key);
     if (hit && now < hit.expiresAt) return hit.payload as T;
@@ -1707,13 +1731,16 @@ export class WebChannel implements Channel {
         ]);
         const containers = containerResult ?? [];
         const containerFailed = containerResult === null;
-        const allRunning = !containerFailed && containers.every((c) => c.state === 'running');
+        const allRunning =
+          !containerFailed && containers.every((c) => c.state === 'running');
         const status: 'ok' | 'degraded' | 'unreachable' =
           containerFailed || !allRunning || !proxyReachable ? 'degraded' : 'ok';
 
         if (!this.dashHealthLoggedOnce) {
           this.dashHealthLoggedOnce = true;
-          logger.info('[bridge] /dash/health: first successful collection after start');
+          logger.info(
+            '[bridge] /dash/health: first successful collection after start',
+          );
         }
 
         return {
@@ -1746,14 +1773,20 @@ export class WebChannel implements Channel {
         collected_at: new Date().toISOString(),
       };
     }
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(payload));
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify(payload));
   }
 
   private async handleDashVaultStats(res: ServerResponse): Promise<void> {
     logger.debug('[bridge] GET /dash/vault-stats');
     const vaultRoot = path.join(os.homedir(), 'vault'); // D-S3.9
-    const payload = await this.getOrCollect('vault-stats', () => collectVaultStats(vaultRoot));
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(payload));
+    const payload = await this.getOrCollect('vault-stats', () =>
+      collectVaultStats(vaultRoot),
+    );
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify(payload));
   }
 
   private async handleDashCost(res: ServerResponse): Promise<void> {
@@ -1765,7 +1798,9 @@ export class WebChannel implements Channel {
       spec_refs: ['SA §3e', 'SA §12.3', 'SA §12.4'],
       collected_at: new Date().toISOString(),
     }));
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(payload));
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify(payload));
   }
 
   // ── Typing indicator ──────────────────────────────────────────────────────

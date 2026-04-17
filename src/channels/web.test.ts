@@ -91,7 +91,10 @@ vi.mock('net', () => ({
     connect: vi.fn((_p: number, _ho: string) => {
       setTimeout(() => {
         if (netMock.proxyUp) (netMock.h['connect'] || []).forEach((c) => c());
-        else (netMock.h['error'] || []).forEach((c) => c(new Error('ECONNREFUSED')));
+        else
+          (netMock.h['error'] || []).forEach((c) =>
+            c(new Error('ECONNREFUSED')),
+          );
       }, 0);
       return netMock.socket;
     }),
@@ -1037,7 +1040,9 @@ describe('WebChannel HTTP — dashboard surface', () => {
     dashChannel = new WebChannel(dashOpts);
     await dashChannel.connect();
     dashPort = (
-      (dashChannel as unknown as { server: http.Server }).server.address() as AddressInfo
+      (
+        dashChannel as unknown as { server: http.Server }
+      ).server.address() as AddressInfo
     ).port;
   });
 
