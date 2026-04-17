@@ -191,9 +191,13 @@ export function _setRegisteredGroups(
 }
 
 // JT: D-92 — route local@web-* JIDs to main group (D-S5.1/D-S5.2)
-export function resolveGroupForJid(chatJid: string, groups: Record<string, RegisteredGroup>): RegisteredGroup | undefined {
+export function resolveGroupForJid(
+  chatJid: string,
+  groups: Record<string, RegisteredGroup>,
+): RegisteredGroup | undefined {
   if (groups[chatJid] !== undefined) return groups[chatJid];
-  if (chatJid.startsWith('local@web-')) return Object.values(groups).find((g) => g.isMain);
+  if (chatJid.startsWith('local@web-'))
+    return Object.values(groups).find((g) => g.isMain);
   return undefined;
 }
 

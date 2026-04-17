@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import { _initTestDatabase, storeChatMetadata } from './db.js';
-import { getAvailableGroups, _setRegisteredGroups, resolveGroupForJid } from './index.js';
+import {
+  getAvailableGroups,
+  _setRegisteredGroups,
+  resolveGroupForJid,
+} from './index.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -193,7 +197,9 @@ describe('resolveGroupForJid', () => {
   });
 
   it('routes any local@web-* JID to main group regardless of sid', () => {
-    expect(resolveGroupForJid('local@web-differentsid', groups)).toBe(mainGroup);
+    expect(resolveGroupForJid('local@web-differentsid', groups)).toBe(
+      mainGroup,
+    );
   });
 
   it('preserves exact-match for registered Telegram JID', () => {
