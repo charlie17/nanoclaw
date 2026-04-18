@@ -920,14 +920,23 @@ export class WebChannel implements Channel {
     // Pattern from rozek/nanoclaw@9311ff1 — persist bot reply before broadcast (§6 L10)
     const botMsgId = `web-bot-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const botMsg: NewMessage = {
-      id: botMsgId, chat_jid: jid, sender: ASSISTANT_NAME, sender_name: ASSISTANT_NAME,
-      content: text, timestamp: new Date().toISOString(), is_from_me: false, is_bot_message: true,
+      id: botMsgId,
+      chat_jid: jid,
+      sender: ASSISTANT_NAME,
+      sender_name: ASSISTANT_NAME,
+      content: text,
+      timestamp: new Date().toISOString(),
+      is_from_me: false,
+      is_bot_message: true,
     };
     try {
       storeMessage(botMsg);
       storeChatMetadata(jid, botMsg.timestamp, undefined, 'web', false);
     } catch (err) {
-      logger.warn({ err, jid }, '[bridge] sendMessage: failed to persist bot message');
+      logger.warn(
+        { err, jid },
+        '[bridge] sendMessage: failed to persist bot message',
+      );
     }
     broadcastToSession(
       this.clientsBySid,
@@ -1740,7 +1749,10 @@ export class WebChannel implements Channel {
 
   private handleGetHistory(res: ServerResponse, url: URL): void {
     const sid = sanitizeSid(url.searchParams.get('sid') ?? undefined);
-    if (!sid) { res.writeHead(400).end('Invalid or missing sid'); return; }
+    if (!sid) {
+      res.writeHead(400).end('Invalid or missing sid');
+      return;
+    }
     const jid = jidFromSid(sid);
     // JT: D-93 — swap to getConversation (returns both sides) replacing getMessagesSince (C24)
     // Pattern from rozek/nanoclaw@9311ff1 — /history cls shape with OR-guard for backward compat (§6 L10)

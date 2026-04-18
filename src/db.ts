@@ -778,12 +778,14 @@ function migrateJsonState(): void {
 // JT: D-93 — display-history query returning both user + bot rows for /chat/history endpoint
 // Pattern from rozek/nanoclaw@9311ff1 — display-history query returning both user + bot rows (§6 L10)
 export function getConversation(chatJid: string, limit: number): NewMessage[] {
-  return db.prepare(
-    `SELECT id, chat_jid, sender, sender_name, content, timestamp,
+  return db
+    .prepare(
+      `SELECT id, chat_jid, sender, sender_name, content, timestamp,
             is_from_me, is_bot_message,
             reply_to_message_id, reply_to_message_content, reply_to_sender_name
      FROM messages
      WHERE chat_jid = ? AND content != '' AND content IS NOT NULL
      ORDER BY timestamp ASC LIMIT ?`,
-  ).all(chatJid, limit) as NewMessage[];
+    )
+    .all(chatJid, limit) as NewMessage[];
 }

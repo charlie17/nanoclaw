@@ -658,14 +658,24 @@ describe('getConversation', () => {
     // JT: D-93 — verifies getConversation returns full conversation (C24)
     storeChatMetadata('local@web-s6', '2026-01-01T00:00:00.000Z');
     storeMessage({
-      id: 'u1', chat_jid: 'local@web-s6', sender: 'user', sender_name: 'You',
-      content: 'hello', timestamp: '2026-01-01T00:00:01.000Z',
-      is_from_me: false, is_bot_message: false,
+      id: 'u1',
+      chat_jid: 'local@web-s6',
+      sender: 'user',
+      sender_name: 'You',
+      content: 'hello',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      is_from_me: false,
+      is_bot_message: false,
     });
     storeMessage({
-      id: 'b1', chat_jid: 'local@web-s6', sender: 'Daystrom', sender_name: 'Daystrom',
-      content: 'hi there', timestamp: '2026-01-01T00:00:02.000Z',
-      is_from_me: false, is_bot_message: true,
+      id: 'b1',
+      chat_jid: 'local@web-s6',
+      sender: 'Daystrom',
+      sender_name: 'Daystrom',
+      content: 'hi there',
+      timestamp: '2026-01-01T00:00:02.000Z',
+      is_from_me: false,
+      is_bot_message: true,
     });
     const rows = getConversation('local@web-s6', 100);
     expect(rows).toHaveLength(2);
@@ -680,9 +690,14 @@ describe('getConversation', () => {
     storeChatMetadata('local@web-s6lim', '2026-01-01T00:00:00.000Z');
     for (let i = 0; i < 5; i++) {
       storeMessage({
-        id: `msg-${i}`, chat_jid: 'local@web-s6lim', sender: 'user', sender_name: 'You',
-        content: `msg ${i}`, timestamp: `2026-01-01T00:00:0${i}.000Z`,
-        is_from_me: false, is_bot_message: false,
+        id: `msg-${i}`,
+        chat_jid: 'local@web-s6lim',
+        sender: 'user',
+        sender_name: 'You',
+        content: `msg ${i}`,
+        timestamp: `2026-01-01T00:00:0${i}.000Z`,
+        is_from_me: false,
+        is_bot_message: false,
       });
     }
 
