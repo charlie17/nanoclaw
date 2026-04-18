@@ -8,7 +8,7 @@ When JT invokes `/research <query>` and you judge that Readwise + vault content 
 2. On confirmation, generate `<topic-slug>` from JT's query (kebab-case, short, descriptive — e.g., "ai-alignment").
 3. Write the queue entry using your `Write` tool:
 
-   Path: `/daystrom-ops/state/research-queue/<topic-slug>-<YYYYMMDDHHMMSS>.json`
+   Path: `/workspace/extra/research-queue/<topic-slug>-<YYYYMMDDHHMMSS>.json`
    Content:
    ```json
    {
