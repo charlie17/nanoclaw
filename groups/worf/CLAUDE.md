@@ -54,20 +54,18 @@ Run these checks on every `/security-audit` invocation:
 ### 1. Container Mount Boundaries
 
 ```
-CHECK: Daystrom container — no private vault mount
-CHECK: Riker container — no vault mount of any kind
-CHECK: Troi container — no general vault mount, no internet access
+CHECK: Daystrom container — vault (rw) + research-queue (rw) mounts; no quarantine mount
+CHECK: Main container — no vault mounts (admin scope only)
 CHECK: Worf container — no vault mount (config/repo scope only)
 ```
 
 Verify by reading the registered_groups config from SQLite: `SELECT * FROM registered_groups;`
 Look for `containerConfig.additionalMounts` — flag any unexpected vault paths.
 
-Expected mounts per group:
-- `daystrom`: `vault-general` (rw), `sessions/daystrom` (rw), `groups/daystrom` (rw), `groups/global` (ro)
-- `riker`: `groups/riker` (rw), `groups/global` (ro) — NO vault
-- `troi`: `vault-private` (rw), `groups/troi` (rw), `groups/global` (ro) — NO general vault
-- `worf`: `groups/worf` (rw), `groups/global` (ro), project repo (config scope)
+Expected mounts per group (additionalMounts only — DB containerPath names):
+- `daystrom`: `vault` (rw), `research-queue` (rw)
+- `main`: no additionalMounts (admin/control only)
+- `worf`: `groups/worf` (rw), `groups/global` (ro), `vault/worf-scope` (ro when spawned)
 
 ### 2. Credential Proxy
 
@@ -102,7 +100,6 @@ Query: `SELECT * FROM scheduled_tasks ORDER BY created_at DESC;`
 
 Expected scheduled tasks:
 - `nightly-report` (daily 5am)
-- `process-research-queue` (daily 2am)
 - `security-audit` (Friday 3am)
 - `upstream-review` (Friday 2:30am)
 - `weekly-review` (Friday 3:30am)
@@ -115,8 +112,7 @@ Flag anything not on this list or with unexpected cron expressions.
 ```
 CHECK: global/CLAUDE.md — no unauthorized modifications
 CHECK: daystrom/CLAUDE.md — no unauthorized modifications
-CHECK: riker/CLAUDE.md — no unauthorized modifications
-CHECK: troi/CLAUDE.md — no unauthorized modifications
+CHECK: main/CLAUDE.md — no unauthorized modifications
 CHECK: worf/CLAUDE.md — no unauthorized modifications
 ```
 
@@ -146,7 +142,7 @@ Review recent IPC logs for:
 
 ---
 
-## Session JSONL Integrity (Phase 2+)
+## Session JSONL Integrity
 
 ```
 CHECK: Session JSONL files — no truncation or corruption
@@ -162,6 +158,8 @@ For each group with recent activity:
 ---
 
 ## Report Format
+
+Dates use Daystrom §1.3 format (see global CLAUDE.md).
 
 Structure every security audit report as:
 
@@ -184,7 +182,7 @@ Checklist execution: Ensign Ro (H). Analysis and recommendations: Worf.
 [IPC checks]
 
 === SESSION INTEGRITY ===
-[JSONL checks — Phase 2+]
+[JSONL checks]
 
 === SUMMARY ===
 {X}/{Y} checks passed.
