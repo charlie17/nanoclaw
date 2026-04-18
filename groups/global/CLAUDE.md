@@ -75,6 +75,63 @@ No `##` headings. No `[links](url)`. No `**double stars**`.
 
 Standard Markdown works: `**bold**`, `*italic*`, `[links](url)`, `# headings`.
 
+<!-- JT: Batch 3.1 — Daystrom Shared Rules (fork-delta start) -->
+## Daystrom Shared Rules
+
+Rules in this section apply to every Daystrom-aware group (daystrom, worf, and any future Daystrom sub-agents). Per-group CLAUDE.md files reference these sections by number; always keep section numbering stable.
+
+### §1.1 Verbatim Rule
+When JT dictates content (logs, actions, quotes, remember notes), write it **verbatim**. Do NOT paraphrase, summarize, or "improve" the wording. JT's exact phrasing is intentional.
+
+### §1.2 Confirm Before Splitting
+When a single message has dual-nature intent (e.g., "Buy milk at Costco" = shopping + errand), DO NOT split silently. Ask JT: "This looks like both a shopping item and an errand. Split it, or pick one?" Split only on confirmation.
+
+### §1.3 Date Format
+Use the format `Day M/D/YY`: e.g., `Sat 3/22/26`, `Thu 4/18/26`. Full weekday name, numeric month/day, two-digit year. Date is **always today's date** (message receipt date), never the inferred event date. Phrases like "last night", "yesterday" stay verbatim in content; they do not shift the date prefix.
+
+### §1.4 Entry Formats
+Canonical shapes per entry type:
+- **Actions:** `- [ ] Item (Sat 3/22/26)` — checkbox, then text, then date in parens.
+- **Logs:** `- Sat 3/22/26: Content verbatim` — date, colon, content.
+- **Reference (dated):** `- Sat 3/22/26: Content` — same as logs.
+- **Reference (evergreen — quotes, facts-stats):** `- Content` — no date, append order.
+- **Project todos:** `- [ ] Item (Sat 3/22/26)` — same as actions.
+
+All sub-bullets tab-indented (see §1.7). Ordering rules are defined per-file type in the group CLAUDE.md.
+
+### §1.5 Wikilinks and Cross-References
+Cross-reference vault files with `[[path/to/file]]` Obsidian wikilinks. Do not use Markdown `[text](url)` for internal vault references — they don't resolve in Obsidian the same way.
+
+### §1.6 Telegram/WhatsApp Formatting Override
+When responding on Telegram or WhatsApp channels, override the stock NanoClaw formatting with these Daystrom rules — users on these channels see plain text with the following conventions:
+- `*bold*` (single asterisks only; never `**double**`).
+- `_italic_` (single underscores).
+- `•` for bullets.
+- Triple-backtick code blocks.
+- No `##` headings. No `[link text](url)` Markdown links (paste bare URLs instead, or use Obsidian URI format per daystrom CLAUDE.md §Obsidian URIs).
+
+### §1.7 Tab Indentation
+All sub-bullets in vault files use **tab characters** (one tab per nesting level). Never spaces. Editors may auto-convert — verify with `cat -A` if uncertain.
+
+### §1.8 Bases File Format
+Obsidian Bases files (`.base` extension) use YAML:
+```yaml
+filters:
+  and:
+    - file.path.startsWith("general/")
+    - file.frontmatter.type.contains("log")
+properties:
+  - file.name
+  - file.frontmatter.domain
+views:
+  - name: "All Logs"
+    type: table
+```
+
+Bases files live in `general/dashboards/` by default. Write Obsidian URI back to JT after creation (see daystrom CLAUDE.md §Obsidian URIs).
+
+<!-- JT: Batch 3.1 — Daystrom Shared Rules (fork-delta end) -->
+
 ---
 
 ## Task Scripts
