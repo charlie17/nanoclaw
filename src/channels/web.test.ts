@@ -28,8 +28,10 @@ vi.mock('../logger.js', () => ({
 
 vi.mock('../db.js', () => ({
   storeChatMetadata: vi.fn(),
+  storeMessage: vi.fn(),
   getAllChats: vi.fn(() => []),
   getMessagesSince: vi.fn(() => []),
+  getConversation: vi.fn(() => []),
   updateChatName: vi.fn(),
   setRouterState: vi.fn(),
   deleteChat: vi.fn(),
@@ -139,10 +141,13 @@ import {
   clearChatMessages,
   deleteChat,
   deleteMessage as dbDeleteMessage,
+  getConversation,
   setRouterState,
   storeChatMetadata,
+  storeMessage,
   updateChatName,
 } from '../db.js';
+import { logger } from '../logger.js';
 import {
   checkToken,
   isAllowedExtension,
@@ -1358,13 +1363,118 @@ describe('WebChannel HTTP — dashboard surface', () => {
     expect(writeFile).not.toHaveBeenCalled();
     // no onMessage
     expect(dashOpts.onMessage).not.toHaveBeenCalled();
-    // no mutating db exports (6 mockable imports; storeMessage is not imported
-    // into web.ts — absence verified via source-level grep, not mock spy)
+    // no mutating db exports (Step 6 adds storeMessage to web.ts; still zero calls on dash/health)
+    expect(storeMessage).not.toHaveBeenCalled();
     expect(storeChatMetadata).not.toHaveBeenCalled();
     expect(updateChatName).not.toHaveBeenCalled();
     expect(setRouterState).not.toHaveBeenCalled();
     expect(deleteChat).not.toHaveBeenCalled();
     expect(dbDeleteMessage).not.toHaveBeenCalled();
     expect(clearChatMessages).not.toHaveBeenCalled();
+  });
+});
+
+// ── D-93: sendMessage persistence + handleGetHistory cls shape ─────────────────
+
+// Helper: open SSE for a sid, trigger sendMessage, return first agent_output payload.
+// Client is registered before sendMessage fires because the response callback
+// fires only after the server has already called flushHeaders() + clientsBySid.add().
+function sendAndCaptureSse(
+  channel: WebChannel,
+  port: number,
+  sid: string,
+  text: string,
+): Promise<{ text: string; id: string }> {
+  return new Promise<{ text: string; id: string }>((resolve, reject) => {
+    const r = http.request(
+      { hostname: '127.0.0.1', port, method: 'GET',
+        path: `/chat/events?sid=${sid}`,
+        headers: { Authorization: 'Bearer test-secret-token' } },
+      (res) => {
+        let buf = '';
+        res.on('data', (chunk: Buffer) => {
+          buf += chunk.toString();
+          const m = buf.match(/data: ({[^\n]+})/);
+          if (m) {
+            try { resolve(JSON.parse(m[1]) as { text: string; id: string }); res.destroy(); }
+            catch {}
+          }
+        });
+        res.on('error', (e: NodeJS.ErrnoException) => { if (e.code !== 'ECONNRESET') reject(e); });
+        void channel.sendMessage(`local@web-${sid}`, text).catch(reject);
+      },
+    );
+    r.on('error', reject);
+    r.end();
+  });
+}
+
+describe('WebChannel HTTP — sendMessage + history (D-93)', () => {
+  let d93Channel: WebChannel;
+  let d93Port: number;
+
+  beforeAll(async () => {
+    d93Channel = new WebChannel(makeOpts());
+    await d93Channel.connect();
+    d93Port = ((d93Channel as unknown as { server: http.Server }).server.address() as AddressInfo).port;
+  });
+  afterAll(async () => { await d93Channel.disconnect(); });
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('sendMessage persists bot reply to DB before broadcast (C23)', async () => {
+    let storeCalledBeforeSse = false;
+    vi.mocked(storeMessage).mockImplementation(() => { storeCalledBeforeSse = true; });
+
+    const sseData = await sendAndCaptureSse(d93Channel, d93Port, 's6t1', 'bot reply');
+
+    expect(storeCalledBeforeSse).toBe(true); // flag set inside storeMessage mock before SSE event arrived
+    expect(vi.mocked(storeMessage)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        is_bot_message: true, is_from_me: false,
+        sender: 'Daystrom', sender_name: 'Daystrom',
+        chat_jid: 'local@web-s6t1', content: 'bot reply',
+      }),
+    );
+    expect(sseData.text).toBe('bot reply');
+  });
+
+  it('sendMessage broadcast payload includes id field matching web-bot pattern', async () => {
+    const sseData = await sendAndCaptureSse(d93Channel, d93Port, 's6t2', 'hello');
+    expect(sseData.text).toBe('hello');
+    expect(sseData.id).toMatch(/^web-bot-\d+-[a-z0-9]{7}$/);
+  });
+
+  it('sendMessage tolerates storeMessage throw — logger.warn fires, broadcast still proceeds', async () => {
+    vi.mocked(storeMessage).mockImplementation(() => { throw new Error('db failure'); });
+    // sendMessage must not reject; catch block fires logger.warn then proceeds to broadcastToSession
+    await expect(d93Channel.sendMessage('local@web-s6t3', 'resilience')).resolves.toBeUndefined();
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.objectContaining({ jid: 'local@web-s6t3' }),
+      '[bridge] sendMessage: failed to persist bot message',
+    );
+  });
+
+  it('handleGetHistory returns {text, cls, id} shape with OR-guard cls (C24)', async () => {
+    vi.mocked(getConversation).mockReturnValue([
+      { id: 'u1', content: 'user msg', is_from_me: false, is_bot_message: false,
+        chat_jid: 'local@web-s6h', sender: 'user', sender_name: 'You',
+        timestamp: '2026-01-01T00:00:01.000Z' } as ReturnType<typeof getConversation>[number],
+      { id: 'b1', content: 'bot msg', is_from_me: false, is_bot_message: true,
+        chat_jid: 'local@web-s6h', sender: 'Daystrom', sender_name: 'Daystrom',
+        timestamp: '2026-01-01T00:00:02.000Z' } as ReturnType<typeof getConversation>[number],
+      { id: 'l1', content: 'legacy user', is_from_me: true, is_bot_message: false,
+        chat_jid: 'local@web-s6h', sender: 'user', sender_name: 'You',
+        timestamp: '2026-01-01T00:00:03.000Z' } as ReturnType<typeof getConversation>[number],
+    ]);
+    const res = await req(d93Port, {
+      method: 'GET', path: '/chat/history?sid=s6h',
+      headers: { Authorization: 'Bearer test-secret-token' },
+    });
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as Array<{ text: string; cls: string; id: string }>;
+    expect(body).toHaveLength(3);
+    expect(body[0]).toEqual({ text: 'user msg', cls: 'user', id: 'u1' });
+    expect(body[1]).toEqual({ text: 'bot msg', cls: 'bot', id: 'b1' });
+    expect(body[2]).toEqual({ text: 'legacy user', cls: 'bot', id: 'l1' }); // OR-guard: is_from_me:true → 'bot'
   });
 });

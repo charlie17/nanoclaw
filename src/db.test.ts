@@ -6,6 +6,7 @@ import {
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
+  getConversation,
   getLastBotMessageTimestamp,
   getMessagesSince,
   getNewMessages,
@@ -648,5 +649,44 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// --- getConversation (D-93) ---
+describe('getConversation', () => {
+  it('returns both user + bot rows in ascending timestamp order', () => {
+    // JT: D-93 — verifies getConversation returns full conversation (C24)
+    storeChatMetadata('local@web-s6', '2026-01-01T00:00:00.000Z');
+    storeMessage({
+      id: 'u1', chat_jid: 'local@web-s6', sender: 'user', sender_name: 'You',
+      content: 'hello', timestamp: '2026-01-01T00:00:01.000Z',
+      is_from_me: false, is_bot_message: false,
+    });
+    storeMessage({
+      id: 'b1', chat_jid: 'local@web-s6', sender: 'Daystrom', sender_name: 'Daystrom',
+      content: 'hi there', timestamp: '2026-01-01T00:00:02.000Z',
+      is_from_me: false, is_bot_message: true,
+    });
+    const rows = getConversation('local@web-s6', 100);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].id).toBe('u1');
+    expect(rows[0].is_bot_message).toBeFalsy(); // SQLite returns 0 for false
+    expect(rows[1].id).toBe('b1');
+    expect(rows[1].is_bot_message).toBeTruthy(); // SQLite returns 1 for true
+  });
+
+  it('respects limit parameter', () => {
+    // JT: D-93 — verifies limit param is honoured
+    storeChatMetadata('local@web-s6lim', '2026-01-01T00:00:00.000Z');
+    for (let i = 0; i < 5; i++) {
+      storeMessage({
+        id: `msg-${i}`, chat_jid: 'local@web-s6lim', sender: 'user', sender_name: 'You',
+        content: `msg ${i}`, timestamp: `2026-01-01T00:00:0${i}.000Z`,
+        is_from_me: false, is_bot_message: false,
+      });
+    }
+
+    const rows = getConversation('local@web-s6lim', 3);
+    expect(rows).toHaveLength(3);
   });
 });

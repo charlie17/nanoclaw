@@ -20,14 +20,17 @@ import {
   NANOCLAW_WEB_HOST,
   NANOCLAW_WEB_PORT,
 } from '../config.js';
+// JT: D-93 — added getConversation (display-history) + storeMessage (bot-reply persistence)
 import {
   clearChatMessages,
   deleteChat,
   deleteMessage,
   getAllChats,
+  getConversation,
   getMessagesSince,
   setRouterState,
   storeChatMetadata,
+  storeMessage,
   updateChatName,
 } from '../db.js';
 import type { ChatInfo } from '../db.js';
@@ -658,7 +661,8 @@ document.getElementById('new-btn').onclick=function(){switchSid(mkSid());};
 async function loadHistory(){
   var r=await api('/chat/history?sid='+sid);if(!r)return;
   var ms=await r.json(),el=document.getElementById('msgs');el.innerHTML='';botDiv=null;
-  ms.forEach(function(m){addMsg(m.content,m.is_from_me?'u':'b',m.id);});
+  // JT: D-93 — render from server-side cls field; eliminates pre-existing display inversion (D-S6.4)
+  ms.forEach(function(m){addMsg(m.text,m.cls==='bot'?'b':'u',m.id);});
 }
 
 function addMsg(text,role,id){
@@ -672,11 +676,14 @@ function addMsg(text,role,id){
 }
 function scrollMsgs(){var e=document.getElementById('msgs');e.scrollTop=e.scrollHeight;}
 
+// JT: D-93 — sseEverConnected: loadHistory on reconnect surfaces persisted bot replies (C25, D-S6.8 manual-D8-retest)
+// Pattern from rozek/nanoclaw@9311ff1 — reconnect-aware onopen guard (§6 L12)
+var sseEverConnected=false;
 // Pattern from rozek/nanoclaw@9311ff1 — EventSource reconnect with exponential backoff, cap 30s
 function connectSse(){
   if(sse){sse.close();sse=null;}
   var s=new EventSource('/chat/events?sid='+sid);sse=s;
-  s.onopen=function(){reconDelay=1000;};
+  s.onopen=function(){var wasConnected=sseEverConnected;sseEverConnected=true;reconDelay=1000;if(wasConnected){setBusy(false);loadHistory();}};
   s.onerror=function(){s.close();sse=null;reconDelay=Math.min(reconDelay*2,30000);setTimeout(connectSse,reconDelay);};
   s.addEventListener('user_message',function(e){var d=JSON.parse(e.data);addMsg(d.text,'u',d.id);});
   s.addEventListener('agent_output',function(e){
@@ -749,6 +756,14 @@ function clearHistory(){
 }
 
 function init(){loadSessions();loadHistory();connectSse();}
+// JT: D-93 — wake-from-sleep recovery: unlocks input + re-fetches history + reconnects SSE (D-S6.5, D-S6.8 manual-D8-retest)
+// Pattern from rozek/nanoclaw@9311ff1 — visibilitychange recovery (§6 L11)
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState!=='visible')return;
+  setBusy(false);
+  loadHistory();
+  if(!sse)connectSse();
+});
 fetch('/chat/sessions').then(function(r){r.ok?showApp():showLogin('');}).catch(function(){showLogin('');});
 
 // ── Dashboard — D-S3.11/D-S3.12/D-S3.13/D-S3.14 ──────────────────────────────
@@ -901,11 +916,24 @@ export class WebChannel implements Channel {
     if (this.typingTimers.has(sid)) {
       this.setTypingForSid(sid, false);
     }
+    // JT: D-93 — persist bot reply before broadcast so history survives reload (C23)
+    // Pattern from rozek/nanoclaw@9311ff1 — persist bot reply before broadcast (§6 L10)
+    const botMsgId = `web-bot-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const botMsg: NewMessage = {
+      id: botMsgId, chat_jid: jid, sender: ASSISTANT_NAME, sender_name: ASSISTANT_NAME,
+      content: text, timestamp: new Date().toISOString(), is_from_me: false, is_bot_message: true,
+    };
+    try {
+      storeMessage(botMsg);
+      storeChatMetadata(jid, botMsg.timestamp, undefined, 'web', false);
+    } catch (err) {
+      logger.warn({ err, jid }, '[bridge] sendMessage: failed to persist bot message');
+    }
     broadcastToSession(
       this.clientsBySid,
       sid,
       'agent_output',
-      JSON.stringify({ text }),
+      JSON.stringify({ text, id: botMsgId }),
     );
   }
 
@@ -1712,14 +1740,18 @@ export class WebChannel implements Channel {
 
   private handleGetHistory(res: ServerResponse, url: URL): void {
     const sid = sanitizeSid(url.searchParams.get('sid') ?? undefined);
-    if (!sid) {
-      res.writeHead(400).end('Invalid or missing sid');
-      return;
-    }
+    if (!sid) { res.writeHead(400).end('Invalid or missing sid'); return; }
     const jid = jidFromSid(sid);
-    const msgs = getMessagesSince(jid, '', ASSISTANT_NAME, HISTORY_LIMIT);
+    // JT: D-93 — swap to getConversation (returns both sides) replacing getMessagesSince (C24)
+    // Pattern from rozek/nanoclaw@9311ff1 — /history cls shape with OR-guard for backward compat (§6 L10)
+    const rows = getConversation(jid, HISTORY_LIMIT);
+    const history = rows.map((m) => ({
+      text: m.content,
+      cls: m.is_bot_message || m.is_from_me ? 'bot' : 'user',
+      id: m.id,
+    }));
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(msgs));
+    res.end(JSON.stringify(history));
   }
 
   private handleGetSessions(res: ServerResponse): void {
