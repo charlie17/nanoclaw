@@ -8,6 +8,7 @@ import {
   getAllRegisteredGroups,
   getConversation,
   getLastBotMessageTimestamp,
+  getMessageCountForMonth,
   getMessagesSince,
   getNewMessages,
   getTaskById,
@@ -703,5 +704,30 @@ describe('getConversation', () => {
 
     const rows = getConversation('local@web-s6lim', 3);
     expect(rows).toHaveLength(3);
+  });
+});
+
+// JT: Impl-26 Batch 3.1c — DB-1/DB-2: getMessageCountForMonth tests (§G manifest)
+describe('getMessageCountForMonth', () => {
+  it('DB-1: returns 0 for a month with no messages', () => {
+    expect(getMessageCountForMonth('2026-04')).toBe(0);
+  });
+
+  it('DB-2: counts only is_bot_message=0 + non-empty content matching month prefix', () => {
+    storeChatMetadata('tg:user1', '2026-04-01T00:00:00.000Z');
+    storeChatMetadata('local@web-b2test', '2026-04-01T00:00:00.000Z');
+    // 2 qualifying Telegram user messages
+    storeMessage({ id: 'u1', chat_jid: 'tg:user1', sender: 'u', sender_name: 'U', content: 'hello', timestamp: '2026-04-01T10:00:00.000Z', is_from_me: false, is_bot_message: false });
+    storeMessage({ id: 'u2', chat_jid: 'tg:user1', sender: 'u', sender_name: 'U', content: 'world', timestamp: '2026-04-15T10:00:00.000Z', is_from_me: false, is_bot_message: false });
+    // 1 qualifying Bridge user message — pins MF-1 no-chat_jid-filter contract (Archie override)
+    storeMessage({ id: 'w1', chat_jid: 'local@web-b2test', sender: 'u', sender_name: 'U', content: 'bridge msg', timestamp: '2026-04-10T10:00:00.000Z', is_from_me: false, is_bot_message: false });
+    // 2 bot messages — must be excluded
+    storeMessage({ id: 'b1', chat_jid: 'tg:user1', sender: 'bot', sender_name: 'Bot', content: 'reply', timestamp: '2026-04-01T10:00:01.000Z', is_from_me: true, is_bot_message: true });
+    storeMessage({ id: 'b2', chat_jid: 'tg:user1', sender: 'bot', sender_name: 'Bot', content: 'reply2', timestamp: '2026-04-15T10:00:01.000Z', is_from_me: true, is_bot_message: true });
+    // 1 empty-content message — must be excluded
+    storeMessage({ id: 'e1', chat_jid: 'tg:user1', sender: 'u', sender_name: 'U', content: '', timestamp: '2026-04-20T10:00:00.000Z', is_from_me: false, is_bot_message: false });
+    expect(getMessageCountForMonth('2026-04')).toBe(3);
+    // Different month prefix must not match
+    expect(getMessageCountForMonth('2026-03')).toBe(0);
   });
 });

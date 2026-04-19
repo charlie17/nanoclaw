@@ -14,6 +14,7 @@ const envConfig = readEnvFile([
   'NANOCLAW_WEB_PORT',
   'NANOCLAW_WEB_HOST',
   'NANOCLAW_TOKEN',
+  'NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH',
 ]);
 
 export const ASSISTANT_NAME =
@@ -111,3 +112,11 @@ export const NANOCLAW_WEB_HOST =
   process.env.NANOCLAW_WEB_HOST || envConfig.NANOCLAW_WEB_HOST || '127.0.0.1';
 export const NANOCLAW_TOKEN =
   process.env.NANOCLAW_TOKEN || envConfig.NANOCLAW_TOKEN || '';
+// JT: Impl-26 Batch 3.1c — dual-usage $ rate for /dash/api-usage display.
+// Source: V6 Impl-25/26 scoped-key billing (2 dispatches × ~$0.20/dispatch observed).
+// Tune via .env as runtime data accumulates.
+export const NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH = parseFloat(
+  process.env.NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH ||
+    envConfig.NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH ||
+    '0.20',
+);

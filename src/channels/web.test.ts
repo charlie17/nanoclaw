@@ -26,6 +26,9 @@ vi.mock('../logger.js', () => ({
   },
 }));
 
+// vi.hoisted: per-test OAuth count override for AU-5
+const mockOauthReturns = vi.hoisted(() => ({ counts: [] as number[] }));
+
 vi.mock('../db.js', () => ({
   storeChatMetadata: vi.fn(),
   storeMessage: vi.fn(),
@@ -37,6 +40,10 @@ vi.mock('../db.js', () => ({
   deleteChat: vi.fn(),
   deleteMessage: vi.fn(() => true),
   clearChatMessages: vi.fn(() => 3),
+  getMessageCountForMonth: vi.fn(() => {
+    const v = mockOauthReturns.counts.shift();
+    return v ?? 0;
+  }),
 }));
 
 // vi.hoisted: allows per-test group folder path override (same pattern as mockConfig)
@@ -134,6 +141,7 @@ vi.mock('../config.js', () => ({
     return mockConfig.ASSISTANT_NAME;
   },
   CREDENTIAL_PROXY_PORT: 3001,
+  NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH: 0.20,
 }));
 
 import { readFile, readdir, stat, statfs, writeFile } from 'node:fs/promises';
@@ -142,6 +150,7 @@ import {
   deleteChat,
   deleteMessage as dbDeleteMessage,
   getConversation,
+  getMessageCountForMonth,
   setRouterState,
   storeChatMetadata,
   storeMessage,
@@ -1061,6 +1070,10 @@ describe('WebChannel HTTP — dashboard surface', () => {
     await dashChannel.disconnect();
   });
 
+  afterEach(() => {
+    mockOauthReturns.counts = [];
+  });
+
   function authH(extra?: Record<string, string>) {
     return { Authorization: 'Bearer test-secret-token', ...extra };
   }
@@ -1371,6 +1384,129 @@ describe('WebChannel HTTP — dashboard surface', () => {
     expect(deleteChat).not.toHaveBeenCalled();
     expect(dbDeleteMessage).not.toHaveBeenCalled();
     expect(clearChatMessages).not.toHaveBeenCalled();
+  });
+
+  // ── AU-1: /dash/api-usage unauthenticated → 401 ──────────────────────────────
+
+  it('AU-1: GET /dash/api-usage unauthenticated → 401', async () => {
+    const r = await req(dashPort, { method: 'GET', path: '/dash/api-usage' });
+    expect(r.status).toBe(401);
+  });
+
+  // ── AU-2: all 4 month files ENOENT → 200 + zeroed payload, no warn logs ──────
+
+  it('AU-2: GET /dash/api-usage all months ENOENT → 200 + 4 zeroed months + no warn', async () => {
+    // readFile already mocked to ENOENT in beforeEach
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/api-usage',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as {
+      months: Array<{ api_count: number; oauth_count: number; est_usd: number }>;
+      rate_per_dispatch: number;
+    };
+    expect(body.months).toHaveLength(4);
+    body.months.forEach((m) => {
+      expect(m.api_count).toBe(0);
+      expect(m.oauth_count).toBe(0);
+      expect(m.est_usd).toBe(0);
+    });
+    expect(typeof body.rate_per_dispatch).toBe('number');
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
+  });
+
+  // ── AU-3: current month file present {count:7}, prior 3 ENOENT ───────────────
+
+  it('AU-3: GET /dash/api-usage current month count=7 + prior 3 ENOENT → months[0].api_count=7', async () => {
+    vi.mocked(readFile)
+      .mockResolvedValueOnce(JSON.stringify({ count: 7 }) as unknown as Awaited<ReturnType<typeof readFile>>)
+      .mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/api-usage',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as {
+      months: Array<{ api_count: number; est_usd: number }>;
+    };
+    expect(body.months[0].api_count).toBe(7);
+    expect(body.months[0].est_usd).toBe(Math.round(7 * 0.20 * 100) / 100);
+    expect(body.months[1].api_count).toBe(0);
+    expect(body.months[2].api_count).toBe(0);
+    expect(body.months[3].api_count).toBe(0);
+  });
+
+  // ── AU-4: all 4 months populated, ordering descending from current ────────────
+
+  it('AU-4: GET /dash/api-usage counts [7,12,0,3] → months array in that order', async () => {
+    vi.mocked(readFile)
+      .mockResolvedValueOnce(JSON.stringify({ count: 7 }) as unknown as Awaited<ReturnType<typeof readFile>>)
+      .mockResolvedValueOnce(JSON.stringify({ count: 12 }) as unknown as Awaited<ReturnType<typeof readFile>>)
+      .mockResolvedValueOnce(JSON.stringify({ count: 0 }) as unknown as Awaited<ReturnType<typeof readFile>>)
+      .mockResolvedValueOnce(JSON.stringify({ count: 3 }) as unknown as Awaited<ReturnType<typeof readFile>>);
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/api-usage',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as {
+      months: Array<{ api_count: number }>;
+    };
+    expect(body.months[0].api_count).toBe(7);
+    expect(body.months[1].api_count).toBe(12);
+    expect(body.months[2].api_count).toBe(0);
+    expect(body.months[3].api_count).toBe(3);
+  });
+
+  // ── AU-5: OAuth counts from db flow through to payload ───────────────────────
+
+  it('AU-5: GET /dash/api-usage OAuth counts [45,60,80,100] → oauth_count flows through', async () => {
+    mockOauthReturns.counts = [45, 60, 80, 100];
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/api-usage',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as {
+      months: Array<{ oauth_count: number }>;
+    };
+    expect(body.months[0].oauth_count).toBe(45);
+    expect(body.months[1].oauth_count).toBe(60);
+    expect(body.months[2].oauth_count).toBe(80);
+    expect(body.months[3].oauth_count).toBe(100);
+    expect(vi.mocked(getMessageCountForMonth)).toHaveBeenCalledTimes(4);
+    // Pin the month-prefix contract: calls must use descending UTC YYYY-MM strings
+    const expectedMonths = Array.from({ length: 4 }, (_, i) => {
+      const d = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - i, 1));
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    });
+    expect(vi.mocked(getMessageCountForMonth).mock.calls.map((c) => c[0])).toEqual(expectedMonths);
+  });
+
+  // ── AU-6: $ computation accuracy ─────────────────────────────────────────────
+
+  it('AU-6: est_usd computation: rate=0.20 count=7 → 1.40; rate in payload', async () => {
+    vi.mocked(readFile)
+      .mockResolvedValueOnce(JSON.stringify({ count: 7 }) as unknown as Awaited<ReturnType<typeof readFile>>)
+      .mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    const r = await req(dashPort, {
+      method: 'GET',
+      path: '/dash/api-usage',
+      headers: authH(),
+    });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as {
+      months: Array<{ est_usd: number }>;
+      rate_per_dispatch: number;
+    };
+    // 7 × 0.20 = 1.40 exactly, no floating-point drift past 2 decimals
+    expect(body.months[0].est_usd).toBe(1.40);
+    expect(body.rate_per_dispatch).toBe(0.20);
   });
 });
 

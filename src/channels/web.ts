@@ -16,17 +16,20 @@ import path from 'node:path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH,
   NANOCLAW_TOKEN,
   NANOCLAW_WEB_HOST,
   NANOCLAW_WEB_PORT,
 } from '../config.js';
 // JT: D-93 — added getConversation (display-history) + storeMessage (bot-reply persistence)
+// JT: Impl-26 Batch 3.1c — added getMessageCountForMonth (OAuth monthly counter for /dash/api-usage)
 import {
   clearChatMessages,
   deleteChat,
   deleteMessage,
   getAllChats,
   getConversation,
+  getMessageCountForMonth,
   getMessagesSince,
   setRouterState,
   storeChatMetadata,
@@ -581,6 +584,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="dc" id="dc-health"><div class="dch">Health</div><div class="dcb" id="dc-health-body">Loading\u2026</div><div class="dcf" id="dc-health-foot"></div></div>
     <div class="dc" id="dc-vault"><div class="dch">Vault Stats</div><div class="dcb" id="dc-vault-body">Loading\u2026</div><div class="dcf" id="dc-vault-foot"></div></div>
     <div class="dc" id="dc-cost"><div class="dch">Cost</div><div class="dcb" id="dc-cost-body">Loading\u2026</div><div class="dcf" id="dc-cost-foot"></div></div>
+    <div class="dc" id="dc-api-usage"><div class="dch">API Usage</div><div class="dcb" id="dc-api-usage-body">Loading\u2026</div><div class="dcf" id="dc-api-usage-foot"></div></div>
   </div>
 </div>
 <script>
@@ -771,6 +775,7 @@ var dashTimer=null;
 var hBody=document.getElementById('dc-health-body'),hFoot=document.getElementById('dc-health-foot');
 var vBody=document.getElementById('dc-vault-body'),vFoot=document.getElementById('dc-vault-foot');
 var cBody=document.getElementById('dc-cost-body'),cFoot=document.getElementById('dc-cost-foot');
+var aBody=document.getElementById('dc-api-usage-body'),aFoot=document.getElementById('dc-api-usage-foot');
 
 function tsAgo(iso){if(!iso)return'';var d=Math.round((Date.now()-new Date(iso).getTime())/1000);return d<2?'just now':d+'s ago';}
 function fmtRl(rl){if(rl==null)return'unknown';if(rl.state==='ok')return'OK';if(!rl.last_hit_at)return'rate-limited';var m=Math.floor((Date.now()-new Date(rl.last_hit_at).getTime())/60000);return'rate-limited '+(m<1?'<1m':m+'m')+' ago';}
@@ -806,6 +811,17 @@ function renderCost(d){
   cFoot.textContent='Updated '+tsAgo(d.collected_at);
 }
 
+function renderApiUsage(d){
+  aBody.innerHTML='';
+  var rows=[];
+  d.months.forEach(function(m){
+    rows.push([m.month+' \u00b7 OAuth interactive',m.oauth_count+' msgs']);
+    rows.push([m.month+' \u00b7 API billable',m.api_count+' dispatches \u00b7 $'+m.est_usd.toFixed(2)]);
+  });
+  rows.push(['Rate per dispatch','$'+(d.rate_per_dispatch||0).toFixed(3)]);
+  rows.forEach(function(r){var row=mk('div','dr','');row.appendChild(mk('span','dk',r[0]));row.appendChild(mk('span','',r[1]));aBody.appendChild(row);});
+}
+
 function setCardErr(body,foot){
   var prev=body.innerHTML;body.innerHTML='';
   if(prev){var s=document.createElement('del');s.innerHTML=prev;body.appendChild(s);}
@@ -817,6 +833,7 @@ async function loadDash(){
   try{var rh=await api('/dash/health');if(rh&&rh.ok){renderHealth(await rh.json());}else{setCardErr(hBody,hFoot);}}catch(e){setCardErr(hBody,hFoot);}
   try{var rv=await api('/dash/vault-stats');if(rv&&rv.ok){renderVault(await rv.json());}else{setCardErr(vBody,vFoot);}}catch(e){setCardErr(vBody,vFoot);}
   try{var rc=await api('/dash/cost');if(rc&&rc.ok){renderCost(await rc.json());}else{setCardErr(cBody,cFoot);}}catch(e){setCardErr(cBody,cFoot);}
+  try{var ra=await api('/dash/api-usage');if(ra&&ra.ok){renderApiUsage(await ra.json());}else{setCardErr(aBody,aFoot);}}catch(e){setCardErr(aBody,aFoot);}
 }
 
 function handleDashVis(){
@@ -871,6 +888,7 @@ export class WebChannel implements Channel {
     { payload: unknown; expiresAt: number }
   >();
   private dashHealthLoggedOnce = false;
+  private dashApiUsageLoggedOnce = false;
 
   constructor(opts: ChannelOpts) {
     this.opts = opts;
@@ -1086,6 +1104,10 @@ export class WebChannel implements Channel {
     }
     if (method === 'GET' && urlPath === '/dash/cost') {
       await this.handleDashCost(res);
+      return;
+    }
+    if (method === 'GET' && urlPath === '/dash/api-usage') {
+      await this.handleDashApiUsage(req, res);
       return;
     }
 
@@ -1904,6 +1926,95 @@ export class WebChannel implements Channel {
     res
       .writeHead(200, { 'Content-Type': 'application/json' })
       .end(JSON.stringify(payload));
+  }
+
+  // JT: Impl-26 Batch 3.1c — returns YYYY-MM strings for current + prior n-1 UTC months.
+  private monthsBackUTC(n: number): string[] {
+    const now = new Date();
+    const months: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const d = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1),
+      );
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      months.push(`${y}-${m}`);
+    }
+    return months;
+  }
+
+  // JT: Impl-26 Batch 3.1c — reads 4 monthly api-usage state files + OAuth db counts.
+  // C-gate C31: each month file read is independent; ENOENT → count:0, no warning (C32).
+  private async collectApiUsage(): Promise<{
+    months: Array<{
+      month: string;
+      api_count: number;
+      oauth_count: number;
+      est_usd: number;
+    }>;
+    rate_per_dispatch: number;
+  }> {
+    const months = this.monthsBackUTC(4);
+    const stateDir = path.join(os.homedir(), 'daystrom-ops', 'state');
+    const out: Array<{
+      month: string;
+      api_count: number;
+      oauth_count: number;
+      est_usd: number;
+    }> = [];
+    for (const ym of months) {
+      let apiCount = 0;
+      try {
+        const raw = await readFile(
+          path.join(stateDir, `api-usage-${ym}.json`),
+          'utf-8',
+        );
+        const parsed = JSON.parse(raw) as { count?: unknown };
+        apiCount = typeof parsed?.count === 'number' ? parsed.count : 0;
+      } catch (e: unknown) {
+        const err = e as { code?: string };
+        if (err?.code !== 'ENOENT') {
+          logger.warn(
+            { month: ym, err: String(e) },
+            '[bridge] /dash/api-usage read error',
+          );
+        }
+      }
+      const oauthCount = getMessageCountForMonth(ym);
+      out.push({
+        month: ym,
+        api_count: apiCount,
+        oauth_count: oauthCount,
+        est_usd:
+          Math.round(apiCount * NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH * 100) /
+          100,
+      });
+    }
+    return { months: out, rate_per_dispatch: NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH };
+  }
+
+  // JT: Impl-26 Batch 3.1c — /dash/api-usage handler. C-gate C26: read-only, no writes.
+  private async handleDashApiUsage(
+    _req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    try {
+      const payload = await this.getOrCollect('api-usage', () =>
+        this.collectApiUsage(),
+      );
+      if (!this.dashApiUsageLoggedOnce) {
+        this.dashApiUsageLoggedOnce = true;
+        logger.info(
+          '[bridge] /dash/api-usage: first successful collection after start',
+        );
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload));
+    } catch (e: unknown) {
+      logger.error({ err: String(e) }, '[bridge] /dash/api-usage failed');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'collection_failed' }));
+    }
   }
 
   // ── Typing indicator ──────────────────────────────────────────────────────

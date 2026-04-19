@@ -789,3 +789,18 @@ export function getConversation(chatJid: string, limit: number): NewMessage[] {
     )
     .all(chatJid, limit) as NewMessage[];
 }
+
+// JT: Impl-26 Batch 3.1c — monthly OAuth-subscription message counter for /dash/api-usage.
+// Counts Telegram + Bridge user-initiated messages (is_bot_message=0, non-empty content).
+// yearMonth format: "YYYY-MM" (e.g. "2026-04"). C-gate C29: parameterized query only.
+export function getMessageCountForMonth(yearMonth: string): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS count FROM messages
+       WHERE is_bot_message = 0
+         AND content IS NOT NULL AND content != ''
+         AND timestamp LIKE ?`,
+    )
+    .get(`${yearMonth}%`) as { count: number } | undefined;
+  return row?.count ?? 0;
+}
