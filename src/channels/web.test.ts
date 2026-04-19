@@ -141,7 +141,7 @@ vi.mock('../config.js', () => ({
     return mockConfig.ASSISTANT_NAME;
   },
   CREDENTIAL_PROXY_PORT: 3001,
-  NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH: 0.20,
+  NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH: 0.2,
 }));
 
 import { readFile, readdir, stat, statfs, writeFile } from 'node:fs/promises';
@@ -1404,7 +1404,11 @@ describe('WebChannel HTTP — dashboard surface', () => {
     });
     expect(r.status).toBe(200);
     const body = JSON.parse(r.body) as {
-      months: Array<{ api_count: number; oauth_count: number; est_usd: number }>;
+      months: Array<{
+        api_count: number;
+        oauth_count: number;
+        est_usd: number;
+      }>;
       rate_per_dispatch: number;
     };
     expect(body.months).toHaveLength(4);
@@ -1421,8 +1425,14 @@ describe('WebChannel HTTP — dashboard surface', () => {
 
   it('AU-3: GET /dash/api-usage current month count=7 + prior 3 ENOENT → months[0].api_count=7', async () => {
     vi.mocked(readFile)
-      .mockResolvedValueOnce(JSON.stringify({ count: 7 }) as unknown as Awaited<ReturnType<typeof readFile>>)
-      .mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      .mockResolvedValueOnce(
+        JSON.stringify({ count: 7 }) as unknown as Awaited<
+          ReturnType<typeof readFile>
+        >,
+      )
+      .mockRejectedValue(
+        Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+      );
     const r = await req(dashPort, {
       method: 'GET',
       path: '/dash/api-usage',
@@ -1433,7 +1443,7 @@ describe('WebChannel HTTP — dashboard surface', () => {
       months: Array<{ api_count: number; est_usd: number }>;
     };
     expect(body.months[0].api_count).toBe(7);
-    expect(body.months[0].est_usd).toBe(Math.round(7 * 0.20 * 100) / 100);
+    expect(body.months[0].est_usd).toBe(Math.round(7 * 0.2 * 100) / 100);
     expect(body.months[1].api_count).toBe(0);
     expect(body.months[2].api_count).toBe(0);
     expect(body.months[3].api_count).toBe(0);
@@ -1443,10 +1453,26 @@ describe('WebChannel HTTP — dashboard surface', () => {
 
   it('AU-4: GET /dash/api-usage counts [7,12,0,3] → months array in that order', async () => {
     vi.mocked(readFile)
-      .mockResolvedValueOnce(JSON.stringify({ count: 7 }) as unknown as Awaited<ReturnType<typeof readFile>>)
-      .mockResolvedValueOnce(JSON.stringify({ count: 12 }) as unknown as Awaited<ReturnType<typeof readFile>>)
-      .mockResolvedValueOnce(JSON.stringify({ count: 0 }) as unknown as Awaited<ReturnType<typeof readFile>>)
-      .mockResolvedValueOnce(JSON.stringify({ count: 3 }) as unknown as Awaited<ReturnType<typeof readFile>>);
+      .mockResolvedValueOnce(
+        JSON.stringify({ count: 7 }) as unknown as Awaited<
+          ReturnType<typeof readFile>
+        >,
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({ count: 12 }) as unknown as Awaited<
+          ReturnType<typeof readFile>
+        >,
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({ count: 0 }) as unknown as Awaited<
+          ReturnType<typeof readFile>
+        >,
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({ count: 3 }) as unknown as Awaited<
+          ReturnType<typeof readFile>
+        >,
+      );
     const r = await req(dashPort, {
       method: 'GET',
       path: '/dash/api-usage',
@@ -1482,18 +1508,28 @@ describe('WebChannel HTTP — dashboard surface', () => {
     expect(vi.mocked(getMessageCountForMonth)).toHaveBeenCalledTimes(4);
     // Pin the month-prefix contract: calls must use descending UTC YYYY-MM strings
     const expectedMonths = Array.from({ length: 4 }, (_, i) => {
-      const d = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - i, 1));
+      const d = new Date(
+        Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - i, 1),
+      );
       return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
     });
-    expect(vi.mocked(getMessageCountForMonth).mock.calls.map((c) => c[0])).toEqual(expectedMonths);
+    expect(
+      vi.mocked(getMessageCountForMonth).mock.calls.map((c) => c[0]),
+    ).toEqual(expectedMonths);
   });
 
   // ── AU-6: $ computation accuracy ─────────────────────────────────────────────
 
   it('AU-6: est_usd computation: rate=0.20 count=7 → 1.40; rate in payload', async () => {
     vi.mocked(readFile)
-      .mockResolvedValueOnce(JSON.stringify({ count: 7 }) as unknown as Awaited<ReturnType<typeof readFile>>)
-      .mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      .mockResolvedValueOnce(
+        JSON.stringify({ count: 7 }) as unknown as Awaited<
+          ReturnType<typeof readFile>
+        >,
+      )
+      .mockRejectedValue(
+        Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+      );
     const r = await req(dashPort, {
       method: 'GET',
       path: '/dash/api-usage',
@@ -1505,8 +1541,8 @@ describe('WebChannel HTTP — dashboard surface', () => {
       rate_per_dispatch: number;
     };
     // 7 × 0.20 = 1.40 exactly, no floating-point drift past 2 decimals
-    expect(body.months[0].est_usd).toBe(1.40);
-    expect(body.rate_per_dispatch).toBe(0.20);
+    expect(body.months[0].est_usd).toBe(1.4);
+    expect(body.rate_per_dispatch).toBe(0.2);
   });
 });
 

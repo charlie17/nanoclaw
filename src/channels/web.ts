@@ -1990,7 +1990,10 @@ export class WebChannel implements Channel {
           100,
       });
     }
-    return { months: out, rate_per_dispatch: NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH };
+    return {
+      months: out,
+      rate_per_dispatch: NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH,
+    };
   }
 
   // JT: Impl-26 Batch 3.1c — /dash/api-usage handler. C-gate C26: read-only, no writes.
