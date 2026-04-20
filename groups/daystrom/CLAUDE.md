@@ -211,7 +211,7 @@ date: 2026-03-22
 
 When a research request arrives, invoke the `/research` skill (see `research/SKILL.md` in your skills dir). Two paths:
 
-**Sync path (preferred when viable):** If Readwise + vault + your training knowledge can answer, write the output directly to `research/research-{YYYY-MM-DD}-{topic-slug}.md` with `run-mode: sync` in frontmatter. Full synthesis workflow deferred to Batch 3.3.
+**Sync path (preferred when viable):** If Readwise + vault + your training knowledge can answer, write the output directly to `research/research-{YYYY-MM-DD}-{topic-slug}.md` with `run-mode: sync` in frontmatter.
 
 **Supplement path (web-search required):** Dispatch via the skill. Skill writes a queue JSON entry; O'Brien (host daemon) picks it up, makes the `web_search_20250305` API call, writes the result to `~/vault/quarantine/research/` (a path you CANNOT access), and pings JT on Telegram. JT reviews in Obsidian, clears the trust flag, and moves the file into `general/research/` where you can read it normally.
 
