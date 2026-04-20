@@ -21,6 +21,8 @@ mcp__readwise__readwise_search_highlights(vector_search_term="<JT query>") # sem
 
 `reader_search_documents` is **hybrid (semantic + keyword)** across Daystrom's Readwise library (Reader documents). `readwise_search_highlights` is semantic across highlights. Merge results by document ID; de-duplicate.
 
+Capture `id` and `location` for every surfaced document — you need both to construct the deep-link in the Telegram reply (see `### Telegram reply` below + CLAUDE.md `## Telegram Output Format` → Deep-linking). For `readwise_search_highlights`, join each highlight to its parent doc via `document_id` + `document_location` in the response.
+
 ### Signal hierarchy
 
 Within the matched result set, prioritize in order:
@@ -93,7 +95,7 @@ No `trust` field — absence is the trust signal (sync-path sources are JT-curat
 
 Reply format (draft — JT tweak-rights reserved):
 
-Per CLAUDE.md `## Telegram Output Format` — plain-text only, no `|` column syntax. Example for `/research spaced repetition`:
+Per CLAUDE.md `## Telegram Output Format` — plain-text only, no `|` column syntax. Each cited source title is a markdown deep-link per CLAUDE.md `### Deep-linking items you surface` (Readwise: `https://read.readwise.io/{location}/read/{id}`; vault: Obsidian CF-worker URL). Example for `/research spaced repetition`:
 
 ```
 Research complete: spaced repetition
@@ -101,19 +103,19 @@ Research complete: spaced repetition
 [Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fresearch%2Fresearch-2026-04-20-spaced-repetition)
 
 Top sources:
-1. "Make It Stick" highlights — 12 passages on retrieval practice [your note: "key for Anki redesign"]
-2. Foer article (archived) — your note: "Anki only works if you build the habit"
-3. "Learning How to Learn" (Oakley) — spaced vs massed practice, 4 highlights
-4. Spaced repetition vault note — prior research report from 2026-02-14
-5. "The Science of Self-Learning" (starred) — 3 highlights on interval scheduling
+1. ["Make It Stick"](https://read.readwise.io/archive/read/01kpdqd374qhavgs79cbp9vr8q) — 12 highlights on retrieval practice [your note: "key for Anki redesign"]
+2. [Foer article](https://read.readwise.io/archive/read/01kpabc123xyz) — your note: "Anki only works if you build the habit"
+3. ["Learning How to Learn" (Oakley)](https://read.readwise.io/later/read/01kpdef456uvw) — spaced vs massed practice, 4 highlights
+4. [Spaced repetition vault note](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fresearch%2Fresearch-2026-02-14-spaced-repetition) — prior research report
+5. ["The Science of Self-Learning"](https://read.readwise.io/archive/read/01kpghi789rst) (starred) — 3 highlights on interval scheduling
 ```
 
 Shape rules:
 - Line 1: topic confirmation one-liner
-- Line 2: Obsidian deep-link (CF worker URL wrapping `obsidian://open?vault=ObsidianDaystromVault&file=general/research/{filename-without-extension}`)
+- Line 2: Obsidian deep-link for the newly written research report (CF worker URL wrapping `obsidian://open?vault=ObsidianDaystromVault&file=general/research/{filename-without-extension}`)
 - Blank line
 - "Top sources:" plain-text header
-- 3–5 numbered source items, one per line
+- 3–5 numbered source items, one per line, **titles wrapped as markdown deep-links** per CLAUDE.md rule
 - JT's own notes quoted inline with `[your note: "..."]` when present
 - Never use `|` / `-+-` / table syntax
 

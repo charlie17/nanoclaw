@@ -133,6 +133,23 @@ When your response surfaces to Telegram (any skill JT invokes from Telegram — 
 
 Use em-dashes (`—`), middle dots (`·`), or labels (`[your note: "..."]`) to separate inline attributes. Never pipes. This rule applies even when content is naturally tabular (ranked backlogs, source lists, comparison items) — express the structure through consistent per-line formatting, not through table syntax. Bold, italic, inline code, and inline links DO render on Telegram and are fine to use.
 
+### Deep-linking items you surface
+
+Whenever you cite a Readwise Reader document or a vault file in a Telegram reply (source lists, backlog entries, wiki-ingest source announcements, etc.), wrap the title as a markdown link using the item's canonical deep-link URL. Telegram renders markdown links; this makes every cited item one tap from the user's eye.
+
+- **Readwise Reader documents** — construct `https://read.readwise.io/{location}/read/{document_id}` where `location` is the document's current location (`new` / `later` / `shortlist` / `archive` / `feed`) and `document_id` is the `id` field from the MCP response. Always include `location` (or rely on the MCP default payload which includes it) when fetching — you need it to build the URL. If location is unavailable for a given result (rare), fall back to plain-text title with no link.
+- **Vault files** (prior research reports, wiki pages, image companions) — use the existing Obsidian deep-link pattern via the Cloudflare worker: `https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3D{url-encoded-vault-path-without-extension}`.
+- **Highlights from `readwise_search_highlights`** — join to the parent doc via `document_id` + `document_location` from the highlight response; use the Readwise Reader URL pattern above (linking to the parent doc, not a per-highlight anchor).
+
+Example (plain-text numbered list with deep-linked titles):
+```
+1. ["Make It Stick"](https://read.readwise.io/archive/read/01kpdqd374qhavgs79cbp9vr8q) — 12 highlights on retrieval practice [your note: "key for Anki redesign"]
+2. [Foer article](https://read.readwise.io/archive/read/01kpabc...) — your note: "Anki only works if you build the habit"
+3. [Spaced repetition vault note](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fresearch%2Fresearch-2026-02-14-spaced-repetition) — prior research report
+```
+
+The deep-link is a snapshot at research-time; if JT later moves the Readwise doc (e.g., archive → delete) the link may 404. Acceptable tradeoff for tappable citations.
+
 Bridge-surface responses (`/dash/*` routes) are exempt — the dashboard UI renders full markdown.
 
 ---

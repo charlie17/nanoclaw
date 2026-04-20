@@ -14,7 +14,7 @@ Announce model at start: "Running `/wiki-scan` with Haiku — diagnostic report 
 
 ## Output shape
 
-Per CLAUDE.md `## Telegram Output Format` — plain-text numbered list, one item per line. Telegram does NOT render `|` table syntax; pipes and dashes show as literal characters.
+Per CLAUDE.md `## Telegram Output Format` — plain-text numbered list, one item per line. Telegram does NOT render `|` table syntax; pipes and dashes show as literal characters. Each item's title is a markdown deep-link to its Readwise Reader URL per CLAUDE.md `### Deep-linking items you surface` — the `reader_list_documents` response contains `id` + `location` for every item; use them to construct `https://read.readwise.io/{location}/read/{id}` for each backlog entry.
 
 **WRONG:**
 ```
@@ -25,8 +25,8 @@ Per CLAUDE.md `## Telegram Output Format` — plain-text numbered list, one item
 
 **RIGHT:**
 ```
-1. Make It Stick — Brown ⭐ Saved Apr 12
-2. Spacing Effect Explained — Oakley · Saved Apr 09
+1. [Make It Stick](https://read.readwise.io/archive/read/01kpdqd374qhavgs79cbp9vr8q) — Brown ⭐ Saved Apr 12
+2. [Spacing Effect Explained](https://read.readwise.io/archive/read/01kpabc123xyz) — Oakley · Saved Apr 09
 ```
 
 Keep inline metadata short (author, starred, saved-date is enough). Use em-dashes, middle dots, or labels to separate attributes — never pipes. No vault writes during a scan run.
