@@ -62,6 +62,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSessionCleanup } from './session-cleanup.js';
+import { startSlowSkillAck } from './slow-skill-ack.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -266,6 +267,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }, IDLE_TIMEOUT);
   };
 
+  const lastMsg = missedMessages[missedMessages.length - 1].content;
+  const stopAck = startSlowSkillAck(chatJid, channel, lastMsg);
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
@@ -297,6 +300,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   });
 
+  stopAck();
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
