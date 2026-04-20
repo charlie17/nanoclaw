@@ -4,7 +4,7 @@ When JT invokes `/wiki-ingest`, process the next unprocessed `daystrom-wiki`-tag
 
 ## Readwise path (default)
 
-1. Read `general/wiki/_processed.json`. Run `readwise reader-list-documents --tag daystrom-wiki --location archive` to list tagged items. (`[impl-verify]` — command shapes per BA §8.4.) Select the next item NOT in the ledger. Fetch its content with `readwise reader-get-document-details --document-id <id>` and highlights with `readwise reader-get-document-highlights --document-id <id>`.
+1. Read `general/wiki/_processed.json`. Call `mcp__readwise__reader_list_documents({tag: ["daystrom-wiki"], location: "archive"})` to list tagged items. Select the next item NOT in the ledger. Fetch its content with `mcp__readwise__reader_get_document_details({document_id: "<id>"})` and highlights with `mcp__readwise__reader_get_document_highlights({document_id: "<id>"})`.
 2. Run `mcp__qmd__query` over the full `general` namespace to surface what Daystrom already knows that's relevant to this source.
 3. **Ask JT about emphasis** before synthesizing: *"Should I build the page primarily from your highlights and notes, or treat the full body as primary with highlights and notes as color?"* Ask fresh each ingest — do not persist across sessions.
 4. Discuss key takeaways with JT. Surface what's new, what connects, what contradicts prior understanding. **Provenance distinction:** clearly indicate what came from the raw Readwise source vs. existing vault content (Karpathy L9 mandate).
@@ -49,7 +49,7 @@ When JT points at multiple sources or a tagged backlog, process one at a time. F
 
 - Do NOT batch-read multiple sources before processing — one at a time, always.
 - Do NOT write to vault dimensions other than `general/wiki/` — wiki work is ringfenced to the Research dimension only (Karpathy prime directive).
-- Do NOT invent Readwise doc IDs — use only IDs returned by the CLI.
+- Do NOT invent Readwise doc IDs — use only IDs returned by `mcp__readwise__reader_list_documents`.
 - Do NOT skip the `_processed.json` update on the Readwise path (D-17 idempotency).
 - Do NOT self-trigger `/wiki-ingest` — invocation is always explicit by JT (D-17).
 

@@ -474,6 +474,7 @@ async function runQuery(
           'NotebookEdit',
           'mcp__nanoclaw__*',
           'mcp__qmd__*',
+          'mcp__readwise__*',
         ];
         const strip = new Set<string>();
         if (process.env.NANOCLAW_STRIP_WEB_TOOLS === '1') {
@@ -502,6 +503,16 @@ async function runQuery(
           // daystrom-net's custom-bridge gateway (172.29.0.1). Impl-28 D6 finding. See D-95 amendment.
           type: 'http',
           url: 'http://172.29.0.1:8181/mcp',
+        },
+        readwise: {
+          // D-98: MCP-direct transport via host-side tinyproxy egress proxy (172.29.0.1:3128).
+          // Auth: static-token path — "Token " prefix per readwise-cli/src/mcp.ts:9.
+          // HTTPS_PROXY env var (injected in container-runner.ts) routes CONNECT through proxy.
+          type: 'http',
+          url: 'https://mcp2.readwise.io/mcp',
+          headers: {
+            Authorization: `Token ${process.env.READWISE_ACCESS_TOKEN}`,
+          },
         },
       },
       hooks: {

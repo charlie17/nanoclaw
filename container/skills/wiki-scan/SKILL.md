@@ -6,7 +6,7 @@ Announce model at start: "Running `/wiki-scan` with Haiku — diagnostic report 
 
 ## Scan flow
 
-1. Run `readwise reader-list-documents --tag daystrom-wiki --location archive` → collect all tagged Readwise doc IDs and titles. (`[impl-verify]` — command shape per BA §8.4; output format confirmed at first smoke-test.)
+1. Call `mcp__readwise__reader_list_documents({tag: ["daystrom-wiki"], location: "archive"})` → collect all tagged Readwise doc IDs and titles.
 2. Read `general/wiki/_processed.json` → collect set of already-processed doc IDs.
 3. Compute delta: tagged items NOT in `_processed.json` = unprocessed backlog.
 4. Rank the delta by Readwise signal: starred items first, then by highlight density (items with more highlights rank higher), then by recency.
@@ -22,7 +22,7 @@ Optional `log.md` append (only if JT asks): `## [YYYY-MM-DD] scan | N backlog it
 
 - Do NOT ingest any item — this command never calls `/wiki-ingest` or writes wiki pages.
 - Do NOT modify `_processed.json` — this file is updated only by `/wiki-ingest` on the Readwise path.
-- Do NOT fabricate Readwise doc IDs or titles — report only what the CLI returns.
+- Do NOT fabricate Readwise doc IDs or titles — report only what Readwise returns.
 - Do NOT reach outside the `general/` namespace or write to vault during a scan.
 
 ## Rationale

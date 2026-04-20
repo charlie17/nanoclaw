@@ -92,19 +92,6 @@ function buildVolumeMounts(
       });
     }
 
-    // Readwise CLI token — bind-mount host token read-only into container home.
-    // Required so /wiki-ingest and /wiki-scan can shell out to `readwise` CLI
-    // inside the container (CLI is installed via Dockerfile L36; auth lives
-    // on host at ~/.readwise-cli.json, created once via Tier-3 login-with-token).
-    const readwiseToken = path.join(os.homedir(), '.readwise-cli.json');
-    if (fs.existsSync(readwiseToken)) {
-      mounts.push({
-        hostPath: readwiseToken,
-        containerPath: '/home/node/.readwise-cli.json',
-        readonly: true,
-      });
-    }
-
     // Main gets writable access to the store (SQLite DB) so it can
     // query and write to the database directly.
     const storeDir = path.join(projectRoot, 'store');
@@ -299,6 +286,31 @@ function buildContainerArgs(
     args.push(`--add-host=host.docker.internal:${DAYSTROM_NET_GATEWAY}`);
   } else {
     args.push(...hostGatewayArgs());
+  }
+
+  // Readwise MCP token injection (D-98). Only for Daystrom (isMain/stripWebTools).
+  // Security notes: token appears in containerArgs at debug-level log and on-disk
+  // log file on non-zero exit. Acceptable per D-72 single-tenant VPS threat model.
+  // Token also visible in `ps -ef` during container lifetime (same D-72 ruling).
+  if (stripWebTools) {
+    const tokenFile = path.join(os.homedir(), '.readwise-cli.json');
+    if (fs.existsSync(tokenFile)) {
+      try {
+        const json = JSON.parse(fs.readFileSync(tokenFile, 'utf8')) as {
+          access_token?: string;
+        };
+        if (json.access_token) {
+          args.push('-e', `READWISE_ACCESS_TOKEN=${json.access_token}`);
+        }
+      } catch {
+        // fails-open: token file unreadable → readwise MCP handshake fails cleanly;
+        // other Daystrom messages unaffected.
+      }
+    }
+    // Egress proxy: route all container HTTPS through domain-filtering tinyproxy (D-98).
+    args.push('-e', 'HTTPS_PROXY=http://172.29.0.1:3128');
+    args.push('-e', 'HTTP_PROXY=http://172.29.0.1:3128');
+    args.push('-e', 'NO_PROXY=172.29.0.0/24,127.0.0.1');
   }
 
   // Run as host user so bind-mounted files are accessible.
