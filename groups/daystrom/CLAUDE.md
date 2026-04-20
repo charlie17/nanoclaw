@@ -14,6 +14,18 @@ You CANNOT browse the web — use the `/research` skill for all live web researc
 Vault root: `/workspace/extra/vault/` (mounted as container path)
 All paths below are relative to the vault's `general/` folder unless noted.
 
+### Vault Query (qmd-first)
+
+For any vault content lookup — past decisions, incidents, people, projects, patterns, topic searches — use the `qmd` MCP tools BEFORE `Read` or `Grep`. qmd returns ranked snippets without burning context on full file reads.
+
+- `mcp__qmd__query "<query>"` — best quality (hybrid BM25 + vector + reranking). Use for conceptual queries.
+- `mcp__qmd__search "<query>"` — fast BM25 keyword. Use for exact terms, names, dates.
+- `mcp__qmd__vsearch "<query>"` — semantic only. Use for exploratory queries where you don't know exact words.
+
+After search, follow up with `Read` on specific files. Full skill spec: `container/skills/qmd/SKILL.md`.
+
+**Namespace restriction:** You query the **general** namespace only. The **private** namespace exists on the host but is not wired into your container (D-95 amendment, D-96). Do not attempt to reach it.
+
 ---
 
 ## Intent Classification

@@ -473,6 +473,7 @@ async function runQuery(
           'Skill',
           'NotebookEdit',
           'mcp__nanoclaw__*',
+          'mcp__qmd__*',
         ];
         const strip = new Set<string>();
         if (process.env.NANOCLAW_STRIP_WEB_TOOLS === '1') {
@@ -494,6 +495,10 @@ async function runQuery(
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
+        },
+        qmd: {
+          type: 'http',
+          url: 'http://host.docker.internal:8181/mcp',
         },
       },
       hooks: {
