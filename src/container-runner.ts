@@ -310,10 +310,17 @@ function buildContainerArgs(
     // Egress proxy: route all container HTTPS through domain-filtering tinyproxy (D-98).
     args.push('-e', 'HTTPS_PROXY=http://172.29.0.1:3128');
     args.push('-e', 'HTTP_PROXY=http://172.29.0.1:3128');
-    // NO_PROXY: explicit IPs only — CIDR notation (172.29.0.0/24) is not honored
-    // by the proxy-from-env npm lib the SDK uses, which caused credential-proxy
-    // + qmd-MCP traffic to route through tinyproxy and get filter-denied (Impl-30 D6).
-    args.push('-e', 'NO_PROXY=172.29.0.1,127.0.0.1,localhost');
+    // NO_PROXY: explicit hostnames + IPs — proxy-from-env matches by URL hostname
+    // (pre-resolution), not resolved IP. CIDR notation is NOT honored. Must include
+    // both the hostname `host.docker.internal` (used by ANTHROPIC_BASE_URL via
+    // --add-host=host-gateway → docker0 172.17.0.1 on Linux) AND the literal IPs
+    // (172.29.0.1 qmd-MCP + credential proxy, 172.17.0.1 docker0 gateway). Caught
+    // at Impl-30 D6 deploy-time — credential proxy calls were routing through
+    // tinyproxy and hitting filter-deny, producing system/api_retry loop.
+    args.push(
+      '-e',
+      'NO_PROXY=host.docker.internal,172.29.0.1,172.17.0.1,127.0.0.1,localhost',
+    );
   }
 
   // Run as host user so bind-mounted files are accessible.
