@@ -14,7 +14,7 @@ Announce model at start: "Running `/wiki-scan` with Haiku — diagnostic report 
 
 ## Output shape
 
-Conversational report. Optional markdown table for the top candidates. No vault writes during a scan run.
+Conversational report as a plain-text numbered list — one item per line, e.g. `1. Title — Author ⭐ Saved Apr 12`. **Do NOT use markdown tables** — Telegram does not render table syntax and the pipes/dashes show up as literal characters. Keep inline metadata short (author, starred, saved-date is enough). No vault writes during a scan run.
 
 Optional `log.md` append (only if JT asks): `## [YYYY-MM-DD] scan | N backlog items, priority top-3: X, Y, Z`
 
