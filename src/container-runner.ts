@@ -310,7 +310,10 @@ function buildContainerArgs(
     // Egress proxy: route all container HTTPS through domain-filtering tinyproxy (D-98).
     args.push('-e', 'HTTPS_PROXY=http://172.29.0.1:3128');
     args.push('-e', 'HTTP_PROXY=http://172.29.0.1:3128');
-    args.push('-e', 'NO_PROXY=172.29.0.0/24,127.0.0.1');
+    // NO_PROXY: explicit IPs only — CIDR notation (172.29.0.0/24) is not honored
+    // by the proxy-from-env npm lib the SDK uses, which caused credential-proxy
+    // + qmd-MCP traffic to route through tinyproxy and get filter-denied (Impl-30 D6).
+    args.push('-e', 'NO_PROXY=172.29.0.1,127.0.0.1,localhost');
   }
 
   // Run as host user so bind-mounted files are accessible.
