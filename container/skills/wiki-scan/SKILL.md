@@ -14,7 +14,22 @@ Announce model at start: "Running `/wiki-scan` with Haiku — diagnostic report 
 
 ## Output shape
 
-Conversational report as a plain-text numbered list — one item per line, e.g. `1. Title — Author ⭐ Saved Apr 12`. **Do NOT use markdown tables** — Telegram does not render table syntax and the pipes/dashes show up as literal characters. Keep inline metadata short (author, starred, saved-date is enough). No vault writes during a scan run.
+Per CLAUDE.md `## Telegram Output Format` — plain-text numbered list, one item per line. Telegram does NOT render `|` table syntax; pipes and dashes show as literal characters.
+
+**WRONG:**
+```
+| # | Title          | Author | Saved  |
+|---|----------------|--------|--------|
+| 1 | Make It Stick  | Brown  | Apr 12 |
+```
+
+**RIGHT:**
+```
+1. Make It Stick — Brown ⭐ Saved Apr 12
+2. Spacing Effect Explained — Oakley · Saved Apr 09
+```
+
+Keep inline metadata short (author, starred, saved-date is enough). Use em-dashes, middle dots, or labels to separate attributes — never pipes. No vault writes during a scan run.
 
 Optional `log.md` append (only if JT asks): `## [YYYY-MM-DD] scan | N backlog items, priority top-3: X, Y, Z`
 

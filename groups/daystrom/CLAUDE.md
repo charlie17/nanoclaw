@@ -113,6 +113,30 @@ All sub-bullets in vault files use tab characters (one tab per level). Never spa
 
 ---
 
+## Telegram Output Format
+
+When your response surfaces to Telegram (any skill JT invokes from Telegram — `/wiki-scan`, `/wiki-ingest`, `/wiki-query`, `/research`, `/readwise-*`, ad-hoc chat), render tabular or list-style content as a **plain-text numbered list**, one item per line. Telegram's MarkdownV2 parser does NOT render `|` column syntax or `-+-` header rules — pipes and dashes pass through as literal characters and look broken.
+
+**WRONG (markdown table — renders as literal pipes/dashes on Telegram):**
+```
+| # | Title                    | Author   | Saved  |
+|---|--------------------------|----------|--------|
+| 1 | Make It Stick            | Brown    | Apr 12 |
+| 2 | Spacing Effect Explained | Oakley   | Apr 09 |
+```
+
+**RIGHT (plain-text numbered list with inline metadata):**
+```
+1. Make It Stick — Brown ⭐ Saved Apr 12
+2. Spacing Effect Explained — Oakley · Saved Apr 09
+```
+
+Use em-dashes (`—`), middle dots (`·`), or labels (`[your note: "..."]`) to separate inline attributes. Never pipes. This rule applies even when content is naturally tabular (ranked backlogs, source lists, comparison items) — express the structure through consistent per-line formatting, not through table syntax. Bold, italic, inline code, and inline links DO render on Telegram and are fine to use.
+
+Bridge-surface responses (`/dash/*` routes) are exempt — the dashboard UI renders full markdown.
+
+---
+
 ## Frontmatter Schemas (§6.3)
 
 All vault files have YAML frontmatter. Maintain it exactly as specified.

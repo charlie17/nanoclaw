@@ -93,7 +93,7 @@ No `trust` field — absence is the trust signal (sync-path sources are JT-curat
 
 Reply format (draft — JT tweak-rights reserved):
 
-Plain-text only. No pipe/dash table syntax. Example for `/research spaced repetition`:
+Per CLAUDE.md `## Telegram Output Format` — plain-text only, no `|` column syntax. Example for `/research spaced repetition`:
 
 ```
 Research complete: spaced repetition
