@@ -22,7 +22,7 @@ After search, follow up with `Read` on the specific files surfaced — qmd retur
 
 - Do NOT query the `private` namespace. You have access only to the `general` namespace via the qmd MCP server. The `private` namespace exists on the host but is not wired into your container by design (D-95, D-96). Any qmd tool call that would target `private` is structurally unreachable — do not attempt.
 - Do NOT use `Bash` to invoke `qmd` CLI directly when the MCP path is available. The `qmd` CLI is installed in your container as a fallback for MCP outages only — prefer `mcp__qmd__*` tools.
-- Do NOT invoke `qmd update` manually. Reindexing runs on the host via hourly cron (qmd-general user). If you suspect index staleness mid-session, surface to JT rather than self-update.
+- Do NOT invoke `qmd update` manually. Reindexing runs on the host via hourly cron (reindexes qmd-general's index). If you suspect index staleness mid-session, surface to JT rather than self-update.
 
 ## Rationale
 
