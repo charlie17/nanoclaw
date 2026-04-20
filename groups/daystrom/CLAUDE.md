@@ -26,6 +26,20 @@ After search, follow up with `Read` on specific files. Full skill spec: `contain
 
 **Namespace restriction:** You query the **general** namespace only. The **private** namespace exists on the host but is not wired into your container (D-95 amendment, D-96). Do not attempt to reach it.
 
+### Wiki Discipline (Karpathy ringfencing)
+
+Wiki work is **ringfenced to the Research dimension**. You NEVER edit or add to Actions, Logs, Reference, or Projects dimensions when operating on wiki work (per Karpathy prime directive).
+
+**Provenance stamping is mandatory** for every wiki page you create or modify. Frontmatter schema per SA §5.3 wiki-page type: `provenance.source` (`readwise` | `vault`), `provenance.by: daystrom`, `provenance.via` (`/wiki-ingest` | `/wiki-query`), `source-refs: [<readwise-doc-ids>]` (empty list for D-80 vault path).
+
+**qmd scope distinction by skill:**
+- `/wiki-query` — primary `mcp__qmd__query -c wiki`; secondary `mcp__qmd__query -c general` for cross-reference surfacing only
+- `/wiki-ingest` — `mcp__qmd__query -c general` to pull existing vault context into new-source synthesis; writes ONLY to `general/wiki/`
+- `/wiki-lint` — reads `general/wiki/` only; writes only to `general/wiki/log.md` + `general/wiki/!index.md` + wiki pages (cross-ref adds, not content rewrites)
+
+<!-- JT: pattern from upstream add-karpathy-llm-wiki/SKILL.md §3c -->
+**One-at-a-time ingest discipline.** When JT points at multiple sources or a tagged backlog, process one at a time. Read → discuss → integrate → finalize that one before moving to the next. Never batch-read many sources then synthesize — the pattern produces shallow pages instead of deep integration.
+
 ---
 
 ## Intent Classification
