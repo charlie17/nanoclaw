@@ -11,7 +11,7 @@ When JT invokes `/wiki-ingest`, process the next unprocessed `daystrom-wiki`-tag
 5. Integrate into the wiki: create/update pages at `general/wiki/<slug>.md` with standard wiki-page frontmatter (below). Maintain `[[wikilinks]]` cross-references. One source may touch many pages.
 6. Update `_processed.json`. Schema: `{ "<readwise-doc-id>": { "ingested_at": "<ISO8601 UTC>", "pages_touched": ["<slug>.md", ...] } }`
 7. Update `!index.md` (add/modify entries; maintain category groupings). Append to `log.md`:
-   <!-- JT: pattern from upstream add-karpathy-llm-wiki/llm-wiki.md L74 -->
+   <!-- JT: pattern from upstream add-karpathy-llm-wiki/llm-wiki.md L50 -->
    `## [YYYY-MM-DD] ingest | <Article Title>`
 
 ## Vault-only path (D-80)

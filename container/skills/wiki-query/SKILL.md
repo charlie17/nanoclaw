@@ -21,7 +21,7 @@ Select the form that fits JT's question shape:
 ## Filing back
 
 Valuable query results can become new wiki pages — explorations compound in the knowledge base just like ingested sources. Before filing, ask JT: "Want me to file this back as a wiki page?" On confirmation:
-- Write `general/wiki/<slug>.md` with standard wiki-page frontmatter
+- Write `general/wiki/<slug>.md` with standard wiki-page frontmatter (see `wiki/SKILL.md`)
 - Set `provenance.source: vault` (or `readwise` if the synthesis drew primarily from Readwise-sourced wiki pages), `provenance.via: /wiki-query`, `source-refs: []` (or list relevant Readwise doc IDs)
 - Update `!index.md` with the new page entry
 - Append to `log.md`: `## [YYYY-MM-DD] query-filed | <Title>`
