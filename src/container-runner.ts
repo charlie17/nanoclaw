@@ -4,6 +4,7 @@
  */
 import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -87,6 +88,19 @@ function buildVolumeMounts(
       mounts.push({
         hostPath: '/dev/null',
         containerPath: '/workspace/project/.env',
+        readonly: true,
+      });
+    }
+
+    // Readwise CLI token — bind-mount host token read-only into container home.
+    // Required so /wiki-ingest and /wiki-scan can shell out to `readwise` CLI
+    // inside the container (CLI is installed via Dockerfile L36; auth lives
+    // on host at ~/.readwise-cli.json, created once via Tier-3 login-with-token).
+    const readwiseToken = path.join(os.homedir(), '.readwise-cli.json');
+    if (fs.existsSync(readwiseToken)) {
+      mounts.push({
+        hostPath: readwiseToken,
+        containerPath: '/home/node/.readwise-cli.json',
         readonly: true,
       });
     }
