@@ -497,8 +497,11 @@ async function runQuery(
           },
         },
         qmd: {
+          // Literal daystrom-net gateway IP: on Linux Docker, --add-host=host.docker.internal:host-gateway
+          // (set in container-runtime.ts) resolves to docker0 default-bridge gateway (172.17.0.1), NOT
+          // daystrom-net's custom-bridge gateway (172.29.0.1). Impl-28 D6 finding. See D-95 amendment.
           type: 'http',
-          url: 'http://host.docker.internal:8181/mcp',
+          url: 'http://172.29.0.1:8181/mcp',
         },
       },
       hooks: {
