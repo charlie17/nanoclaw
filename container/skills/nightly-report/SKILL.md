@@ -25,8 +25,8 @@ Instructions:
 
 ## Output
 
-1. Write vault file: `general/logs/daystrom-reports/nightly-<YYYYMMDD>.md` where YYYYMMDD = `report_date` → strip non-digits, first 8 chars. Use the `Write` tool.
-2. Reply with plain-text Telegram summary (see §Telegram output shape).
+1. Write vault file: `logs/daystrom-reports/nightly-<YYYYMMDD>.md` where YYYYMMDD = `report_date` → strip non-digits, first 8 chars. Path is **relative to your vault mount** (which is already `general/`); do NOT include a `general/` prefix here or the file lands at `general/general/...`. Use the `Write` tool.
+2. Reply with plain-text Telegram summary (see §Telegram output shape). You MUST emit both `## Vault activity` AND `## Items requiring attention` sections in the vault file whenever the prefetch `data` blob provides non-empty arrays for either (task errors) or a disk string (always present). Omit the attention section ONLY if `task_errors` is empty AND disk usage is green (&lt; 80% used).
 
 ## Vault file format
 
@@ -76,6 +76,6 @@ Rules:
 ## Scope locks
 
 - Read ONLY `/workspace/extra/vault/` (= `general/`). Never read `private/`, never `worf-scope/`.
-- Write ONLY to `general/logs/daystrom-reports/`. Never elsewhere in the vault.
+- Write ONLY to `logs/daystrom-reports/` (vault-mount-relative, which lands in `general/logs/daystrom-reports/` on the host). Never elsewhere in the vault.
 - No web tools. No MCP calls to readwise/qmd for this skill (v1). Deterministic data only.
 - Vault file: one-line-per-item detail. Telegram summary ≤ 15 lines.
