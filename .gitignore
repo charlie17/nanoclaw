@@ -22,6 +22,8 @@ groups/worf/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
 !groups/daystrom/CLAUDE.md
+!groups/daystrom/scripts/
+!groups/daystrom/scripts/*.sh
 !groups/worf/CLAUDE.md
 
 # Secrets
