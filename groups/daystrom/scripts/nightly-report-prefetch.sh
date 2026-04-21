@@ -31,22 +31,27 @@ task_errors=$(sqlite3 "$STORE_DB" "
 # Component (d) S4: disk free
 disk_line=$(df -h / | awk 'NR==2 {printf "%s used, %s free", $5, $4}')
 
-# Emit JSON on the FINAL non-empty stdout line
-# jq -c for compact single-line output — agent-runner reads last non-empty line
-jq -cn \
-  --arg changed "$changed_files" \
-  --arg errors "$task_errors" \
-  --arg disk "$disk_line" \
-  --arg ts "$(date '+%Y-%m-%d %H:%M %Z')" \
-  '{
-    wakeAgent: true,
-    data: {
-      report_date: $ts,
-      vault_changes: ($changed | split("\n") | map(select(length > 0))),
-      task_errors: ($errors | split("\n") | map(select(length > 0))),
-      disk: $disk
-    }
-  }'
+# Emit JSON on the FINAL non-empty stdout line via python3 stdlib.
+# Container base (node:22-slim) does not ship jq; python3 is available and avoids
+# shell quoting hazards by passing data through the environment, not heredoc interpolation.
+CHANGED_FILES="$changed_files" \
+TASK_ERRORS="$task_errors" \
+DISK_LINE="$disk_line" \
+REPORT_TS="$(date '+%Y-%m-%d %H:%M %Z')" \
+python3 - <<'PY'
+import json, os
+def lines(s):
+    return [l for l in (s or '').split('\n') if l.strip()]
+print(json.dumps({
+    'wakeAgent': True,
+    'data': {
+        'report_date': os.environ['REPORT_TS'],
+        'vault_changes': lines(os.environ.get('CHANGED_FILES')),
+        'task_errors': lines(os.environ.get('TASK_ERRORS')),
+        'disk': os.environ['DISK_LINE'],
+    },
+}))
+PY
 
 # Bump state file AFTER successful emit (next run reads from now)
 touch "$STATE_FILE"
