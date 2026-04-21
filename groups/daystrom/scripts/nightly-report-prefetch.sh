@@ -34,7 +34,7 @@ disk_line=$(df -h / | awk 'NR==2 {printf "%s used, %s free", $5, $4}')
 # shell-quoting hazards around filenames with spaces/quotes.
 CHANGED_FILES="$changed_files" \
 DISK_LINE="$disk_line" \
-REPORT_TS="$(date '+%Y-%m-%d %H:%M %Z')" \
+REPORT_TS="$(TZ='America/New_York' date '+%Y-%m-%d %H:%M %Z')" \
 STORE_DB="$STORE_DB" \
 python3 - <<'PY'
 import json, os, sqlite3
