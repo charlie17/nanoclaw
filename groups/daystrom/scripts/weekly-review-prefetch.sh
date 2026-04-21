@@ -144,16 +144,22 @@ if disk_error:
     comp7['disk_error'] = disk_error
 
 # ── Component 10: sqlite messages ─────────────────────────────────────────────
+# Schema: NanoClaw v1 `messages` table uses `is_from_me` (0=JT, 1=Daystrom) and
+# `is_bot_message` (1=/slash command injection etc.); there is no `role` column.
+# Map to a role string in-Python for synth convenience.
 messages, msg_error = [], None
 try:
     with sqlite3.connect(STORE_DB) as conn:
         cur = conn.execute(
-            "SELECT timestamp, role, substr(content,1,200) FROM messages "
+            "SELECT timestamp, is_from_me, is_bot_message, substr(content,1,200) "
+            "FROM messages "
             "WHERE chat_jid='tg:8669367924' AND timestamp > ? "
             "ORDER BY timestamp DESC LIMIT 200",
             (last_ts,)
         )
-        messages = [{'ts': r[0], 'role': r[1], 'excerpt': r[2]} for r in cur]
+        for ts, is_from_me, is_bot, excerpt in cur:
+            role = 'assistant' if is_from_me else ('bot' if is_bot else 'user')
+            messages.append({'ts': ts, 'role': role, 'excerpt': excerpt})
 except Exception as e:
     msg_error = str(e)
 
