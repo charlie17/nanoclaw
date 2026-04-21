@@ -33,7 +33,7 @@ Instructions:
 ```yaml
 ---
 type: daystrom-report
-report_date: 2026-04-21
+report_date: 2026-04-21  # ISO date (YYYY-MM-DD) — normalize from prefetch's timestamp+TZ
 ---
 ```
 
@@ -65,6 +65,7 @@ Rules:
 - **Never** use `|---|` tables — Telegram doesn't render them.
 - **Always** include the CF-worker deep-link with the actual YYYYMMDD of today's report.
 - If both sections empty: one line `/nightly-report — Mon 4/21/26 · Nothing notable overnight. [Open report in Obsidian](<link>)` — still write vault file with "No activity" stub.
+
 ## Fallback data collection (manual invocation only)
 
 - `find /workspace/extra/vault -type f -name '*.md' -mtime -1 -not -path '*/worf-scope/*' -not -path '*/.*'` for vault changes
