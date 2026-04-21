@@ -81,6 +81,8 @@ If done.md paths present: Read each at `/workspace/extra/vault/<path>`, extract 
 
 Read `data.components['2'].actions_files`. For each entry, Read `/workspace/extra/vault/<path>`. Surface all open (unchecked `- [ ]`) todos grouped by file. Highlight any dated before `data.window_start` as potentially overdue.
 
+Cross-reference `mtime_iso` — action files not touched since before `data.window_start` are candidates for stale-item callout (the file as a whole hasn't moved this review window, beyond any individual dated items).
+
 Empty-state (no action files): "No action files found in vault."
 
 ### 3. Logs Highlights
@@ -144,6 +146,8 @@ Based on the review above:
 2. Flag any todos that appear stale (old dates, no progress signal in the window).
 3. Ask JT: "What's your available time this week?" to enable time-budget calibration.
 
+**Empty-state rule:** If Components 2 and 4 provide no open actions or runway items, say so explicitly and skip priority proposals — do not manufacture priorities from conversation excerpts (Component 10) alone. Still ask JT about available time this week so the next review has a baseline.
+
 Challenge priorities that conflict with the data (e.g., do not propose a goal with no corresponding open action).
 
 ### Big 5 Personality Diagnostic (closing section)
@@ -202,6 +206,8 @@ Big 5: O:[x]/5 C:[x]/5 E:[x]/5 A:[x]/5 N:[x]/5
 Rules:
 - **Never** use `|---|` tables — Telegram renders them as literal pipes.
 - **Always** include the CF-worker deep-link with the actual YYYYMMDD of the report.
+- `N` = `data.review_count + 1` — same value written to the state file in Step 4.
+- If `data.first_run` is true, append ` (First run — 7-day default window)` to the header line after `(Review #N)`.
 - STUB components (1/4/5/6/8/9 + quarterly banner) — do NOT repeat each deferred message in Telegram. Collapse to one "(Stubs: 1/4/5/6/8/9 + quarterly banner — see vault file)" line.
 - If both Orphans and Missing frontmatter are 0, collapse to one bullet: "Vault hygiene clean."
 

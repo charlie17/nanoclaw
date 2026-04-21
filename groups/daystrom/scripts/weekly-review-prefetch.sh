@@ -50,8 +50,9 @@ def walk_md(base, skip_subdirs=frozenset()):
                 fp = os.path.join(root, fn)
                 yield os.path.relpath(fp, base), fp, os.path.getmtime(fp)
 
-# ── Component 1: done.md detection ───────────────────────────────────────────
-done_paths = [rel for rel, _, _ in walk_md(VAULT_ROOT)
+# ── Component 1: done.md detection (scoped to projects/ for symmetry with
+#   Component 4; done.md is project-local by convention: projects/{name}/done.md)
+done_paths = [rel for rel, _, _ in walk_md(os.path.join(VAULT_ROOT, 'projects'))
               if os.path.basename(rel) == 'done.md']
 comp1 = {'done_md_paths': done_paths, 'convention_not_adopted': len(done_paths) == 0}
 
@@ -79,20 +80,24 @@ learning_files = [rel for rel, _, _ in walk_md(learning_base)]
 comp6 = {'learning_files': learning_files, 'dir_missing': not os.path.isdir(learning_base)}
 
 # ── Component 7: vault hygiene ────────────────────────────────────────────────
-# Vault size
+# Vault size — surface exception text explicitly (mirror comp10 error pattern)
+vault_size_error = None
 try:
     r = subprocess.run(['du', '-sb', VAULT_ROOT], capture_output=True, text=True, check=True)
     vault_size_bytes = int(r.stdout.split()[0])
-except Exception:
+except Exception as e:
     vault_size_bytes = -1
+    vault_size_error = str(e)
 
 # Disk: use VAULT_ROOT path so df reports the underlying host mount
+disk_error = None
 try:
     r = subprocess.run(['df', '-h', VAULT_ROOT], capture_output=True, text=True, check=True)
     cols = r.stdout.strip().split('\n')[1].split()
     disk_str = f'{cols[4]} used, {cols[3]} free' if len(cols) >= 5 else 'unavailable'
-except Exception:
+except Exception as e:
     disk_str = 'unavailable'
+    disk_error = str(e)
 
 # Orphan + missing-frontmatter scan
 all_vault_md = list(walk_md(VAULT_ROOT))
@@ -133,6 +138,10 @@ comp7 = {
     'wiki_lint_log': wiki_lint_content,
     'wiki_lint_missing': wiki_lint_content is None,
 }
+if vault_size_error:
+    comp7['vault_size_error'] = vault_size_error
+if disk_error:
+    comp7['disk_error'] = disk_error
 
 # ── Component 10: sqlite messages ─────────────────────────────────────────────
 messages, msg_error = [], None
