@@ -173,43 +173,22 @@ Emit this exact text, always in v1 — no paraphrase:
 
 ## Telegram output shape
 
-Plain-text list only. No `|---|` tables. ≤25 lines. CF-worker deep-link at bottom.
+**Minimal — 3 lines only.** JT reads the full review in Obsidian; Telegram is the "it's done, here's the link" surface. No component content, no bullets, no Big 5 summary, no stub list. Just task-complete + window + link.
 
 ```
-/weekly-review — Fri M/D/YY (Review #N)
-Window: [window_start date] → [window_end date]
-
-Actions Review:
-- [1-liner per action file: filename + open todo count — or "No action files"]
-
-Logs Highlights:
-- [1-liner per updated log — or "No logs updated this week"]
-
-Vault Hygiene:
-- Size: [X MB] · Disk: [X% used, Y free]
-- Orphans: N · Missing frontmatter: N
-- Wiki-lint: [last run date or "no recent run"]
-
-Observations ([N messages]):
-- [2-3 key themes]
-
-Planning:
-- [top 2-3 priorities for the week]
-
-Big 5: O:[x]/5 C:[x]/5 E:[x]/5 A:[x]/5 N:[x]/5
-
-(Stubs: 1/4/5/6/8/9 + quarterly banner — see vault file)
+/weekly-review complete — Review #N · [Window: Apr 14 → Apr 21]
 
 [Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Flogs%2Fdaystrom-reviews%2Fweekly-YYYYMMDD)
 ```
 
 Rules:
-- **Never** use `|---|` tables — Telegram renders them as literal pipes.
+- **Exactly 3 lines** — header line, blank line, Obsidian deep-link line. Nothing else.
+- **Never** emit review content in Telegram — no per-component bullets, no Big 5 scores, no observations, no priorities. All of that lives in the vault file.
+- **`N`** = `data.review_count + 1` (same value written to the state file in Step 4).
+- **Window dates** = format `data.window_start` and `data.window_end` as compact `MMM DD` (e.g. `Apr 14 → Apr 21`).
+- If `data.first_run` is true, append ` · first run` to the header line after the window bracket.
 - **Always** include the CF-worker deep-link with the actual YYYYMMDD of the report.
-- `N` = `data.review_count + 1` — same value written to the state file in Step 4.
-- If `data.first_run` is true, append ` (First run — 7-day default window)` to the header line after `(Review #N)`.
-- STUB components (1/4/5/6/8/9 + quarterly banner) — do NOT repeat each deferred message in Telegram. Collapse to one "(Stubs: 1/4/5/6/8/9 + quarterly banner — see vault file)" line.
-- If both Orphans and Missing frontmatter are 0, collapse to one bullet: "Vault hygiene clean."
+- **Never** use `|---|` tables — Telegram renders them as literal pipes.
 
 ## Scope locks
 
