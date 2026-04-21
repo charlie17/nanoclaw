@@ -45,10 +45,16 @@ describe('slow-skill-ack', () => {
 
   it('slow-skill match fires ack + starts heartbeat', async () => {
     const channel = makeTelegramChannel();
-    const stop = startSlowSkillAck('jid:1', channel, '/research spaced repetition');
+    const stop = startSlowSkillAck(
+      'jid:1',
+      channel,
+      '/research spaced repetition',
+    );
 
     expect(channel.sendMessage).toHaveBeenCalledOnce();
-    expect(channel.sendMessage.mock.calls[0][1]).toContain('working on spaced repetition now');
+    expect(channel.sendMessage.mock.calls[0][1]).toContain(
+      'working on spaced repetition now',
+    );
     expect(channel.setTyping).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(8000);
@@ -73,11 +79,15 @@ describe('slow-skill-ack', () => {
   it('topic extraction and fallback', () => {
     const ch1 = makeTelegramChannel();
     startSlowSkillAck('jid:1', ch1, '/research foo bar');
-    expect(ch1.sendMessage.mock.calls[0][1]).toContain('working on foo bar now');
+    expect(ch1.sendMessage.mock.calls[0][1]).toContain(
+      'working on foo bar now',
+    );
 
     const ch2 = makeTelegramChannel();
     startSlowSkillAck('jid:2', ch2, '/research');
-    expect(ch2.sendMessage.mock.calls[0][1]).toContain('working on your research request now');
+    expect(ch2.sendMessage.mock.calls[0][1]).toContain(
+      'working on your research request now',
+    );
 
     const ch3 = makeTelegramChannel();
     startSlowSkillAck('jid:3', ch3, `/research ${'a'.repeat(60)}`);

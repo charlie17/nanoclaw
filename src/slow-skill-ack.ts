@@ -1,7 +1,8 @@
 import { Channel } from './types.js';
 import { logger } from './logger.js';
 
-const SLOW_SKILL_RE = /^\s*\/(research|wiki-ingest|wiki-lint|wiki-query)\b/;
+const SLOW_SKILL_RE =
+  /^\s*\/(research|wiki-ingest|wiki-lint|wiki-query|nightly-report)\b/;
 const HEARTBEAT_INTERVAL_MS = 4000;
 const TOPIC_MAX_LEN = 50;
 const HARD_TIMEOUT_MS = 5 * 60 * 1000;
@@ -23,7 +24,10 @@ export function startSlowSkillAck(
   if (!match) return () => {};
 
   const cmdName = match[1];
-  const rawTopic = lastMessage.replace(/^\s*\/\S+\s*/, '').trim().slice(0, TOPIC_MAX_LEN);
+  const rawTopic = lastMessage
+    .replace(/^\s*\/\S+\s*/, '')
+    .trim()
+    .slice(0, TOPIC_MAX_LEN);
   const topic = rawTopic || `your ${cmdName} request`;
   const ack = `Got it — working on ${topic} now. I'll ping back when it's ready.`;
 
