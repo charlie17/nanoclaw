@@ -20,8 +20,9 @@ changed_files=$(find "$VAULT_ROOT" \
   -not -path '*/.*' \
   -printf '%P\n' 2>/dev/null | sort)
 
-# Component (d) S4: disk free (host `df` is in the container image)
-disk_line=$(df -h / | awk 'NR==2 {printf "%s used, %s free", $5, $4}')
+# Component (d) S4: disk free — use VAULT_ROOT path so df reports the host mount,
+# not the container overlay filesystem (E-2 backport from Impl-35 Batch 4.2a review).
+disk_line=$(df -h "$VAULT_ROOT" | awk 'NR==2 {printf "%s used, %s free", $5, $4}')
 
 # Component (d) S3: scheduled-task errors in last 24h — done inside python
 # below via the sqlite3 STDLIB module (the container image ships libsqlite3 + the
