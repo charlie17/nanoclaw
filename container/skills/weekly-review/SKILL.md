@@ -190,6 +190,16 @@ Rules:
 - **Always** include the CF-worker deep-link with the actual YYYYMMDD of the report.
 - **Never** use `|---|` tables — Telegram renders them as literal pipes.
 
+## Orchestrator coordination
+
+If the file `/workspace/group/orchestrator-active.flag` exists when `/weekly-review` runs:
+
+1. Still write the vault file and update the state file exactly as normal.
+2. SKIP the Telegram reply entirely.
+3. Emit a brief `synthesis complete — orchestrator owns notification` acknowledgement to stdout.
+
+The host `weekly-review-orchestrator` will append its host-only sections (Component 9, Host Attention Signals, Quarterly Banner) and send the consolidated Telegram. If the flag is absent, send the Telegram as normal — this is the self-healing path for when the orchestrator is absent or failed before touching the flag.
+
 ## Scope locks
 
 - Read ONLY `/workspace/extra/vault/` (= `general/`). Never `private/`, never `worf-scope/`.
