@@ -25,8 +25,13 @@ Instructions:
 
 ## Output
 
-1. Write vault file: `logs/daystrom-reports/nightly-<YYYYMMDD>.md` where YYYYMMDD = `report_date` → strip non-digits, first 8 chars. Path is **relative to your vault mount** (which is already `general/`); do NOT include a `general/` prefix here or the file lands at `general/general/...`. Use the `Write` tool.
-2. Reply with plain-text Telegram summary (see §Telegram output shape). You MUST emit both `## Vault activity` AND `## Items requiring attention` sections in the vault file whenever the prefetch `data` blob provides non-empty arrays for either (task errors) or a disk string (always present). Omit the attention section ONLY if `task_errors` is empty AND disk usage is green (&lt; 80% used).
+1. **Write vault file at this EXACT absolute container path** — do NOT convert to a relative path, do NOT insert `general/` in the path:
+   `/workspace/extra/vault/logs/daystrom-reports/nightly-<YYYYMMDD>.md`
+   where `<YYYYMMDD>` = `report_date` → strip non-digits, first 8 chars. This path is correct as-written; the container mount `/workspace/extra/vault/` IS the Obsidian `general/` folder, and adding any extra `general/` prefix creates a broken `general/general/` nesting on the host. Use the `Write` tool with this exact absolute path.
+2. Reply with plain-text Telegram summary (see §Telegram output shape). You MUST emit both `## Vault activity` AND `## Items requiring attention` sections in the vault file whenever the prefetch `data` blob is provided. Rules for the attention section:
+   - Include `task_errors` bullet(s) if `data.task_errors` array is non-empty.
+   - Include `disk` bullet ALWAYS (disk is never "clean" — a healthy disk still gets a one-line `Disk: N% used, Y free` entry).
+   - Omit the whole `## Items requiring attention` section ONLY if `data.task_errors` is empty AND disk percentage is &lt; 50% (i.e., nothing noteworthy at all).
 
 ## Vault file format
 
@@ -76,6 +81,6 @@ Rules:
 ## Scope locks
 
 - Read ONLY `/workspace/extra/vault/` (= `general/`). Never read `private/`, never `worf-scope/`.
-- Write ONLY to `logs/daystrom-reports/` (vault-mount-relative, which lands in `general/logs/daystrom-reports/` on the host). Never elsewhere in the vault.
+- Write ONLY to the absolute container path `/workspace/extra/vault/logs/daystrom-reports/` (which maps to host `~/vault/general/logs/daystrom-reports/`). Never elsewhere in the vault.
 - No web tools. No MCP calls to readwise/qmd for this skill (v1). Deterministic data only.
 - Vault file: one-line-per-item detail. Telegram summary ≤ 15 lines.
