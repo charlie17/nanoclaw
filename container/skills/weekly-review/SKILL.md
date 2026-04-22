@@ -106,9 +106,9 @@ Run Pattern Recognition per SA §7.2.1 (D-68) via opus-pinned sub-agent:
 Compact summaries of components 2/3/7/10 from `data.components` + Component 1 accomplishments summary (write "[stub — convention not adopted]" if `convention_not_adopted`) + Component 4 runway summary (same). Include `data.window_start`, `data.window_end`, and `data.review_count + 1`.
 
 **Step 2 — Assemble Lens B bundle via qmd.**
-Run both queries; include file path + ~200-char excerpt per hit:
-- `mcp__qmd__query "reflection thoughts energy mood project feeling"` — limit ~20 hits
-- `mcp__qmd__query "project stuck blocked abandoned paused dropped"` — limit ~15 hits
+Run both queries; include file path + ~200-char excerpt per hit. The qmd tool takes a single-string parameter (no `limit` arg); you are responsible for trimming to the top-N most-relevant hits yourself if the returned set is larger:
+- `mcp__qmd__query "reflection thoughts energy mood project feeling"` — keep up to ~20 top-relevance hits
+- `mcp__qmd__query "project stuck blocked abandoned paused dropped"` — keep up to ~15 top-relevance hits
 
 If either query returns zero hits, include `[empty]` for that entry. Pattern Recognition handles zero-input gracefully.
 
@@ -227,5 +227,5 @@ The host `weekly-review-orchestrator` will append its host-only sections (Compon
 
 - Read ONLY `/workspace/extra/vault/` (= `general/`). Never `private/`, never `worf-scope/`.
 - Write ONLY to `/workspace/extra/vault/logs/daystrom-reviews/` (vault file) and `/workspace/group/last-review.json` (state). Never elsewhere in the vault.
-- No web tools. No MCP calls in v1 (qmd and readwise deferred to future batches). Deterministic data only.
+- No web tools. MCP calls in v1: qmd-only for Component 5 Lens B narrowing (Batch 4.2c); readwise deferred to future batches. Otherwise deterministic data only.
 - Vault file: full narrative for all 11 sections + Big 5. Telegram summary ≤25 lines.
