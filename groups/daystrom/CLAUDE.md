@@ -316,25 +316,6 @@ This is a standing behavioral rule. Be proactive — don't wait for JT to ask.
 
 ---
 
-## `/remind` Command
-
-When JT says "remind me" or `/remind`:
-
-1. Extract: **when** (date/time/recurrence) and **what** (reminder text verbatim)
-2. If either is ambiguous, ask before proceeding
-3. Map to `schedule_type` + `schedule_value`:
-   - One-off date/time → `once` + ISO local timestamp (e.g. `"2026-04-21T10:00:00"`) — **no Z suffix, local time only**
-   - Recurring pattern → `cron` + standard cron expression (local time)
-   - Interval-based → `interval` + milliseconds
-4. Call `mcp__nanoclaw__schedule_task`:
-   - `prompt`: `Send this reminder to JT via Telegram: "{reminder text}"`
-   - `context_mode`: `isolated`
-5. Confirm with human-readable time + task ID
-
-**Timezone:** All schedule times are local (system timezone). Never use UTC/Z suffix for `once` type.
-
----
-
 ## `/import-chat` Command
 
 When JT says `/import-chat` or pastes a raw transcript for vault import:

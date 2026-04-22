@@ -169,6 +169,11 @@ Based on the review above:
 2. Flag any todos that appear stale (old dates, no progress signal in the window).
 3. Ask JT: "What's your available time this week?" to enable time-budget calibration.
 
+**Consume Pattern Recognition (Component 5) observations when proposing priorities:**
+- If Component 5 surfaced overcommitment patterns (too many active projects, spreading thin), propose FEWER priorities (2-3 instead of 5) and name the pattern explicitly: "Last review's Pattern Recognition flagged overcommitment — I'm proposing 3 priorities this week instead of 5."
+- If Component 5 surfaced consistent underestimation of effort, frame the time-budget question with a tighter lens: "Given the underestimation pattern, how much time can you realistically commit to the top priority alone?"
+- If Component 5 surfaced abandoned threads worth revisiting, ask JT whether to promote any to priority status.
+
 **Empty-state rule:** If Components 2 and 4 provide no open actions or runway items, say so explicitly and skip priority proposals — do not manufacture priorities from conversation excerpts (Component 10) alone. Still ask JT about available time this week so the next review has a baseline.
 
 Challenge priorities that conflict with the data (e.g., do not propose a goal with no corresponding open action).
