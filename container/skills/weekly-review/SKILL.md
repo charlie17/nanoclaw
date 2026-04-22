@@ -100,8 +100,31 @@ If next.md paths present: Read each, synthesize open project priorities + items.
 
 ### 5. Pattern Recognition
 
-Emit this exact text, always, no paraphrase:
-> "Component 5 (Pattern Recognition) deferred to Batch 4.2c — opus-pinned sub-skill not yet built."
+Run Pattern Recognition per SA §7.2.1 (D-68) via opus-pinned sub-agent:
+
+**Step 1 — Assemble Lens A bundle** (keep under ~2K tokens):
+Compact summaries of components 2/3/7/10 from `data.components` + Component 1 accomplishments summary (write "[stub — convention not adopted]" if `convention_not_adopted`) + Component 4 runway summary (same). Include `data.window_start`, `data.window_end`, and `data.review_count + 1`.
+
+**Step 2 — Assemble Lens B bundle via qmd.**
+Run both queries; include file path + ~200-char excerpt per hit:
+- `mcp__qmd__query "reflection thoughts energy mood project feeling"` — limit ~20 hits
+- `mcp__qmd__query "project stuck blocked abandoned paused dropped"` — limit ~15 hits
+
+If either query returns zero hits, include `[empty]` for that entry. Pattern Recognition handles zero-input gracefully.
+
+**Step 3 — Invoke Opus sub-agent.**
+```
+Agent({
+  description: "Pattern recognition analysis (Lens A + Lens B per SA §7.2.1)",
+  prompt: "[Lens A bundle]\n\n[Lens B bundle]\n\nReview window: <data.window_start> to <data.window_end>. Review #<data.review_count + 1>. Run /pattern-recognition.",
+  model: "opus"
+})
+```
+
+**Step 4 — Write Agent output into vault file.**
+Write the Agent's returned markdown verbatim into the `## 5. Pattern Recognition` H2 section of the vault file. Do not edit the sub-agent's response.
+
+If Agent fails (error or no return): write "Pattern Recognition sub-agent failed to return — see logs. Component 5 skipped this week." Do not block the remaining review components.
 
 ### 6. Learning Review
 
