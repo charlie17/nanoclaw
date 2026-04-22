@@ -24,11 +24,11 @@ All inputs are pre-assembled by the host orchestrator and bind-mounted read-only
 - `worf-scope/secret-scan.json` — host-side scan results: `[{path, pattern_name, matched_line_count}]` — no raw secret values
 - `worf-scope/laforge-status.json` — LaForge health snapshot
 
-Vault (read-write, scoped to `general/` per mount-allowlist.json) is at `/workspace/extra/vault/`.
+Vault write surface (narrowed to the logs directory only per V-SF-1 Impl-39 fold) is at `/workspace/extra/vault-logs/`. This mount is `~/vault/general/logs` on the host, not all of `~/vault/general/`. Worf has no write access outside this directory — if a check appears to need to write elsewhere, do not attempt it; flag as `FAIL:` against the brief scope.
 
 ## Output
 
-Write `/workspace/extra/vault/logs/worf-audit.md`. Create the directory first with `mkdir -p /workspace/extra/vault/logs/`.
+Write `/workspace/extra/vault-logs/worf-audit.md`. The mount already exists as a directory; do NOT call `mkdir` on it.
 
 **Format:**
 
@@ -101,7 +101,7 @@ Read `registered_groups.json`. For each group that has a non-null `container_con
    - Assert the `vault/private` path is never mounted by any group. Match = `FAIL:`.
    - If `allowReadWrite` is false for the matching root, assert `readonly: true` on the mount. Mismatch = `FAIL:`.
 
-Read `container-inspect.json`. For each running nanoclaw-* container, compare live mounts (`.HostConfig.Binds` or `.Mounts`) against the `registered_groups` declared config for that group. Any live mount not declared in the group config = `WARN:` (orchestrator may have mounted a tmp prefetch dir — expected for worf; unexpected for others).
+Read `container-inspect.json`. For each running nanoclaw-* container, compare live mounts (`.HostConfig.Binds` or `.Mounts`) against the `registered_groups` declared config for that group. Any live mount not declared in the group config = `WARN:`. (Post-V-SF-2 Impl-39 fold: Worf's mounts are static — worf-scope from `~/daystrom-ops/state/worf-scope` RO + vault-logs from `~/vault/general/logs` RW — no runtime-added tmp mounts expected for any group.)
 
 ### 3. Secret scan
 
@@ -160,12 +160,18 @@ Report the LaForge snapshot timestamp if available.
 
 ### 8. Write output
 
-After completing all checks above, write `/workspace/extra/vault/logs/worf-audit.md`.
+After completing all checks above, write `/workspace/extra/vault-logs/worf-audit.md`.
 
 Structure:
 1. H1: `# Worf Security Audit — YYYY-MM-DD` (today's date)
-2. `## Summary` with total PASS/WARN/FAIL counts and generation timestamp
+2. `## Summary` with total PASS/WARN/FAIL counts and generation timestamp (see count discipline below)
 3. One H2 per checklist section (§1–§7), each containing all finding lines for that section
 4. Every finding line starts with exactly `PASS: ` / `WARN: ` / `FAIL: `
+
+**Count discipline (V-SF-3 Impl-39 fold).** The Summary line PASS/WARN/FAIL totals MUST come from mechanical enumeration of the finding lines you emit in §1–§7, not from estimation or memory. Procedure:
+1. Compose the full body of §1–§7 finding lines first (in a variable or in-memory list).
+2. Before writing the file, count exactly: `pass_n = len([l for l in lines if l.startswith("PASS: ")])`, same for WARN/FAIL.
+3. Write the Summary line using those three counts verbatim. Do not round. Do not approximate. Do not omit skills-inventory entries from the count (a common miscount — §6 emits 15 PASS lines for 15 skills, not ~10).
+4. The orchestrator re-greps the final file with `grep -cE '^PASS:'` etc. for its Telegram — if your Summary disagrees with grep, Component 8 of the weekly-review will render the inconsistency verbatim into JT's report.
 
 After writing, emit a brief stdout confirmation: `synthesis complete — worf-audit.md written`.
