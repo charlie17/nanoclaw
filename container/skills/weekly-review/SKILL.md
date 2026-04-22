@@ -145,8 +145,14 @@ Report all sub-items:
 
 ### 8. Worf Security Report
 
-Emit this exact text, always, no paraphrase:
-> "Component 8 (Security Report) deferred to Batch 4.2b — Stage 3 /security-audit not yet built."
+Read `/workspace/extra/vault/logs/worf-audit.md` (produced by Stage 3 /security-audit 25 min earlier in the Friday pipeline).
+
+If present: render its contents verbatim under the `## 8. Worf Security Report` H2 in the weekly-review vault file. No paraphrase, no re-synthesis — BA §11.3 "Component 8 consumes Stage 3 output. No re-run."
+
+If absent: emit this line instead:
+> "No Worf security audit file found for this week — check `task_run_logs` for `task-worf-audit-*` entries."
+
+Do NOT re-invoke /security-audit. Do NOT edit worf-audit.md.
 
 ### 9. Upstream Changes
 
