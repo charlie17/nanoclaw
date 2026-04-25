@@ -74,10 +74,12 @@ When a message arrives, classify before acting:
 - `actions/waiting.md` — waiting for others
 
 **Logs:** `logs/{domain}.md` — one file per domain
-Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `dinners` · `poker`
+Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker`
 
 **Reference single files:** `reference/{area}.md`
-Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · `family-watchlist` · `reading-list` · `house`
+Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · `family-watchlist` · `reading-list` · `house` · `food`
+
+`reference/food.md` is hybrid — primary content is curated reference (restaurants, preferences, recipes, etc.), but it ALSO accepts append-style meal entries with photos at the bottom. When JT says "add this meal to food" / "save this image to food log" / similar, append to a `## Meal log` section at the bottom of `reference/food.md`. Preserve the curated reference content above untouched. If `## Meal log` does not yet exist, create it once at the bottom of the file and append to it from then on.
 
 **Reference folders:**
 - `reference/learning/{source-name}-{YYYY-MM}.md` — e.g., `atomic-habits-2026-03.md`
@@ -409,5 +411,5 @@ See global CLAUDE.md for the full Bases file format reference.
 | "Research X" | → invoke `/research` skill (sync or supplement path per message content) |
 | "Remind me on 4/21 to do X" | → Create NanoClaw scheduled task |
 | "Remember I am in AZ March 16-20" | → Agent memory only (temporal, expires 3/21) |
-| "Save this image to dinner log" | → Save image attachment, append to `logs/dinners.md` |
+| "Save this image to food / dinner log" | → Save image attachment, append entry to the `## Meal log` section at the bottom of `reference/food.md` (create the section once if missing). Curated reference content above is preserved. |
 | "AZ travel — Teaspoon was great…" | → `reference/travel/Travel - AZ.md` |
