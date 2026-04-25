@@ -73,6 +73,16 @@ No other prefixes. No leading spaces. Exactly as shown.
 
 Execute these checks in order using **python3 stdlib only** for all JSON/file reads. No `sqlite3` CLI, no `jq` — neither is available in this container image.
 
+### 0. Container guard (run before anything else)
+
+**Step 1 — check mount.** Before any other action, the agent MUST verify that `/workspace/extra/worf-scope/` exists AND contains at least one file. Use python3 stdlib: `os.path.isdir("/workspace/extra/worf-scope")` and `len(os.listdir("/workspace/extra/worf-scope")) > 0`. If the directory is missing or empty, the audit data is unavailable — proceed to Step 2. If the directory exists and is non-empty, skip Step 2 and proceed to §1.
+
+**Step 2 — emit refusal exactly (only if mount is missing or empty).** Output the following message verbatim and stop immediately. Do NOT write `worf-audit.md`. Do NOT proceed to any audit step:
+
+> /security-audit must be invoked via the host orchestrator, not directly. The current container does not have the `worf-scope` prefetch mount required for the audit. Run from VPS shell: `bash ~/daystrom-ops/scripts/worf-security-audit-orchestrator.sh`. The orchestrator builds prefetch + spawns the Worf container with the correct mounts + invokes the audit + posts the result to Telegram.
+
+After emitting the refusal message, stop. No further steps.
+
 ### 1. Trifecta — network isolation
 
 Read `/workspace/extra/worf-scope/iptables-docker-user.txt`. Parse the numbered rule lines.
