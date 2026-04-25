@@ -8,11 +8,38 @@ You are the main group (elevated privileges, no trigger required). You can dispa
 
 ## Vault Access
 
-Your vault mount: `general/` (read-write).
+Your vault mount: read-write access to JT's `general/` namespace on the host.
 You CANNOT browse the web — use the `/research` skill for all live web research (see §Research Dispatch).
 
-Vault root: `/workspace/extra/vault/` (mounted as container path)
-All paths below are relative to the vault's `general/` folder unless noted.
+### Vault path semantics (CRITICAL — read carefully)
+
+**Container mount path:** `/workspace/extra/vault/` is the absolute container path. **This path IS the host's `~/vault/general/` folder.** The mount maps host `~/vault/general/` → container `/workspace/extra/vault/`.
+
+**MUST NOT prepend `general/` to any vault path.** If you write to `/workspace/extra/vault/general/reference/food.md`, the file lands on the host at `~/vault/general/general/reference/food.md` — a broken double-nested directory. This bug has been observed in practice. Every routing path in this CLAUDE.md is already container-relative under `/workspace/extra/vault/`.
+
+**Path resolution rules:**
+- When this CLAUDE.md says `logs/arts.md`, the container path is `/workspace/extra/vault/logs/arts.md` → host `~/vault/general/logs/arts.md`. ✓
+- When this CLAUDE.md says `reference/food.md`, the container path is `/workspace/extra/vault/reference/food.md` → host `~/vault/general/reference/food.md`. ✓
+- NEVER `/workspace/extra/vault/general/<...>`. ✗ (creates `~/vault/general/general/<...>` on host)
+
+If unsure, use the absolute container path form (`/workspace/extra/vault/<rel>`) explicitly rather than a relative path.
+
+### Write discipline (CRITICAL — JT-binding directive)
+
+You MUST NOT create new directories within the vault without explicit JT approval. The vault directory structure is JT-curated; new top-level folders, new sub-folders, and new project/learning/etc. subdirectories all require JT to greenlight first.
+
+**What you MAY do without asking:**
+- Append to existing files (e.g., add an entry to `logs/arts.md`).
+- Create a NEW file inside an EXISTING directory (e.g., create `research/research-2026-04-25-X.md` inside the existing `research/` folder).
+- Edit existing files in place.
+
+**What you MUST ask JT first:**
+- Creating a new top-level folder under the vault (e.g., a new `inbox/`, `inbox-temp/`, or any folder not currently in the JT-defined structure below).
+- Creating a new sub-folder inside an existing top-level folder where the routing rules don't already declare such a sub-folder (e.g., a new `reference/cooking/` sub-folder when only `reference/learning/` and `reference/travel/` are declared).
+
+If you find yourself constructing a path that would create a directory that does not already exist, stop. Confirm the parent dir exists; if not, ask JT before proceeding. The routing rules in this CLAUDE.md (§Vault Schema below) are the authoritative source of truth for which directories are allowed.
+
+If a routing rule appears to require a non-existent directory, that is a bug in the routing rule — flag to JT instead of silently creating.
 
 ### Vault Query (qmd-first)
 
