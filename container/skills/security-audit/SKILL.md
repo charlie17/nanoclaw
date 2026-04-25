@@ -111,16 +111,28 @@ For each entry where `matched_line_count > 0`:
 - If `path` ends with `.env` (the `.env` credential file): `PASS:` — expected location for credentials; `.env` is not bind-mounted into any container.
 - Otherwise: `FAIL:` — secret pattern found outside expected credential file. Include path and pattern_name in the FAIL line.
 
-Cross-check `container-inspect.json`: for each running container, check `.Config.Env` list. For each entry whose key (the part before `=`) matches `*_TOKEN` or `*_KEY` (case-insensitive), apply the **architectural allowlist** below. Allowlisted keys produce `WARN:` with the rationale (architectural exceptions are visible in audit output, never silently passed). Any non-allowlisted match = `FAIL:` — credential leaked into container env.
+Cross-check `container-inspect.json`: for each running container, check `.Config.Env` list. For each entry whose key (the part before `=`) matches `*_TOKEN` or `*_KEY` (case-insensitive), apply the two-step procedure below. **This procedure is binding — apply it literally; do not collapse the allowlist into the FAIL case.**
 
-**Architectural allowlist** (env-var keys expected in container env per v2 spec — must include the spec reference):
+**Step A — read the allowlist table.**
 
-- `CLAUDE_CODE_OAUTH_TOKEN` — applies to **any** group container. NanoClaw's container runtime injects this key with a placeholder value (`CLAUDE_CODE_OAUTH_TOKEN=placeholder`); the actual Anthropic auth flows through the OneCLI gateway at request time per the daystrom-nanoclaw `CLAUDE.md` "Secrets / Credentials / Proxy (OneCLI)" section. The env-var key existence is a structural requirement of the Claude Agent SDK spawn, not a token leak.
-- `READWISE_ACCESS_TOKEN` — applies to **`daystrom` group only**. Injected by design per BA §8.4 + D-98 (Readwise MCP-direct transport via `mcp2.readwise.io` requires this env var present in the Daystrom container; egress filtered to `readwise.io` only by tinyproxy at `172.29.0.1:3128`).
+| Key                       | Allowed in group(s) | Binding spec reference                                                                                                                                                                                                              |
+|---------------------------|---------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `CLAUDE_CODE_OAUTH_TOKEN` | any                 | NanoClaw runtime placeholder injection — the value is literal `placeholder`; actual Anthropic auth flows through OneCLI at request time per daystrom-nanoclaw `CLAUDE.md` "Secrets / Credentials / Proxy (OneCLI)"                  |
+| `READWISE_ACCESS_TOKEN`   | `daystrom` only     | BA §8.4 + D-98 — Readwise MCP-direct transport via `mcp2.readwise.io` requires this env var in the Daystrom container; egress filtered to `readwise.io` only by tinyproxy at `172.29.0.1:3128`                                     |
 
-For an allowlisted key, emit `WARN:` with the form: `WARN: env var '<KEY>' present in container '<name>' — allowlisted per <spec-reference>`. **Reasoning:** allowlisted keys still represent architectural exceptions worth surfacing in every audit so JT and future Worf-spec maintainers can re-evaluate them; silent PASS is unacceptable. Allowlist scope is per-group: a key allowlisted for `daystrom` must NOT auto-pass for any other group's container.
+**Step B — emit exactly one line per `*_TOKEN`/`*_KEY` match, choosing one of two forms:**
 
-Future expansion: when a new architectural decision adds an expected env var (e.g., a new MCP-direct integration), append to this allowlist with the same shape — key name, group scope, spec reference. No structural change to Worf's logic required.
+- **IF** the matched key appears in the allowlist table **AND** the container's group folder is in the row's "Allowed in group(s)" column (`any` matches every group; otherwise the group folder must equal the listed value verbatim) → emit:
+
+  `WARN: env var '<KEY>' present in container '<name>' — allowlisted per <Binding spec reference verbatim>`
+
+- **OTHERWISE** → emit:
+
+  `FAIL: credential key '<KEY>' leaked into container env for '<name>'`
+
+The two forms are mutually exclusive: every match produces exactly one line, never both. Allowlisted matches MUST emit `WARN:` (never `PASS:`) so the architectural exception remains visible in every audit. Non-allowlisted matches MUST emit `FAIL:` regardless of value contents — the security guard does not look at values.
+
+Future allowlist expansion: append a new row to the table with the same three-column shape (Key, Allowed in group(s), Binding spec reference). No other change to Step A or Step B logic.
 
 If `secret-scan.json` is empty or all entries are `.env`-only: `PASS:` for the secret scan section.
 
