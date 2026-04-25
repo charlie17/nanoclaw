@@ -29,9 +29,31 @@ Call `mcp__nanoclaw__schedule_task` with:
 
 Do NOT include a `script` field. wakeAgent:true is the default path when `script` is omitted.
 
-Reply to JT on success:
-`✓ Reminder set — <type> <human-readable schedule>. ID: <taskId>`
+Reply to JT on success — use the verbatim template for the `schedule_type`:
+- **once:** `✓ Reminder set: "<reminder text>" — at <YYYY-MM-DD h:MM AM/PM> ET. ID: <task-id>`
+  (render ISO `schedule_value` as `YYYY-MM-DD h:MM AM/PM`; append ` ET`)
+- **cron:** `✓ Reminder set: "<reminder text>" — <cron-prose with ET suffix>. ID: <task-id>`
+  (convert cron expression to prose per § Time/cron rendering below)
+- **interval:** `✓ Reminder set: "<reminder text>" — every <N> <units>. ID: <task-id>`
+  (no ET suffix — interval has no time-of-day to qualify)
 One line, plain-text, no table.
+
+## Time/cron rendering
+
+Convert cron expressions to prose for display. Reference table — agent extrapolates for unlisted patterns:
+
+| Cron expression  | Prose form (with ET suffix)   |
+|------------------|-------------------------------|
+| `0 9 * * 1-5`   | every weekday at 9:00 AM ET   |
+| `0 10 * * 5`    | every Friday at 10:00 AM ET   |
+| `30 14 * * *`   | every day at 2:30 PM ET       |
+| `0 8 * * 1`     | every Monday at 8:00 AM ET    |
+| `*/15 * * * *`  | every 15 minutes              |
+| `0 */2 * * *`   | every 2 hours                 |
+
+**ET-suffix rule (D-R5):** Append ` ET` to every time-of-day display. Do NOT append ET to interval or to cron expressions with no specific time component (e.g., `*/15 * * * *` → "every 15 minutes").
+
+**Fallback (D-R9):** If a stored `schedule_value` cannot be reliably translated to prose, display the raw value in parentheses: `every (0 0 1,15 * *)`. Never omit the entry.
 
 ## List
 
@@ -40,12 +62,11 @@ Call `mcp__nanoclaw__list_tasks` (no arguments).
 Filter the returned list client-side:
 - Keep only rows where `id` starts with `task-` AND `status` is `active`.
 
-Format as plain-text numbered list:
-```
-Active reminders:
-1. ⏰ <schedule_value> — <first 60 chars of reminder text> [id: <task-id>]
-2. ⏰ <...>
-```
+Format as plain-text numbered list. Begin with `Active reminders:` header line. Use the line format for each entry's `schedule_type`:
+- **once:** `1. ⏰ <YYYY-MM-DD h:MM AM/PM> ET — "<first 60 chars>" [id: <task-id>]`
+- **cron:** `1. ⏰ <cron-prose with ET suffix> — "<first 60 chars>" [id: <task-id>]`
+- **interval:** `1. ⏰ every <N> <units> — "<first 60 chars>" [id: <task-id>]`
+Render schedule per § Time/cron rendering. Reminder text in double-quotes.
 
 If zero rows after filter: `No active reminders.`
 
@@ -73,12 +94,12 @@ To change a reminder, cancel and recreate. Edits are not supported in v1.
 **One-shot create:**
 JT: `remind me at 3pm today to call the dentist`
 → `mcp__nanoclaw__schedule_task({prompt: "Send the following reminder... The reminder text is: call the dentist", schedule_type: "once", schedule_value: "2026-04-22T15:00:00", context_mode: "isolated"})`
-→ `✓ Reminder set — once 2026-04-22 at 3:00 PM. ID: task-1745337600000-abc123`
+→ `✓ Reminder set: "call the dentist" — at 2026-04-22 3:00 PM ET. ID: task-1745337600000-abc123`
 
 **Recurring cron create:**
 JT: `remind me every Friday at 10am to review my goals`
 → `mcp__nanoclaw__schedule_task({prompt: "...The reminder text is: review my goals", schedule_type: "cron", schedule_value: "0 10 * * 5", context_mode: "isolated"})`
-→ `✓ Reminder set — cron every Friday at 10 AM. ID: task-1745337600001-def456`
+→ `✓ Reminder set: "review my goals" — every Friday at 10:00 AM ET. ID: task-1745337600001-def456`
 
 **List:**
 JT: `/reminders`
@@ -86,8 +107,8 @@ JT: `/reminders`
 →
 ```
 Active reminders:
-1. ⏰ 2026-04-22T15:00:00 — call the dentist [id: task-1745337600000-abc123]
-2. ⏰ 0 10 * * 5 — review my goals [id: task-1745337600001-def456]
+1. ⏰ 2026-04-22 3:00 PM ET — "call the dentist" [id: task-1745337600000-abc123]
+2. ⏰ every Friday at 10:00 AM ET — "review my goals" [id: task-1745337600001-def456]
 ```
 
 **Cancel by NL:**
