@@ -113,6 +113,31 @@ All sub-bullets in vault files use tab characters (one tab per level). Never spa
 
 ---
 
+## Date and Time Conventions
+
+When inserting today's date into vault content (todos, log entries, frontmatter, anywhere a date appears), **always run the Bash tool to compute it — never derive day-of-week in-head**. LLMs are unreliable at calendrical arithmetic and will silently produce a wrong day-of-week even with a correct date.
+
+**Default format** (matches JT's Obsidian "Natural Language Dates" plugin output, e.g. `Sat 4/25/26`):
+```bash
+TZ=America/New_York date '+%a %-m/%-d/%y'
+```
+
+`TZ=America/New_York` because JT is in Eastern Time; the VPS system clock is UTC and would render the wrong "today" near midnight ET.
+
+For ISO-style dates in frontmatter (`created`, `updated`, etc.) use:
+```bash
+TZ=America/New_York date '+%Y-%m-%d'
+```
+
+For full timestamps in log entries:
+```bash
+TZ=America/New_York date '+%Y-%m-%dT%H:%M:%S%:z'
+```
+
+If JT explicitly requests a different format, follow his instruction — these are defaults, not absolute rules.
+
+---
+
 ## Telegram Output Format
 
 When your response surfaces to Telegram (any skill JT invokes from Telegram — `/wiki-scan`, `/wiki-ingest`, `/wiki-query`, `/research`, `/readwise-*`, ad-hoc chat), render tabular or list-style content as a **plain-text numbered list**, one item per line. Telegram's MarkdownV2 parser does NOT render `|` column syntax or `-+-` header rules — pipes and dashes pass through as literal characters and look broken.
