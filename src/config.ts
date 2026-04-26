@@ -103,6 +103,12 @@ function resolveConfigTimezone(): string {
 }
 export const TIMEZONE = resolveConfigTimezone();
 
+// JT: Batch 2.3 D-CU4 — claude-usage dashboard port (localhost-only; Bridge reverse-proxies to it per D-CU2)
+export const CLAUDE_USAGE_PORT = parseInt(
+  process.env.CLAUDE_USAGE_PORT || '8080',
+  10,
+);
+
 // Bridge web channel — spec §5.5 (D-91, Impl-16, 2026-04-16)
 export const NANOCLAW_WEB_PORT = parseInt(
   process.env.NANOCLAW_WEB_PORT || envConfig.NANOCLAW_WEB_PORT || '3099',

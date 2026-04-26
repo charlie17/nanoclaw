@@ -125,6 +125,7 @@ const mockConfig = vi.hoisted(() => ({
   NANOCLAW_WEB_HOST: '127.0.0.1',
   NANOCLAW_WEB_PORT: 0,
   ASSISTANT_NAME: 'Daystrom',
+  CLAUDE_USAGE_PORT: 8080,
 }));
 
 vi.mock('../config.js', () => ({
@@ -139,6 +140,9 @@ vi.mock('../config.js', () => ({
   },
   get ASSISTANT_NAME() {
     return mockConfig.ASSISTANT_NAME;
+  },
+  get CLAUDE_USAGE_PORT() {
+    return mockConfig.CLAUDE_USAGE_PORT;
   },
   CREDENTIAL_PROXY_PORT: 3001,
   NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH: 0.2,
@@ -1709,5 +1713,96 @@ describe('WebChannel HTTP — sendMessage + history (D-93)', () => {
     expect(body[0]).toEqual({ text: 'user msg', cls: 'user', id: 'u1' });
     expect(body[1]).toEqual({ text: 'bot msg', cls: 'bot', id: 'b1' });
     expect(body[2]).toEqual({ text: 'legacy user', cls: 'bot', id: 'l1' }); // OR-guard: is_from_me:true → 'bot'
+  });
+});
+
+// ── claude-usage reverse-proxy (Batch 2.3 D-CU2) ─────────────────────────────
+
+describe('WebChannel HTTP — claude-usage proxy (/dash/usage)', () => {
+  let proxyChannel: WebChannel;
+  let proxyPort: number;
+  let mockUpstream: http.Server;
+  let mockUpstreamPort: number;
+
+  beforeAll(async () => {
+    // Spin up a real upstream server; proxy will connect to it for UP-2 and UP-3
+    mockUpstream = http.createServer((upReq, upRes) => {
+      upRes.writeHead(200, { 'content-type': 'text/html' });
+      upRes.end(`<html>claude-usage path=${upReq.url}</html>`);
+    });
+    await new Promise<void>((resolve) => mockUpstream.listen(0, '127.0.0.1', resolve));
+    mockUpstreamPort = (mockUpstream.address() as AddressInfo).port;
+    mockConfig.CLAUDE_USAGE_PORT = mockUpstreamPort;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => mockUpstream.close(() => resolve()));
+    mockConfig.CLAUDE_USAGE_PORT = 8080;
+  });
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    netMock.reset();
+    execFileMock.stdout = 'container-a,running\n';
+    execFileMock.shouldFail = false;
+    vi.mocked(readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    vi.mocked(statfs).mockResolvedValue({ bsize: 4096, blocks: 10000, bavail: 5000, bfree: 5100, ffree: 1000, files: 2000, favail: 900, f_frsize: 4096, namemax: 255, type: 0 } as unknown as Awaited<ReturnType<typeof statfs>>);
+    vi.mocked(readdir).mockResolvedValue([] as unknown as Awaited<ReturnType<typeof readdir>>);
+    proxyChannel = new WebChannel(makeOpts());
+    await proxyChannel.connect();
+    proxyPort = ((proxyChannel as unknown as { server: http.Server }).server.address() as AddressInfo).port;
+  });
+
+  afterEach(async () => {
+    await proxyChannel.disconnect();
+  });
+
+  // ── UP-1: unauthenticated → 401 ──────────────────────────────────────────────
+
+  it('UP-1: GET /dash/usage unauthenticated → 401', async () => {
+    const r = await req(proxyPort, { method: 'GET', path: '/dash/usage' });
+    expect(r.status).toBe(401);
+  });
+
+  // ── UP-2: authenticated → 200 + proxied content + SAMEORIGIN header ──────────
+
+  it('UP-2: GET /dash/usage authed → 200 + proxied content + x-frame-options: SAMEORIGIN', async () => {
+    const r = await req(proxyPort, {
+      method: 'GET',
+      path: '/dash/usage',
+      headers: { Authorization: 'Bearer test-secret-token' },
+    });
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('claude-usage');
+    expect(r.headers['x-frame-options']).toBe('SAMEORIGIN');
+  });
+
+  // ── UP-3: sub-path proxy pass-through + path rewrite ─────────────────────────
+
+  it('UP-3: GET /dash/usage/sub/path authed → 200 + path rewritten to /sub/path upstream', async () => {
+    const r = await req(proxyPort, {
+      method: 'GET',
+      path: '/dash/usage/sub/path',
+      headers: { Authorization: 'Bearer test-secret-token' },
+    });
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('path=/sub/path');
+  });
+
+  // ── UP-4: upstream down → 502 ─────────────────────────────────────────────────
+
+  it('UP-4: GET /dash/usage → 502 when claude-usage server is down', async () => {
+    const savedPort = mockConfig.CLAUDE_USAGE_PORT;
+    mockConfig.CLAUDE_USAGE_PORT = 19997; // deliberately non-listening port
+    try {
+      const r = await req(proxyPort, {
+        method: 'GET',
+        path: '/dash/usage',
+        headers: { Authorization: 'Bearer test-secret-token' },
+      });
+      expect(r.status).toBe(502);
+    } finally {
+      mockConfig.CLAUDE_USAGE_PORT = savedPort;
+    }
   });
 });

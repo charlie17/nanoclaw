@@ -15,6 +15,7 @@ import path from 'node:path';
 
 import {
   ASSISTANT_NAME,
+  CLAUDE_USAGE_PORT,
   CREDENTIAL_PROXY_PORT,
   NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH,
   NANOCLAW_TOKEN,
@@ -585,6 +586,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="dc" id="dc-vault"><div class="dch">Vault Stats</div><div class="dcb" id="dc-vault-body">Loading\u2026</div><div class="dcf" id="dc-vault-foot"></div></div>
     <div class="dc" id="dc-cost"><div class="dch">Cost</div><div class="dcb" id="dc-cost-body">Loading\u2026</div><div class="dcf" id="dc-cost-foot"></div></div>
     <div class="dc" id="dc-api-usage"><div class="dch">API Usage</div><div class="dcb" id="dc-api-usage-body">Loading\u2026</div><div class="dcf" id="dc-api-usage-foot"></div></div>
+    <div class="dc" id="dc-usage-link"><div class="dch">Usage (detail)</div><div class="dcb"><a href="/dash/usage" target="_blank" rel="noreferrer" style="font-size:1.1em">&#8594; Open dashboard</a></div><div class="dcf">Token detail by model &amp; session</div></div>
   </div>
 </div>
 <script>
@@ -1108,6 +1110,11 @@ export class WebChannel implements Channel {
     }
     if (method === 'GET' && urlPath === '/dash/api-usage') {
       await this.handleDashApiUsage(req, res);
+      return;
+    }
+    // D-CU2: /dash/usage reverse-proxy to claude-usage dashboard server (localhost:8080)
+    if (method === 'GET' && (urlPath === '/dash/usage' || urlPath.startsWith('/dash/usage/'))) {
+      await this.handleDashUsageProxy(req, res);
       return;
     }
 
@@ -2018,6 +2025,38 @@ export class WebChannel implements Channel {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'collection_failed' }));
     }
+  }
+
+  // JT: Batch 2.3 D-CU2 — reverse-proxy GET requests to claude-usage dashboard server.
+  // Auth is enforced by authorizeRequest() before this handler is reached.
+  // Path rewrite: /dash/usage[/sub/path][?q] → /[sub/path][?q] on 127.0.0.1:CLAUDE_USAGE_PORT.
+  private handleDashUsageProxy(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const proxyPath = (req.url ?? '/dash/usage').slice('/dash/usage'.length) || '/';
+    return new Promise<void>((resolve) => {
+      const proxyReq = http.request(
+        { hostname: '127.0.0.1', port: CLAUDE_USAGE_PORT, path: proxyPath, method: 'GET' },
+        (proxyRes) => {
+          const headers: http.OutgoingHttpHeaders = {};
+          for (const [k, v] of Object.entries(proxyRes.headers)) {
+            if (k !== 'transfer-encoding' && k !== 'connection' && v !== undefined) {
+              headers[k] = v;
+            }
+          }
+          headers['x-frame-options'] = 'SAMEORIGIN';
+          res.writeHead(proxyRes.statusCode ?? 200, headers);
+          proxyRes.pipe(res, { end: true });
+          proxyRes.on('end', resolve);
+        },
+      );
+      proxyReq.on('error', () => {
+        if (!res.headersSent) {
+          res.writeHead(502, { 'content-type': 'text/plain' });
+          res.end('Usage dashboard unavailable');
+        }
+        resolve();
+      });
+      proxyReq.end();
+    });
   }
 
   // ── Typing indicator ──────────────────────────────────────────────────────
