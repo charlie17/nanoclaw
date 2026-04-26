@@ -60,8 +60,12 @@ const SID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const RESERVED_SID = 'cron';
 const DASH_CACHE_TTL_MS = 5_000; // D-S3.10
 // D-S1.13
+// Impl-50 fold #3: script-src adds https://cdn.jsdelivr.net for Chart.js used by the embedded
+// claude-usage dashboard (D-CU2 reverse-proxy at /dash/usage). claude-usage's SPA loads
+// Chart.js from CDN (`<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/...">`).
+// Without this allowance the browser blocks the CDN load and chart canvases render blank.
 const CSP =
-  "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:";
+  "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:";
 
 // D-S2.3 — extension allowlist (case-insensitive; .tar.gz checked separately via endsWith)
 const ALLOWED_EXTENSIONS = new Set([
@@ -1113,7 +1117,10 @@ export class WebChannel implements Channel {
       return;
     }
     // D-CU2: /dash/usage reverse-proxy to claude-usage dashboard server (localhost:8080)
-    if (method === 'GET' && (urlPath === '/dash/usage' || urlPath.startsWith('/dash/usage/'))) {
+    if (
+      method === 'GET' &&
+      (urlPath === '/dash/usage' || urlPath.startsWith('/dash/usage/'))
+    ) {
       await this.handleDashUsageProxy(req, res);
       return;
     }
@@ -2030,15 +2037,28 @@ export class WebChannel implements Channel {
   // JT: Batch 2.3 D-CU2 — reverse-proxy GET requests to claude-usage dashboard server.
   // Auth is enforced by authorizeRequest() before this handler is reached.
   // Path rewrite: /dash/usage[/sub/path][?q] → /[sub/path][?q] on 127.0.0.1:CLAUDE_USAGE_PORT.
-  private handleDashUsageProxy(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const proxyPath = (req.url ?? '/dash/usage').slice('/dash/usage'.length) || '/';
+  private handleDashUsageProxy(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const proxyPath =
+      (req.url ?? '/dash/usage').slice('/dash/usage'.length) || '/';
     return new Promise<void>((resolve) => {
       const proxyReq = http.request(
-        { hostname: '127.0.0.1', port: CLAUDE_USAGE_PORT, path: proxyPath, method: 'GET' },
+        {
+          hostname: '127.0.0.1',
+          port: CLAUDE_USAGE_PORT,
+          path: proxyPath,
+          method: 'GET',
+        },
         (proxyRes) => {
           const headers: http.OutgoingHttpHeaders = {};
           for (const [k, v] of Object.entries(proxyRes.headers)) {
-            if (k !== 'transfer-encoding' && k !== 'connection' && v !== undefined) {
+            if (
+              k !== 'transfer-encoding' &&
+              k !== 'connection' &&
+              v !== undefined
+            ) {
               headers[k] = v;
             }
           }
