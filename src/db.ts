@@ -222,6 +222,23 @@ export function storeChatMetadata(
 }
 
 /**
+ * Ensure a chat row exists; INSERT OR IGNORE — does NOT touch
+ * last_message_time on existing rows. Used by Bridge SSE-connect path
+ * so that simply switching to a chat doesn't bubble it to the top of
+ * the time-sorted sidebar list. Real new-message arrivals continue to
+ * update the timestamp via storeMessage / storeMessageDirect.
+ */
+export function ensureChatExists(chatJid: string, channel?: string): void {
+  const ch = channel ?? null;
+  db.prepare(
+    `
+    INSERT OR IGNORE INTO chats (jid, name, last_message_time, channel, is_group)
+    VALUES (?, ?, ?, ?, 0)
+  `,
+  ).run(chatJid, chatJid, new Date().toISOString(), ch);
+}
+
+/**
  * Update chat name without changing timestamp for existing chats.
  * New chats get the current time as their initial timestamp.
  * Used during group metadata sync.

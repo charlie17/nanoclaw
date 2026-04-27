@@ -34,6 +34,7 @@ import {
   getMessagesSince,
   setRouterState,
   storeChatMetadata,
+  ensureChatExists,
   storeMessage,
   updateChatName,
 } from '../db.js';
@@ -1932,9 +1933,14 @@ export class WebChannel implements Channel {
 
   private ensureSession(sid: string, broadcast = true): void {
     const jid = jidFromSid(sid);
-    const ts = new Date().toISOString();
-    // Idempotent — storeChatMetadata uses INSERT OR ... DO UPDATE (no name overwrite when undefined)
-    storeChatMetadata(jid, ts, undefined, 'web', false);
+    // INSERT OR IGNORE: create row if absent, but do NOT bump last_message_time
+    // on existing rows. Without this, every SSE-connect (i.e. every chat-switch)
+    // updates the chat's timestamp to NOW, and getAllChats() ORDER BY
+    // last_message_time DESC bubbles the clicked chat to the top. Real new
+    // messages still update the timestamp via storeMessage. (Impl-56 fold #5
+    // root-cause fix per JT live-fire video; pre-existing bug exposed by the
+    // FU-23b/d auto-derive + auto-archive making rearrange visually obvious.)
+    ensureChatExists(jid, 'web');
     if (!broadcast) return;
     // Broadcast to other sessions' clients that a session is now available
     for (const [otherSid] of this.clientsBySid) {
