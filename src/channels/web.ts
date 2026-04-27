@@ -705,7 +705,7 @@ function connectSse(){
   });
   s.addEventListener('typing',function(e){
     var on=e.data==='true';
-    document.getElementById('typing').style.display=on?'':'none';
+    document.getElementById('typing').style.display=on?'block':'none';
     if(!on){botDiv=null;setBusy(false);}
     scrollMsgs();
   });
