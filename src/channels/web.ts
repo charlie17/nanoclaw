@@ -762,7 +762,7 @@ function connectSse(){
   var s=new EventSource('/chat/events?sid='+sid);sse=s;
   s.onopen=function(){var wasConnected=sseEverConnected;sseEverConnected=true;reconDelay=1000;if(wasConnected){setBusy(false);loadHistory();}};
   s.onerror=function(){s.close();sse=null;reconDelay=Math.min(reconDelay*2,30000);setTimeout(connectSse,reconDelay);};
-  s.addEventListener('user_message',function(e){var d=JSON.parse(e.data);addMsg(d.text,'u',d.id);});
+  s.addEventListener('user_message',function(e){var d=JSON.parse(e.data);addMsg(d.text,'u',d.id);loadSessions();});
   s.addEventListener('agent_output',function(e){
     var d=JSON.parse(e.data);
     if(botDiv){
@@ -775,7 +775,7 @@ function connectSse(){
   s.addEventListener('typing',function(e){
     var on=e.data==='true';
     document.getElementById('typing').style.display=on?'block':'none';
-    if(!on){botDiv=null;setBusy(false);}
+    if(!on){botDiv=null;setBusy(false);loadSessions();}
     scrollMsgs();
   });
   s.addEventListener('upload',function(e){var d=JSON.parse(e.data);addMsg('Uploaded a file: '+d.path,'u',d.id);});
