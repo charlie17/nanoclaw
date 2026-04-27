@@ -554,11 +554,12 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
 #app.view-dash #ca{display:none}
 #dash-panel{flex:1;overflow-y:auto;padding:1rem;display:none;max-width:880px;width:100%;margin-inline:auto;box-sizing:border-box}
 #app.view-dash #dash-panel{display:block}
-.dc{background:var(--sb);border:1px solid var(--bd);border-radius:10px;margin-bottom:.75rem}
+.dc{background:var(--sb);border:1px solid var(--bd);border-radius:10px;margin:0 auto .75rem;max-width:520px}
 .dch{padding:.55rem .85rem;font-weight:600;font-size:.88rem;border-bottom:1px solid var(--bd)}
 .dcb{padding:.7rem .85rem;font-size:.85rem;line-height:1.55}
 .dcf{padding:.3rem .85rem;font-size:.76rem;opacity:.5;border-top:1px solid var(--bd)}
-.dr{display:flex;justify-content:space-between;padding:.1rem 0}
+.dr{display:grid;grid-template-columns:auto 1fr;gap:1.5rem;padding:.1rem 0;align-items:baseline}
+.dr>:nth-child(2){text-align:right}
 .dk{opacity:.65}
 #sb-scrim{display:none}
 #sb-toggle{display:none;border:none;background:none;cursor:pointer;font-size:1.2rem;padding:.25rem .5rem;color:var(--fg)}
