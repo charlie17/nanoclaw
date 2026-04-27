@@ -532,7 +532,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .m.b{align-self:flex-start;background:var(--bub-b);color:var(--bub-bf);border-bottom-left-radius:4px}
 .m-del{position:absolute;top:-.35rem;right:-.35rem;display:none;border:none;border-radius:50%;width:1.1rem;height:1.1rem;background:var(--bd);color:var(--fg);font-size:.65rem;cursor:pointer;align-items:center;justify-content:center;padding:0;line-height:1}
 .m:hover .m-del{display:flex}
-#typing{padding:.25rem 1rem;font-size:.82rem;opacity:.55;display:none}
+#typing{padding:.35rem 1rem;font-size:.95rem;font-style:italic;opacity:.8;display:none}
 #ia{padding:.65rem .75rem;border-top:1px solid var(--bd);display:flex;gap:.5rem;align-items:flex-end}
 #up-lbl{cursor:pointer;padding:.5rem .55rem;border:1px solid var(--bd);border-radius:12px;font-size:.95rem;flex-shrink:0;user-select:none;line-height:1}
 #inp{flex:1;padding:.5rem .7rem;border:1px solid var(--bd);border-radius:12px;background:var(--in-bg);color:var(--fg);font-size:.95rem;resize:none;line-height:1.4;max-height:120px;font-family:inherit}
