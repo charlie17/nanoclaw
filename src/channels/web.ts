@@ -719,7 +719,7 @@ function moveSession(msid,dir){
   api('/chat/session-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:order})});
 }
 
-function switchSid(ns){sid=ns;localStorage.setItem(LS,sid);document.getElementById('msgs').innerHTML='';botDiv=null;loadHistory();connectSse();/* loadSessions is fired by SSE onopen — ensures new chat row exists server-side first; eliminates fold #11/#12 fetch-order race */}
+function switchSid(ns){sid=ns;localStorage.setItem(LS,sid);document.getElementById('msgs').innerHTML='';botDiv=null;loadSessions();loadHistory();connectSse();}
 
 document.getElementById('sa-btn').onclick=function(){showAllSessions=!showAllSessions;this.classList.toggle('active');loadSessions();};
 document.getElementById('new-btn').onclick=function(){switchSid(mkSid());};
