@@ -526,7 +526,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .si-btn:hover{opacity:1;background:rgba(0,0,0,.1)}
 .si.active .si-btn:hover{background:rgba(255,255,255,.2)}
 #sf{padding:.5rem .75rem;border-top:1px solid var(--bd);display:flex;justify-content:flex-end;gap:.25rem}
-#dm-btn,#ch-btn,#lo-btn{border:none;background:none;cursor:pointer;font-size:1.1rem;padding:.2rem}
+#dm-btn,#lo-btn{border:none;background:none;cursor:pointer;font-size:1.1rem;padding:.2rem}
 #chat{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 #msgs{flex:1;overflow-y:auto;padding:.75rem 1rem;display:flex;flex-direction:column;gap:.4rem;max-width:880px;width:100%;margin-inline:auto;box-sizing:border-box}
 .m{max-width:78%;padding:.45rem .75rem;border-radius:14px;font-size:.94rem;line-height:1.45;white-space:pre-wrap;word-break:break-word;position:relative}
@@ -573,7 +573,8 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
 .si{min-height:44px;align-items:center}
 .si-acts{display:flex}
 .si-btn{min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;font-size:1rem;padding:.4rem}
-#dm-btn,#ch-btn,#lo-btn{min-width:44px;min-height:44px;font-size:1.3rem;padding:.5rem}
+.si-acts .si-btn:nth-child(1),.si-acts .si-btn:nth-child(2){display:none}
+#dm-btn,#lo-btn{min-width:44px;min-height:44px;font-size:1.3rem;padding:.5rem}
 #sf{padding:.5rem .5rem;gap:.4rem}
 .nb{min-height:44px;font-size:1rem;padding:.5rem 1rem}
 }
@@ -598,7 +599,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
     <div id="sidebar">
       <div id="sh"><span>Chats</span><button id="sa-btn" title="Show archived">⊕</button><button id="new-btn" title="New chat">+</button></div>
       <div id="sl"></div>
-      <div id="sf"><button id="lo-btn" title="Logout">Logout</button><button id="ch-btn" title="Clear history">\u{1F5D1}</button><button id="dm-btn" title="Toggle dark mode">\u{1F31E}</button></div>
+      <div id="sf"><button id="lo-btn" title="Logout">Logout</button><button id="dm-btn" title="Toggle dark mode">\u{1F31E}</button></div>
     </div>
     <div id="chat">
       <div id="msgs"></div>
@@ -632,7 +633,6 @@ function mkSid(){var a=new Uint8Array(8);crypto.getRandomValues(a);return Array.
 var dark=localStorage.getItem(LD);
 if(dark==='dark'||(dark===null&&matchMedia('(prefers-color-scheme:dark)').matches))document.body.classList.add('dark');
 document.getElementById('dm-btn').onclick=function(){var d=document.body.classList.toggle('dark');localStorage.setItem(LD,d?'dark':'light');};
-document.getElementById('ch-btn').onclick=clearHistory;
 document.getElementById('lo-btn').onclick=async function(){var r=await fetch('/auth/logout',{method:'POST'});if(r.ok){localStorage.removeItem(LS);location.reload();}else{alert('Logout failed');}};
 var sb=document.getElementById('sidebar'),scrim=document.getElementById('sb-scrim');
 document.getElementById('sb-toggle').onclick=function(){sb.classList.toggle('open');};
@@ -823,6 +823,7 @@ async function sendMsg(){
 }
 
 async function deleteSession(dsid){
+  if(!confirm('Delete this chat permanently? Messages will be lost.'))return;
   var r=await api('/chat/delete-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid:dsid})});
   if(r&&r.ok)loadSessions();
 }
@@ -1894,7 +1895,10 @@ export class WebChannel implements Channel {
   }
 
   private handleGetSessions(req: IncomingMessage, res: ServerResponse): void {
-    const reqUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const reqUrl = new URL(
+      req.url ?? '/',
+      `http://${req.headers.host ?? 'localhost'}`,
+    );
     const showAll = reqUrl.searchParams.get('showAll') === '1';
     const cutoffMs = 7 * 24 * 60 * 60 * 1000;
     const now = Date.now();
@@ -1914,7 +1918,9 @@ export class WebChannel implements Channel {
         if (showAll) return true;
         const isDefaultName = /^Chat [0-9a-f]{16}$/.test(s.name);
         if (!isDefaultName) return true;
-        const lastMs = s.last_message_time ? Date.parse(s.last_message_time) : 0;
+        const lastMs = s.last_message_time
+          ? Date.parse(s.last_message_time)
+          : 0;
         return now - lastMs < cutoffMs;
       });
     res.writeHead(200, { 'Content-Type': 'application/json' });
