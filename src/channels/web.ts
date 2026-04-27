@@ -552,7 +552,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
 .nb.active{background:var(--bub-u);color:#fff;opacity:1}
 #ca{flex:1;display:flex;flex-direction:row;overflow:hidden;min-width:0}
 #app.view-dash #ca{display:none}
-#dash-panel{flex:1;overflow-y:auto;padding:1rem;display:none}
+#dash-panel{flex:1;overflow-y:auto;padding:1rem;display:none;max-width:880px;width:100%;margin-inline:auto;box-sizing:border-box}
 #app.view-dash #dash-panel{display:block}
 .dc{background:var(--sb);border:1px solid var(--bd);border-radius:10px;margin-bottom:.75rem}
 .dch{padding:.55rem .85rem;font-weight:600;font-size:.88rem;border-bottom:1px solid var(--bd)}
