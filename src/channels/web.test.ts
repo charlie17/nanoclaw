@@ -377,7 +377,8 @@ describe('WebChannel HTTP', () => {
     expect(res.status).toBe(200);
     expect(res.headers['set-cookie']?.[0]).toContain('nanoclaw_token=');
     expect(res.headers['set-cookie']?.[0]).toContain('HttpOnly');
-    expect(res.headers['set-cookie']?.[0]).toContain('SameSite=Strict');
+    expect(res.headers['set-cookie']?.[0]).toContain('SameSite=Lax');
+    expect(res.headers['set-cookie']?.[0]).toContain('Max-Age=15552000');
   });
 
   it('POST /auth/login with invalid token returns 401', async () => {
@@ -481,6 +482,43 @@ describe('WebChannel HTTP', () => {
       headers: { Cookie: 'nanoclaw_token=%E0%A4%A' },
     });
     expect(res.status).toBe(401);
+  });
+
+  // ── D-V53.B: /auth/logout ─────────────────────────────────────────────────
+
+  it('POST /auth/logout with valid Bearer token clears cookie and returns 200', async () => {
+    const res = await req(port, {
+      method: 'POST',
+      path: '/auth/logout',
+      headers: { Authorization: 'Bearer test-secret-token' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers['set-cookie']?.[0]).toContain('nanoclaw_token=');
+    expect(res.headers['set-cookie']?.[0]).toContain('Max-Age=0');
+    expect(res.headers['set-cookie']?.[0]).toContain('SameSite=Lax');
+    expect(res.headers['set-cookie']?.[0]).toContain('HttpOnly');
+    const body = JSON.parse(res.body ?? '{}') as { ok?: boolean };
+    expect(body.ok).toBe(true);
+  });
+
+  it('POST /auth/logout without auth returns 401', async () => {
+    const res = await req(port, {
+      method: 'POST',
+      path: '/auth/logout',
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('POST /auth/logout with valid cookie auth clears cookie and returns 200', async () => {
+    const res = await req(port, {
+      method: 'POST',
+      path: '/auth/logout',
+      headers: { Cookie: 'nanoclaw_token=test-secret-token' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers['set-cookie']?.[0]).toContain('nanoclaw_token=');
+    expect(res.headers['set-cookie']?.[0]).toContain('Max-Age=0');
   });
 
   // ── D-S1d: /auth/login rate-limit ─────────────────────────────────────────

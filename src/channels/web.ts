@@ -524,7 +524,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .si-btn:hover{opacity:1;background:rgba(0,0,0,.1)}
 .si.active .si-btn:hover{background:rgba(255,255,255,.2)}
 #sf{padding:.5rem .75rem;border-top:1px solid var(--bd);display:flex;justify-content:flex-end;gap:.25rem}
-#dm-btn,#ch-btn{border:none;background:none;cursor:pointer;font-size:1.1rem;padding:.2rem}
+#dm-btn,#ch-btn,#lo-btn{border:none;background:none;cursor:pointer;font-size:1.1rem;padding:.2rem}
 #chat{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 #msgs{flex:1;overflow-y:auto;padding:.75rem 1rem;display:flex;flex-direction:column;gap:.4rem}
 .m{max-width:78%;padding:.45rem .75rem;border-radius:14px;font-size:.94rem;line-height:1.45;white-space:pre-wrap;word-break:break-word;position:relative}
@@ -573,7 +573,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div id="sidebar">
       <div id="sh"><span>Chats</span><button id="new-btn" title="New chat">+</button></div>
       <div id="sl"></div>
-      <div id="sf"><button id="ch-btn" title="Clear history">\u{1F5D1}</button><button id="dm-btn" title="Toggle dark mode">\u{1F319}</button></div>
+      <div id="sf"><button id="lo-btn" title="Logout">Logout</button><button id="ch-btn" title="Clear history">\u{1F5D1}</button><button id="dm-btn" title="Toggle dark mode">\u{1F319}</button></div>
     </div>
     <div id="chat">
       <div id="msgs"></div>
@@ -607,6 +607,8 @@ var dark=localStorage.getItem(LD);
 if(dark==='dark'||(dark===null&&matchMedia('(prefers-color-scheme:dark)').matches))document.body.classList.add('dark');
 document.getElementById('dm-btn').onclick=function(){var d=document.body.classList.toggle('dark');localStorage.setItem(LD,d?'dark':'light');};
 document.getElementById('ch-btn').onclick=clearHistory;
+document.getElementById('lo-btn').onclick=async function(){var r=await fetch('/auth/logout',{method:'POST'});if(r.ok){localStorage.removeItem(LS);location.reload();}else{alert('Logout failed');}};
+
 
 var overlay=document.getElementById('login-overlay'),app=document.getElementById('app');
 function showApp(){overlay.style.display='none';app.classList.add('show');init();}
@@ -1099,6 +1101,12 @@ export class WebChannel implements Channel {
     }
 
     if (!this.authorizeRequest(req, res)) return;
+
+    // D-V53.B5: POST /auth/logout — requires auth (gate above); D-V53.B6 rationale
+    if (method === 'POST' && urlPath === '/auth/logout') {
+      this.handleAuthLogout(req, res);
+      return;
+    }
 
     // D-S3.1: /dash/* routes — GET-only, read-only, no mutation — D-S3.2 shared auth gate above
     if (method === 'GET' && urlPath === '/dash/health') {
@@ -1666,10 +1674,29 @@ export class WebChannel implements Channel {
     const isSecure =
       (req.socket as unknown as { encrypted?: boolean }).encrypted === true ||
       req.headers['x-forwarded-proto'] === 'https';
-    const cookieAttrs = `HttpOnly; SameSite=Strict; Path=/${isSecure ? '; Secure' : ''}`;
+    // D-V53.B1: Max-Age=15552000 = 180d persistence (survive browser/PWA process kill)
+    // D-V53.B2: SameSite=Lax — CSRF-safe under POST-with-token-body; allows PWA top-level navigations
+    const cookieAttrs = `Max-Age=15552000; HttpOnly; SameSite=Lax; Path=/${isSecure ? '; Secure' : ''}`;
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'Set-Cookie': `nanoclaw_token=${encodeURIComponent(NANOCLAW_TOKEN)}; ${cookieAttrs}`,
+    });
+    res.end('{"ok":true}');
+  }
+
+  private handleAuthLogout(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): void {
+    // D-V53.B6: authorizeRequest already ran upstream (see route registration)
+    // D-V53.B7: clear cookie via Max-Age=0; same name/path/attributes as the login set
+    const isSecure =
+      (req.socket as unknown as { encrypted?: boolean }).encrypted === true ||
+      req.headers['x-forwarded-proto'] === 'https';
+    const clearAttrs = `Max-Age=0; HttpOnly; SameSite=Lax; Path=/${isSecure ? '; Secure' : ''}`;
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Set-Cookie': `nanoclaw_token=; ${clearAttrs}`,
     });
     res.end('{"ok":true}');
   }
