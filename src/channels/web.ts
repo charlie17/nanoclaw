@@ -562,6 +562,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
 .dr{display:grid;grid-template-columns:auto 1fr;gap:1.5rem;padding:.1rem 0;align-items:baseline}
 .dr>:nth-child(2){text-align:right}
 .dk{opacity:.65}
+.dcb a{color:inherit}
 #sb-scrim{display:none}
 #sb-toggle{display:none;border:none;background:none;cursor:pointer;font-size:1.2rem;padding:.25rem .5rem;color:var(--fg)}
 #msgs>.m:first-child{margin-top:auto}
