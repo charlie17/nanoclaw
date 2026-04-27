@@ -689,7 +689,7 @@ function maybeAutoRename(text){
   var row=document.querySelector('#sl .si[data-sid="'+sid+'"] .si-lbl');
   if(!row)return;
   if(!row.textContent.startsWith('New chat — '))return;
-  var snippet=text.trim().replace(/\s+/g,' ').slice(0,32);
+  var snippet=text.trim().replace(/\\s+/g,' ').slice(0,32);
   var lastSp=snippet.lastIndexOf(' ');
   if(lastSp>15)snippet=snippet.slice(0,lastSp);
   if(!snippet)return;
@@ -789,7 +789,14 @@ function connectSse(){
   s.addEventListener('message_deleted',function(e){var d=JSON.parse(e.data);var m=document.querySelector('[data-id="'+d.id+'"]');if(m)m.remove();});
   s.addEventListener('history_cleared',function(){document.getElementById('msgs').innerHTML='';botDiv=null;});
   s.addEventListener('sessions_changed',function(e){
-    try{var d=JSON.parse(e.data);if(d.removed&&d.removed===sid){switchSid(mkSid());return;}}catch(err){}
+    try{var d=JSON.parse(e.data);if(d.removed&&d.removed===sid){
+      // Current chat was deleted: switch to the most recent surviving chat
+      // instead of minting a new sid (which would create a phantom new chat).
+      api('/chat/sessions').then(function(rr){if(!rr)return;rr.json().then(function(ss){
+        var first=ss[0];if(first&&first.sid)switchSid(first.sid);else switchSid(mkSid());
+      });});
+      return;
+    }}catch(err){}
     loadSessions();
   });
   s.addEventListener('cancelled',function(){botDiv=null;setBusy(false);});
