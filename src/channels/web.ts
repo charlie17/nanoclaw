@@ -513,6 +513,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #sidebar{width:220px;background:var(--sb);border-right:1px solid var(--bd);display:flex;flex-direction:column;flex-shrink:0}
 #sh{display:flex;align-items:center;justify-content:space-between;padding:.7rem .75rem;border-bottom:1px solid var(--bd);font-weight:600;font-size:.9rem}
 #new-btn{border:none;background:none;color:var(--bub-u);font-size:1.5rem;cursor:pointer;line-height:1;padding:0 .1rem}
+#sa-btn{border:none;background:none;color:var(--fg);font-size:.85rem;cursor:pointer;line-height:1;padding:0 .3rem;opacity:.55}
+#sa-btn.active{color:var(--bub-u);opacity:1}
 #sl{flex:1;overflow-y:auto;padding:.25rem 0}
 .si{padding:.55rem .75rem;cursor:default;font-size:.88rem;border-radius:6px;margin:.1rem .3rem;display:flex;align-items:center;gap:.2rem}
 .si:hover{background:var(--in-bg)}
@@ -566,8 +568,14 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
 #sidebar.open{transform:translateX(0)}
 #sb-scrim{display:none;position:absolute;inset:0;background:rgba(0,0,0,.45);z-index:40}
 #sidebar.open~#sb-scrim{display:block}
-#sb-toggle{display:inline-block}
+#sb-toggle{display:inline-block;min-width:44px;min-height:44px;font-size:1.5rem;padding:.5rem}
 #ca{position:relative}
+.si{min-height:44px;align-items:center}
+.si-acts{display:flex}
+.si-btn{min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;font-size:1rem;padding:.4rem}
+#dm-btn,#ch-btn,#lo-btn{min-width:44px;min-height:44px;font-size:1.3rem;padding:.5rem}
+#sf{padding:.5rem .5rem;gap:.4rem}
+.nb{min-height:44px;font-size:1rem;padding:.5rem 1rem}
 }
 </style>
 </head>
@@ -588,7 +596,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
   </div>
   <div id="ca">
     <div id="sidebar">
-      <div id="sh"><span>Chats</span><button id="new-btn" title="New chat">+</button></div>
+      <div id="sh"><span>Chats</span><button id="sa-btn" title="Show archived">⊕</button><button id="new-btn" title="New chat">+</button></div>
       <div id="sl"></div>
       <div id="sf"><button id="lo-btn" title="Logout">Logout</button><button id="ch-btn" title="Clear history">\u{1F5D1}</button><button id="dm-btn" title="Toggle dark mode">\u{1F31E}</button></div>
     </div>
@@ -617,7 +625,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
 'use strict';
 var LS='bridge_sid',LD='bridge_dark';
 var sid=localStorage.getItem(LS)||mkSid();localStorage.setItem(LS,sid);
-var sse=null,reconDelay=1000,botDiv=null,busy=false,sessionOrder=[];
+var sse=null,reconDelay=1000,botDiv=null,busy=false,sessionOrder=[],showAllSessions=false;
 
 function mkSid(){var a=new Uint8Array(8);crypto.getRandomValues(a);return Array.from(a,function(b){return b.toString(16).padStart(2,'0')}).join('');}
 
@@ -645,13 +653,13 @@ document.getElementById('tok').addEventListener('keydown',function(e){if(e.key==
 async function api(url,opts){var r=await fetch(url,opts);if(r&&r.status===401){showLogin('Session expired \u2014 please sign in again.');return null;}return r;}
 
 async function loadSessions(){
-  var r=await api('/chat/sessions');if(!r)return;
+  var r=await api('/chat/sessions'+(showAllSessions?'?showAll=1':''));if(!r)return;
   var ss=await r.json();
   if(sessionOrder.length){ss.sort(function(a,b){var ia=sessionOrder.indexOf(a.sid),ib=sessionOrder.indexOf(b.sid);if(ia===-1&&ib===-1)return 0;if(ia===-1)return 1;if(ib===-1)return -1;return ia-ib;});}
   var el=document.getElementById('sl');el.innerHTML='';
   ss.forEach(function(s){
     var row=document.createElement('div');row.className='si'+(s.sid===sid?' active':'');row.dataset.sid=s.sid;
-    var lbl=document.createElement('span');lbl.className='si-lbl';lbl.textContent=s.name;
+    var lbl=document.createElement('span');lbl.className='si-lbl';lbl.textContent=displayName(s);
     lbl.onclick=function(){if(sb.classList.contains('open'))sb.classList.remove('open');if(s.sid!==sid)switchSid(s.sid);};
     lbl.ondblclick=function(e){e.stopPropagation();startRename(row,s.sid,s.name);};
     var acts=document.createElement('span');acts.className='si-acts';
@@ -664,6 +672,26 @@ async function loadSessions(){
 }
 
 function mk(tag,cls,txt){var e=document.createElement(tag);e.className=cls;e.textContent=txt;return e;}
+
+function displayName(s){
+  if(/^Chat [0-9a-f]{16}$/.test(s.name)){
+    var t=s.last_message_time?new Date(s.last_message_time):new Date();
+    var h=t.getHours()%12||12,mm=String(t.getMinutes()).padStart(2,'0');
+    return 'New chat — '+h+':'+mm+' '+(t.getHours()<12?'AM':'PM');
+  }
+  return s.name;
+}
+
+function maybeAutoRename(text){
+  var row=document.querySelector('#sl .si[data-sid="'+sid+'"] .si-lbl');
+  if(!row)return;
+  if(!row.textContent.startsWith('New chat — '))return;
+  var snippet=text.trim().replace(/\s+/g,' ').slice(0,32);
+  var lastSp=snippet.lastIndexOf(' ');
+  if(lastSp>15)snippet=snippet.slice(0,lastSp);
+  if(!snippet)return;
+  api('/chat/session-name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid:sid,name:snippet})});
+}
 
 function startRename(row,rsid,cur){
   var lbl=row.querySelector('.si-lbl');
@@ -690,6 +718,7 @@ function moveSession(msid,dir){
 
 function switchSid(ns){sid=ns;localStorage.setItem(LS,sid);document.getElementById('msgs').innerHTML='';botDiv=null;loadSessions();loadHistory();connectSse();}
 
+document.getElementById('sa-btn').onclick=function(){showAllSessions=!showAllSessions;this.classList.toggle('active');loadSessions();};
 document.getElementById('new-btn').onclick=function(){switchSid(mkSid());};
 
 async function loadHistory(){
@@ -789,7 +818,8 @@ async function sendMsg(){
   var inp=document.getElementById('inp'),txt=inp.value.trim();if(!txt)return;
   inp.value='';setBusy(true);
   var r=await api('/chat/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid:sid,content:txt})});
-  if(!r||!r.ok){setBusy(false);inp.value=txt;}
+  if(!r||!r.ok){setBusy(false);inp.value=txt;return;}
+  maybeAutoRename(txt);
 }
 
 async function deleteSession(dsid){
@@ -1183,7 +1213,7 @@ export class WebChannel implements Channel {
       return;
     }
     if (method === 'GET' && urlPath === '/chat/sessions') {
-      this.handleGetSessions(res);
+      this.handleGetSessions(req, res);
       return;
     }
     if (method === 'POST' && urlPath === '/chat/upload') {
@@ -1863,7 +1893,11 @@ export class WebChannel implements Channel {
     res.end(JSON.stringify(history));
   }
 
-  private handleGetSessions(res: ServerResponse): void {
+  private handleGetSessions(req: IncomingMessage, res: ServerResponse): void {
+    const reqUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const showAll = reqUrl.searchParams.get('showAll') === '1';
+    const cutoffMs = 7 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
     // T-S1.1 RESOLVED: filter is server-side in handler, not browser-side
     const all: ChatInfo[] = getAllChats();
     const sessions = all
@@ -1875,7 +1909,14 @@ export class WebChannel implements Channel {
           ? c.name.replace('local@web-', 'Chat ')
           : c.name,
         last_message_time: c.last_message_time,
-      }));
+      }))
+      .filter((s) => {
+        if (showAll) return true;
+        const isDefaultName = /^Chat [0-9a-f]{16}$/.test(s.name);
+        if (!isDefaultName) return true;
+        const lastMs = s.last_message_time ? Date.parse(s.last_message_time) : 0;
+        return now - lastMs < cutoffMs;
+      });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(sessions));
   }
