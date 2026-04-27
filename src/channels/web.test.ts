@@ -166,6 +166,7 @@ import {
   isAllowedExtension,
   sanitizeFilename,
   sanitizeSid,
+  TYPING_TIMEOUT_MS,
   validateBridgeConfig,
   WebChannel,
 } from './web.js';
@@ -1730,7 +1731,9 @@ describe('WebChannel HTTP — claude-usage proxy (/dash/usage)', () => {
       upRes.writeHead(200, { 'content-type': 'text/html' });
       upRes.end(`<html>claude-usage path=${upReq.url}</html>`);
     });
-    await new Promise<void>((resolve) => mockUpstream.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) =>
+      mockUpstream.listen(0, '127.0.0.1', resolve),
+    );
     mockUpstreamPort = (mockUpstream.address() as AddressInfo).port;
     mockConfig.CLAUDE_USAGE_PORT = mockUpstreamPort;
   });
@@ -1745,12 +1748,31 @@ describe('WebChannel HTTP — claude-usage proxy (/dash/usage)', () => {
     netMock.reset();
     execFileMock.stdout = 'container-a,running\n';
     execFileMock.shouldFail = false;
-    vi.mocked(readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
-    vi.mocked(statfs).mockResolvedValue({ bsize: 4096, blocks: 10000, bavail: 5000, bfree: 5100, ffree: 1000, files: 2000, favail: 900, f_frsize: 4096, namemax: 255, type: 0 } as unknown as Awaited<ReturnType<typeof statfs>>);
-    vi.mocked(readdir).mockResolvedValue([] as unknown as Awaited<ReturnType<typeof readdir>>);
+    vi.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+    );
+    vi.mocked(statfs).mockResolvedValue({
+      bsize: 4096,
+      blocks: 10000,
+      bavail: 5000,
+      bfree: 5100,
+      ffree: 1000,
+      files: 2000,
+      favail: 900,
+      f_frsize: 4096,
+      namemax: 255,
+      type: 0,
+    } as unknown as Awaited<ReturnType<typeof statfs>>);
+    vi.mocked(readdir).mockResolvedValue(
+      [] as unknown as Awaited<ReturnType<typeof readdir>>,
+    );
     proxyChannel = new WebChannel(makeOpts());
     await proxyChannel.connect();
-    proxyPort = ((proxyChannel as unknown as { server: http.Server }).server.address() as AddressInfo).port;
+    proxyPort = (
+      (
+        proxyChannel as unknown as { server: http.Server }
+      ).server.address() as AddressInfo
+    ).port;
   });
 
   afterEach(async () => {
@@ -1805,4 +1827,13 @@ describe('WebChannel HTTP — claude-usage proxy (/dash/usage)', () => {
       mockConfig.CLAUDE_USAGE_PORT = savedPort;
     }
   });
+});
+
+// ── TYPING_TIMEOUT_MS constant (D-V52.5) ──────────────────────────────────────
+
+// Regression guard: Opus /research + /brainstorm can run 60-180s; the safety
+// timeout must not fire mid-agent and clear the Bridge thinking indicator.
+// 300_000 (5 min) matches the slow-skill-ack hard cap from Impl-32.
+it('TYPING_TIMEOUT_MS is 300_000ms (5 min)', () => {
+  expect(TYPING_TIMEOUT_MS).toBe(300_000);
 });

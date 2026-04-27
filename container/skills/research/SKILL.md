@@ -6,7 +6,15 @@ JT invokes `/research <query>`. Synthesize from three source pools: Readwise ful
 
 ## Model dispatch
 
-Default model: Opus (D-78). At session start, announce: `"Using Opus for this research — switch to Sonnet if you'd like (/model sonnet)."` JT can switch mid-conversation via the `/model` native Claude Code command. Do NOT change the default to Sonnet.
+Default model: Opus (D-78).
+
+**Before executing any research, do the following in order:**
+
+1. Announce: `"Using Opus for this research — switch to Sonnet if you'd like (/model sonnet)."`
+2. Ask: `"Run now (vault + Readwise, ~30-60s) or defer to Batch (adds web search, ~5-10 min)?"`
+3. Wait for JT's reply before proceeding. If JT says "run now" (or equivalent affirmation), proceed to the sync path below. If JT says "defer" or "batch", proceed directly to the dispatch procedure below without running the sync path first.
+
+JT can switch models mid-conversation via the `/model` native Claude Code command. Do NOT change the default to Sonnet.
 
 ## Sync path
 
@@ -86,7 +94,15 @@ type: research-report
 run-mode: sync
 created: {ISO8601}
 topic: "{JT's topic, verbatim}"
+model: "{model used, e.g. claude-opus-4-7}"
+sources: "{N Readwise items + N vault notes}"
 ---
+```
+
+Immediately after the frontmatter block, add a provenance line before the synthesis body:
+
+```
+Drawn from: {N} Readwise items + {N} vault notes
 ```
 
 No `trust` field — absence is the trust signal (sync-path sources are JT-curated Readwise + prior Daystrom output; no untrusted web content).

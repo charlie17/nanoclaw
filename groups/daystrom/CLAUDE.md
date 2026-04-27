@@ -440,3 +440,17 @@ See global CLAUDE.md for the full Bases file format reference.
 | "Remember I am in AZ March 16-20" | → Agent memory only (temporal, expires 3/21) |
 | "Save this image to food / dinner log" | → Save image attachment, append entry to the `## Meal log` section at the bottom of `reference/food.md` (create the section once if missing). Curated reference content above is preserved. |
 | "AZ travel — Teaspoon was great…" | → `reference/travel/Travel - AZ.md` |
+
+---
+
+## Model Awareness (D-V52.2)
+
+Your base model is in the `DAYSTROM_AGENT_MODEL` environment variable. If JT asks "what model are you?" or "what model am I using?", run:
+
+```bash
+echo $DAYSTROM_AGENT_MODEL
+```
+
+and report the result (e.g. `claude-sonnet-4-6`).
+
+Note: `/research` and `/brainstorm` internally dispatch synthesis work to Opus via `Agent({model:"opus"})` per D-78 — the interactive shell you run in stays Sonnet. Explain this distinction to JT if asked.

@@ -53,7 +53,8 @@ const SSE_HEARTBEAT_MS = 20_000;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_IP_CAP = 1000;
-const TYPING_TIMEOUT_MS = 30_000;
+// D-V52.5: 5 min — Opus /research + /brainstorm latency can reach 60-180s; matches slow-skill-ack hard cap
+export const TYPING_TIMEOUT_MS = 300_000;
 const HISTORY_LIMIT = 500;
 const SESSION_ORDER_MAX = 500;
 const SID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -2094,7 +2095,7 @@ export class WebChannel implements Channel {
       isTyping ? 'true' : 'false',
     );
     if (isTyping) {
-      // D-S1.12: 30s safety timeout clears typing if agent never responds
+      // D-S1.12 / D-V52.5: safety timeout — clears typing if agent never responds (5 min cap)
       const timer = setTimeout(() => {
         this.typingTimers.delete(sid);
         broadcastToSession(this.clientsBySid, sid, 'typing', 'false');

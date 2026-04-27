@@ -323,6 +323,10 @@ function buildContainerArgs(
     );
   }
 
+  // D-V52.1: model self-awareness — agent answers "what model am I?" via this env var.
+  // Unconditional: all group containers (Daystrom, Worf, future groups) benefit.
+  args.push('-e', 'DAYSTROM_AGENT_MODEL=claude-sonnet-4-6');
+
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
   // or when getuid is unavailable (native Windows without WSL).
