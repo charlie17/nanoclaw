@@ -553,6 +553,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .dcf{padding:.3rem .85rem;font-size:.76rem;opacity:.5;border-top:1px solid var(--bd)}
 .dr{display:flex;justify-content:space-between;padding:.1rem 0}
 .dk{opacity:.65}
+#sb-scrim{display:none}
+#sb-toggle{display:none;border:none;background:none;cursor:pointer;font-size:1.2rem;padding:.25rem .5rem;color:var(--fg)}
+#msgs>.m:first-child{margin-top:auto}
+@media(max-width:768px){
+#sidebar{position:absolute;top:0;bottom:0;left:0;width:80vw;max-width:280px;transform:translateX(-100%);transition:transform .25s;z-index:50}
+#sidebar.open{transform:translateX(0)}
+#sb-scrim{display:none;position:absolute;inset:0;background:rgba(0,0,0,.45);z-index:40}
+#sidebar.open~#sb-scrim{display:block}
+#sb-toggle{display:inline-block}
+#ca{position:relative}
+}
 </style>
 </head>
 <body>
@@ -566,6 +577,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </div>
 <div id="app">
   <div id="tnav">
+    <button id="sb-toggle" title="Menu">☰</button>
     <button class="nb active" id="nav-chat">Chat</button>
     <button class="nb" id="nav-dash">Dash</button>
   </div>
@@ -585,6 +597,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <button id="send">Send</button>
       </div>
     </div>
+    <div id="sb-scrim"></div>
   </div>
   <div id="dash-panel">
     <div class="dc" id="dc-health"><div class="dch">Health</div><div class="dcb" id="dc-health-body">Loading\u2026</div><div class="dcf" id="dc-health-foot"></div></div>
@@ -608,6 +621,9 @@ if(dark==='dark'||(dark===null&&matchMedia('(prefers-color-scheme:dark)').matche
 document.getElementById('dm-btn').onclick=function(){var d=document.body.classList.toggle('dark');localStorage.setItem(LD,d?'dark':'light');};
 document.getElementById('ch-btn').onclick=clearHistory;
 document.getElementById('lo-btn').onclick=async function(){var r=await fetch('/auth/logout',{method:'POST'});if(r.ok){localStorage.removeItem(LS);location.reload();}else{alert('Logout failed');}};
+var sb=document.getElementById('sidebar'),scrim=document.getElementById('sb-scrim');
+document.getElementById('sb-toggle').onclick=function(){sb.classList.toggle('open');};
+scrim.onclick=function(){sb.classList.remove('open');};
 
 
 var overlay=document.getElementById('login-overlay'),app=document.getElementById('app');
@@ -631,7 +647,7 @@ async function loadSessions(){
   ss.forEach(function(s){
     var row=document.createElement('div');row.className='si'+(s.sid===sid?' active':'');row.dataset.sid=s.sid;
     var lbl=document.createElement('span');lbl.className='si-lbl';lbl.textContent=s.name;
-    lbl.onclick=function(){if(s.sid!==sid)switchSid(s.sid);};
+    lbl.onclick=function(){if(sb.classList.contains('open'))sb.classList.remove('open');if(s.sid!==sid)switchSid(s.sid);};
     lbl.ondblclick=function(e){e.stopPropagation();startRename(row,s.sid,s.name);};
     var acts=document.createElement('span');acts.className='si-acts';
     var upBtn=mk('button','si-btn','\u2191');upBtn.title='Move up';upBtn.onclick=function(e){e.stopPropagation();moveSession(s.sid,-1);};
