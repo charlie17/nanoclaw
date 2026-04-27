@@ -520,8 +520,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .si:hover{background:var(--in-bg)}
 .si.active{background:var(--bub-u);color:#fff}
 .si-lbl{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;cursor:pointer}
-.si-acts{display:none;flex-shrink:0;gap:.1rem}
-.si:hover .si-acts,.si.active .si-acts{display:flex}
+.si-acts{display:flex;visibility:hidden;flex-shrink:0;gap:.1rem}
+.si:hover .si-acts,.si.active .si-acts{visibility:visible}
 .si-btn{border:none;background:none;cursor:pointer;font-size:.75rem;padding:.15rem .25rem;opacity:.55;border-radius:3px;color:inherit;line-height:1}
 .si-btn:hover{opacity:1;background:rgba(0,0,0,.1)}
 .si.active .si-btn:hover{background:rgba(255,255,255,.2)}
@@ -571,7 +571,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
 #sb-toggle{display:inline-block;min-width:44px;min-height:44px;font-size:1.5rem;padding:.5rem}
 #ca{position:relative}
 .si{min-height:44px;align-items:center}
-.si-acts{display:flex}
+.si-acts{visibility:visible}
 .si-btn{min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;font-size:1rem;padding:.4rem}
 .si-acts .si-btn:nth-child(1),.si-acts .si-btn:nth-child(2){display:none}
 #dm-btn,#lo-btn{min-width:44px;min-height:44px;font-size:1.3rem;padding:.5rem}
@@ -597,7 +597,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
   </div>
   <div id="ca">
     <div id="sidebar">
-      <div id="sh"><span>Chats</span><button id="sa-btn" title="Show archived">⊕</button><button id="new-btn" title="New chat">+</button></div>
+      <div id="sh"><span>Chats</span><button id="sa-btn" title="Toggle archived chats — auto-hidden when default-named (Chat xxxx) and inactive 7+ days. Renamed chats always visible.">⊕</button><button id="new-btn" title="New chat">+</button></div>
       <div id="sl"></div>
       <div id="sf"><button id="lo-btn" title="Logout">Logout</button><button id="dm-btn" title="Toggle dark mode">\u{1F31E}</button></div>
     </div>
