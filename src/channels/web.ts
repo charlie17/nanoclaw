@@ -526,14 +526,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #sf{padding:.5rem .75rem;border-top:1px solid var(--bd);display:flex;justify-content:flex-end;gap:.25rem}
 #dm-btn,#ch-btn,#lo-btn{border:none;background:none;cursor:pointer;font-size:1.1rem;padding:.2rem}
 #chat{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-#msgs{flex:1;overflow-y:auto;padding:.75rem 1rem;display:flex;flex-direction:column;gap:.4rem}
+#msgs{flex:1;overflow-y:auto;padding:.75rem 1rem;display:flex;flex-direction:column;gap:.4rem;max-width:880px;width:100%;margin-inline:auto;box-sizing:border-box}
 .m{max-width:78%;padding:.45rem .75rem;border-radius:14px;font-size:.94rem;line-height:1.45;white-space:pre-wrap;word-break:break-word;position:relative}
+.m code{background:rgba(0,0,0,.08);padding:.05rem .3rem;border-radius:4px;font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:.88em}
+.m pre{background:rgba(0,0,0,.08);padding:.5rem;border-radius:6px;overflow-x:auto;margin:.4rem 0;white-space:pre}
+.m pre code{background:none;padding:0;font-size:.85em}
+.m a{color:inherit;text-decoration:underline}
+body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
 .m.u{align-self:flex-end;background:var(--bub-u);color:#fff;border-bottom-right-radius:4px}
 .m.b{align-self:flex-start;background:var(--bub-b);color:var(--bub-bf);border-bottom-left-radius:4px}
 .m-del{position:absolute;top:-.35rem;right:-.35rem;display:none;border:none;border-radius:50%;width:1.1rem;height:1.1rem;background:var(--bd);color:var(--fg);font-size:.65rem;cursor:pointer;align-items:center;justify-content:center;padding:0;line-height:1}
 .m:hover .m-del{display:flex}
 #typing{padding:.35rem 1rem;font-size:.95rem;font-style:italic;opacity:.8;display:none}
-#ia{padding:.65rem .75rem;border-top:1px solid var(--bd);display:flex;gap:.5rem;align-items:flex-end}
+#ia{padding:.65rem .75rem .9rem;border-top:1px solid var(--bd);display:flex;gap:.5rem;align-items:flex-end;max-width:880px;width:100%;margin-inline:auto;box-sizing:border-box}
 #up-lbl{cursor:pointer;padding:.5rem .55rem;border:1px solid var(--bd);border-radius:12px;font-size:.95rem;flex-shrink:0;user-select:none;line-height:1}
 #inp{flex:1;padding:.5rem .7rem;border:1px solid var(--bd);border-radius:12px;background:var(--in-bg);color:var(--fg);font-size:.95rem;resize:none;line-height:1.4;max-height:120px;font-family:inherit}
 #cancel-btn{padding:.5rem .7rem;border:1px solid var(--bd);border-radius:12px;background:none;color:var(--fg);cursor:pointer;font-size:.88rem;flex-shrink:0;display:none}
@@ -585,7 +590,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div id="sidebar">
       <div id="sh"><span>Chats</span><button id="new-btn" title="New chat">+</button></div>
       <div id="sl"></div>
-      <div id="sf"><button id="lo-btn" title="Logout">Logout</button><button id="ch-btn" title="Clear history">\u{1F5D1}</button><button id="dm-btn" title="Toggle dark mode">\u{1F319}</button></div>
+      <div id="sf"><button id="lo-btn" title="Logout">Logout</button><button id="ch-btn" title="Clear history">\u{1F5D1}</button><button id="dm-btn" title="Toggle dark mode">\u{1F31E}</button></div>
     </div>
     <div id="chat">
       <div id="msgs"></div>
@@ -694,11 +699,23 @@ async function loadHistory(){
   ms.forEach(function(m){addMsg(m.text,m.cls==='bot'?'b':'u',m.id);});
 }
 
+function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function md(s){
+  var h=escHtml(s);
+  h=h.replace(/\`\`\`([\\s\\S]*?)\`\`\`/g,function(_,c){return '<pre><code>'+c+'</code></pre>';});
+  h=h.replace(/\`([^\`\\n]+)\`/g,'<code>$1</code>');
+  h=h.replace(/\\*\\*([^*\\n]+)\\*\\*/g,'<strong>$1</strong>');
+  h=h.replace(/(^|[^*\\w])\\*([^*\\n]+)\\*(?!\\w)/g,'$1<em>$2</em>');
+  h=h.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  return h;
+}
+function setMtContent(t,text,role){if(role==='b')t.innerHTML=md(text);else t.textContent=text;}
 function addMsg(text,role,id){
   var el=document.getElementById('msgs');
-  if(id){var ex=el.querySelector('[data-id="'+id+'"]');if(ex){var xt=ex.querySelector('.mt');if(xt)xt.textContent=text;scrollMsgs();return;}}
+  if(id){var ex=el.querySelector('[data-id="'+id+'"]');if(ex){var xt=ex.querySelector('.mt');if(xt){setMtContent(xt,text,role);if(role==='b')ex.dataset.raw=text;}scrollMsgs();return;}}
   var d=document.createElement('div');d.className='m '+role;if(id)d.dataset.id=id;
-  var t=document.createElement('span');t.className='mt';t.textContent=text;d.appendChild(t);
+  if(role==='b')d.dataset.raw=text;
+  var t=document.createElement('span');t.className='mt';setMtContent(t,text,role);d.appendChild(t);
   if(id){var del=mk('button','m-del','\xd7');del.title='Delete';del.onclick=function(){deleteMessage(id);};d.appendChild(del);}
   el.appendChild(d);scrollMsgs();
   return d;
@@ -717,8 +734,11 @@ function connectSse(){
   s.addEventListener('user_message',function(e){var d=JSON.parse(e.data);addMsg(d.text,'u',d.id);});
   s.addEventListener('agent_output',function(e){
     var d=JSON.parse(e.data);
-    if(botDiv){var t=botDiv.querySelector('.mt');if(t)t.textContent+=d.text;else botDiv.textContent+=d.text;}
-    else{botDiv=addMsg(d.text,'b');}
+    if(botDiv){
+      botDiv.dataset.raw=(botDiv.dataset.raw||'')+d.text;
+      var t=botDiv.querySelector('.mt');
+      if(t)t.innerHTML=md(botDiv.dataset.raw);else botDiv.innerHTML=md(botDiv.dataset.raw);
+    } else {botDiv=addMsg(d.text,'b');}
     scrollMsgs();
   });
   s.addEventListener('typing',function(e){
