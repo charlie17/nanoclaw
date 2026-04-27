@@ -636,7 +636,7 @@ function mkSid(){var a=new Uint8Array(8);crypto.getRandomValues(a);return Array.
 var dark=localStorage.getItem(LD);
 if(dark==='dark'||(dark===null&&matchMedia('(prefers-color-scheme:dark)').matches))document.body.classList.add('dark');
 document.getElementById('dm-btn').onclick=function(){var d=document.body.classList.toggle('dark');localStorage.setItem(LD,d?'dark':'light');};
-document.getElementById('lo-btn').onclick=async function(){var r=await fetch('/auth/logout',{method:'POST'});if(r.ok){localStorage.removeItem(LS);location.reload();}else{alert('Logout failed');}};
+document.getElementById('lo-btn').onclick=async function(){if(!confirm('Log out of Bridge? You will need to re-enter your access token to sign back in.'))return;var r=await fetch('/auth/logout',{method:'POST'});if(r.ok){localStorage.removeItem(LS);location.reload();}else{alert('Logout failed');}};
 var sb=document.getElementById('sidebar'),scrim=document.getElementById('sb-scrim');
 document.getElementById('sb-toggle').onclick=function(){sb.classList.toggle('open');};
 scrim.onclick=function(){sb.classList.remove('open');};
