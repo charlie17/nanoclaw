@@ -11,8 +11,8 @@ Default model: Opus (D-78).
 **Before executing any research, do the following in order:**
 
 1. Announce: `"Using Opus for this research — switch to Sonnet if you'd like (/model sonnet)."`
-2. Ask: `"Run now (vault + Readwise only, ~30-60s) or include a web search (dispatched to O'Brien in background, ~5-10 min)?"`
-3. Wait for JT's reply before proceeding. If JT says "run now" (or equivalent affirmation), proceed to the sync path below. If JT says "web search" or "background" or "O'Brien", proceed directly to the dispatch procedure below without running the sync path first.
+2. Ask: `"Run now (vault + Readwise only, ~30-60s) or dispatch O'Brien to run a web search (~5-10 min)?"`
+3. Wait for JT's reply before proceeding. If JT says "run now" (or equivalent affirmation), proceed to the sync path below. If JT says "O'Brien" or "web search" or "dispatch", proceed directly to the dispatch procedure below without running the sync path first.
 
 JT can switch models mid-conversation via the `/model` native Claude Code command. Do NOT change the default to Sonnet.
 
