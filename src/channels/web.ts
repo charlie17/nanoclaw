@@ -1700,10 +1700,7 @@ export class WebChannel implements Channel {
     res.end('{"ok":true}');
   }
 
-  private handleAuthLogout(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): void {
+  private handleAuthLogout(req: IncomingMessage, res: ServerResponse): void {
     // D-V53.B6: authorizeRequest already ran upstream (see route registration)
     // D-V53.B7: clear cookie via Max-Age=0; same name/path/attributes as the login set
     const isSecure =
