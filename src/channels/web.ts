@@ -526,8 +526,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .si-btn{border:none;background:none;cursor:pointer;font-size:.75rem;padding:.15rem .25rem;opacity:.55;border-radius:3px;color:inherit;line-height:1}
 .si-btn:hover{opacity:1;background:rgba(0,0,0,.1)}
 .si.active .si-btn:hover{background:rgba(255,255,255,.2)}
-#sf{padding:.5rem .75rem;border-top:1px solid var(--bd);display:flex;justify-content:flex-end;gap:.25rem}
-#dm-btn,#lo-btn{border:none;background:none;cursor:pointer;font-size:1.1rem;padding:.2rem}
+#sf{padding:.5rem .75rem;border-top:1px solid var(--bd);display:flex;justify-content:space-between;gap:.25rem}
+#dm-btn,#lo-btn{border:none;background:none;cursor:pointer;font-size:1.1rem;padding:.2rem;color:inherit}
 #chat{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 #msgs{flex:1;overflow-y:auto;padding:.75rem 1rem;display:flex;flex-direction:column;gap:.4rem;max-width:880px;width:100%;margin-inline:auto;box-sizing:border-box}
 .m{max-width:78%;padding:.45rem .75rem;border-radius:14px;font-size:.94rem;line-height:1.45;white-space:pre-wrap;word-break:break-word;position:relative}
