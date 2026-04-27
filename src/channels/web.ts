@@ -1783,6 +1783,15 @@ export class WebChannel implements Channel {
       return;
     }
 
+    // Impl-56 fold #12: ensureSession MUST run before writeHead+flushHeaders.
+    // Browser's EventSource fires onopen when SSE headers arrive; SPA's onopen
+    // handler now calls loadSessions() (fold #11) which races against this
+    // ensureSession if it runs after the headers flush. Race symptom: clicking
+    // + creates the new chat row only AFTER the first /chat/sessions response
+    // returned, so sidebar didn't show the new chat until next chat-switch.
+    const isFirstClientForSid = !this.clientsBySid.has(sid);
+    this.ensureSession(sid, isFirstClientForSid);
+
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
@@ -1791,14 +1800,11 @@ export class WebChannel implements Channel {
     });
     res.flushHeaders();
 
-    const isFirstClientForSid = !this.clientsBySid.has(sid);
     if (isFirstClientForSid) {
       this.clientsBySid.set(sid, new Set());
     }
     this.clientsBySid.get(sid)!.add(res);
     logger.debug({ sid }, '[bridge] SSE client connected');
-
-    this.ensureSession(sid, isFirstClientForSid);
 
     // Pattern from rozek/nanoclaw@9311ff1 — SSE 20s heartbeat; keeps iOS Safari + flaky networks alive
     const heartbeat = setInterval(() => {
