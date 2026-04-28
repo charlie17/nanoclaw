@@ -806,10 +806,12 @@ function connectSse(){
 
 function setBusy(v){
   busy=v;
+  var inp=document.getElementById('inp');
   document.getElementById('send').disabled=v;
-  document.getElementById('inp').disabled=v;
+  inp.disabled=v;
   document.getElementById('cancel-btn').style.display=v?'':'none';
   var ul=document.getElementById('up-lbl');ul.style.pointerEvents=v?'none':'';ul.style.opacity=v?'.45':'';
+  if(!v)inp.focus();
 }
 document.getElementById('send').onclick=sendMsg;
 document.getElementById('inp').addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});
@@ -828,9 +830,9 @@ document.getElementById('file-inp').onchange=function(){
 async function sendMsg(){
   if(busy)return;
   var inp=document.getElementById('inp'),txt=inp.value.trim();if(!txt)return;
-  inp.value='';setBusy(true);
+  inp.value='';setBusy(true);inp.focus();
   var r=await api('/chat/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid:sid,content:txt})});
-  if(!r||!r.ok){setBusy(false);inp.value=txt;return;}
+  if(!r||!r.ok){setBusy(false);inp.value=txt;inp.focus();return;}
   maybeAutoRename(txt);
 }
 

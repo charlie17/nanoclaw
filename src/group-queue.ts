@@ -292,6 +292,31 @@ export class GroupQueue {
     }, CLOSE_STDIN_DEADLINE_MS);
   }
 
+  /**
+   * FU-27a fold — for /model switch: immediately stop the active container.
+   * `closeStdin` is graceful (writes _close sentinel; SDK exits between query
+   * iterations) and races against subsequent messages from the same chat,
+   * which can be IPC-piped into the still-alive container before it exits —
+   * causing the user-perceived "I just switched to Sonnet but the agent
+   * still claims Opus" bug. Force-stop is correct for /model because the
+   * agent has finished its last turn (notifyIdle has fired by definition
+   * if the user is typing /model), and we want the new env var to take
+   * effect on the very next message regardless of timing.
+   */
+  forceStopActiveContainer(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    if (!state.active || !state.containerName) return;
+    const containerName = state.containerName;
+    try {
+      stopContainer(containerName);
+    } catch (err) {
+      logger.warn(
+        { groupJid, containerName, err },
+        'forceStopActiveContainer: stopContainer threw',
+      );
+    }
+  }
+
   /** Clear the closeStdin watchdog when the container exits naturally. */
   private clearCloseStdinDeadline(state: GroupState): void {
     if (state.closeStdinDeadline) {

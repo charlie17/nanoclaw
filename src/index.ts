@@ -465,7 +465,7 @@ async function maybeHandleModelCommand(
     .catch((err) =>
       logger.warn({ chatJid, err }, 'Failed to send /model reply'),
     );
-  if (respawn) queue.closeStdin(chatJid);
+  if (respawn) queue.forceStopActiveContainer(chatJid);
   lastAgentTimestamp[chatJid] = latest.timestamp;
   saveState();
   return true;
