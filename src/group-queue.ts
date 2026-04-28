@@ -3,7 +3,15 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
+import { stopContainer } from './container-runtime.js';
 import { logger } from './logger.js';
+
+/** FU-30 — closeStdin watchdog: if the container does not exit within this
+ * window after the _close sentinel is written, force docker stop. Bounds the
+ * bilateral cross-chat pre-empt path against SDK retry-storm scenarios where
+ * the SDK is mid-Anthropic-API-call retry and won't poll _close until between
+ * query iterations. */
+const CLOSE_STDIN_DEADLINE_MS = 30_000;
 
 interface QueuedTask {
   id: string;
@@ -25,6 +33,7 @@ interface GroupState {
   containerName: string | null;
   groupFolder: string | null;
   retryCount: number;
+  closeStdinDeadline: NodeJS.Timeout | null;
 }
 
 /** Per-folder mutex; getWaiterCount excludes the current holder. */
@@ -104,6 +113,7 @@ export class GroupQueue {
         containerName: null,
         groupFolder: null,
         retryCount: 0,
+        closeStdinDeadline: null,
       };
       this.groups.set(groupJid, state);
     }
@@ -244,6 +254,11 @@ export class GroupQueue {
 
   /**
    * Signal the active container to wind down by writing a close sentinel.
+   * Also arms a watchdog (FU-30): if the container doesn't exit within
+   * CLOSE_STDIN_DEADLINE_MS, force docker stop. SDK retry-storms (e.g.,
+   * Anthropic 5xx outages) can hold a container alive past the _close
+   * sentinel because the agent-runner only polls the sentinel between
+   * SDK query iterations — an in-flight retry is uninterruptible.
    */
   closeStdin(groupJid: string): void {
     const state = this.getGroup(groupJid);
@@ -255,6 +270,33 @@ export class GroupQueue {
       fs.writeFileSync(path.join(inputDir, '_close'), '');
     } catch {
       // ignore
+    }
+
+    if (state.closeStdinDeadline || !state.containerName) return;
+    const containerName = state.containerName;
+    state.closeStdinDeadline = setTimeout(() => {
+      state.closeStdinDeadline = null;
+      if (!state.active || state.containerName !== containerName) return;
+      logger.warn(
+        { groupJid, containerName },
+        'Container did not exit within deadline of closeStdin; forcing docker stop (FU-30 watchdog)',
+      );
+      try {
+        stopContainer(containerName);
+      } catch (err) {
+        logger.error(
+          { groupJid, containerName, err },
+          'FU-30 watchdog: stopContainer threw',
+        );
+      }
+    }, CLOSE_STDIN_DEADLINE_MS);
+  }
+
+  /** Clear the closeStdin watchdog when the container exits naturally. */
+  private clearCloseStdinDeadline(state: GroupState): void {
+    if (state.closeStdinDeadline) {
+      clearTimeout(state.closeStdinDeadline);
+      state.closeStdinDeadline = null;
     }
   }
 
@@ -292,6 +334,7 @@ export class GroupQueue {
       logger.error({ groupJid, err }, 'Error processing messages for group');
       this.scheduleRetry(groupJid, state);
     } finally {
+      this.clearCloseStdinDeadline(state);
       release();
       state.active = false;
       state.process = null;
@@ -324,6 +367,7 @@ export class GroupQueue {
     } catch (err) {
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
+      this.clearCloseStdinDeadline(state);
       release();
       state.active = false;
       state.isTaskContainer = false;

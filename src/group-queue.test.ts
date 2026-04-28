@@ -23,6 +23,12 @@ vi.mock('fs', async () => {
   };
 });
 
+// Mock container-runtime so the FU-30 closeStdin watchdog's stopContainer call
+// is observable without invoking the real docker CLI.
+vi.mock('./container-runtime.js', () => ({
+  stopContainer: vi.fn(),
+}));
+
 describe('GroupQueue', () => {
   let queue: GroupQueue;
 
@@ -621,5 +627,39 @@ describe('GroupQueue', () => {
       ),
     ).toHaveLength(0);
     warnSpy.mockRestore();
+  });
+
+  it('FU-30 — closeStdin watchdog force-stops container if it does not exit within deadline', async () => {
+    const { stopContainer } = await import('./container-runtime.js');
+    const stopMock = vi.mocked(stopContainer);
+    stopMock.mockClear();
+
+    let resolveProcess: () => void = () => {};
+    queue.setProcessMessagesFn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.enqueueMessageCheck('A@g.us', 'daystrom');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'A@g.us',
+      {} as any,
+      'nanoclaw-daystrom-fu30',
+      'daystrom',
+    );
+
+    queue.closeStdin('A@g.us');
+    expect(stopMock).not.toHaveBeenCalled(); // within deadline window
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(stopMock).toHaveBeenCalledWith('nanoclaw-daystrom-fu30');
+    expect(stopMock).toHaveBeenCalledTimes(1);
+
+    // Cleanup: simulate natural process exit so runForGroup completes
+    resolveProcess();
+    await vi.advanceTimersByTimeAsync(10);
   });
 });
