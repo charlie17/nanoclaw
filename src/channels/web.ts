@@ -629,7 +629,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
 'use strict';
 var LS='bridge_sid',LD='bridge_dark';
 var sid=localStorage.getItem(LS)||mkSid();localStorage.setItem(LS,sid);
-var sse=null,reconDelay=1000,botDiv=null,busy=false,sessionOrder=[],showAllSessions=false,loadSessionsAbort=null;
+var sse=null,reconDelay=1000,botDiv=null,busy=false,sessionOrder=[],showAllSessions=false,loadSessionsToken=0;
 
 function mkSid(){var a=new Uint8Array(8);crypto.getRandomValues(a);return Array.from(a,function(b){return b.toString(16).padStart(2,'0')}).join('');}
 
@@ -656,26 +656,25 @@ document.getElementById('tok').addEventListener('keydown',function(e){if(e.key==
 async function api(url,opts){var r=await fetch(url,opts);if(r&&r.status===401){showLogin('Session expired \u2014 please sign in again.');return null;}return r;}
 
 async function loadSessions(){
-  if(loadSessionsAbort)loadSessionsAbort.abort();
-  var ctrl=new AbortController();loadSessionsAbort=ctrl;
-  try{
-    var r=await api('/chat/sessions'+(showAllSessions?'?showAll=1':''),{signal:ctrl.signal});if(!r)return;
-    var ss=await r.json();
-    if(sessionOrder.length){ss.sort(function(a,b){var ia=sessionOrder.indexOf(a.sid),ib=sessionOrder.indexOf(b.sid);if(ia===-1&&ib===-1)return 0;if(ia===-1)return 1;if(ib===-1)return -1;return ia-ib;});}
-    var el=document.getElementById('sl');el.innerHTML='';
-    ss.forEach(function(s){
-      var row=document.createElement('div');row.className='si'+(s.sid===sid?' active':'');row.dataset.sid=s.sid;
-      var lbl=document.createElement('span');lbl.className='si-lbl';lbl.textContent=displayName(s);
-      lbl.onclick=function(){if(sb.classList.contains('open'))sb.classList.remove('open');if(s.sid!==sid)switchSid(s.sid);};
-      lbl.ondblclick=function(e){e.stopPropagation();startRename(row,s.sid,s.name);};
-      var acts=document.createElement('span');acts.className='si-acts';
-      var upBtn=mk('button','si-btn','\u2191');upBtn.title='Move up';upBtn.onclick=function(e){e.stopPropagation();moveSession(s.sid,-1);};
-      var dnBtn=mk('button','si-btn','\u2193');dnBtn.title='Move down';dnBtn.onclick=function(e){e.stopPropagation();moveSession(s.sid,1);};
-      var delBtn=mk('button','si-btn','\xd7');delBtn.title='Delete chat';delBtn.onclick=function(e){e.stopPropagation();deleteSession(s.sid);};
-      acts.appendChild(upBtn);acts.appendChild(dnBtn);acts.appendChild(delBtn);
-      row.appendChild(lbl);row.appendChild(acts);el.appendChild(row);
-    });
-  }catch(e){if(e.name==='AbortError')return;throw e;}
+  var token=++loadSessionsToken;
+  var r=await api('/chat/sessions'+(showAllSessions?'?showAll=1':''));if(!r)return;
+  if(token!==loadSessionsToken)return;
+  var ss=await r.json();
+  if(token!==loadSessionsToken)return;
+  if(sessionOrder.length){ss.sort(function(a,b){var ia=sessionOrder.indexOf(a.sid),ib=sessionOrder.indexOf(b.sid);if(ia===-1&&ib===-1)return 0;if(ia===-1)return 1;if(ib===-1)return -1;return ia-ib;});}
+  var el=document.getElementById('sl');el.innerHTML='';
+  ss.forEach(function(s){
+    var row=document.createElement('div');row.className='si'+(s.sid===sid?' active':'');row.dataset.sid=s.sid;
+    var lbl=document.createElement('span');lbl.className='si-lbl';lbl.textContent=displayName(s);
+    lbl.onclick=function(){if(sb.classList.contains('open'))sb.classList.remove('open');if(s.sid!==sid)switchSid(s.sid);};
+    lbl.ondblclick=function(e){e.stopPropagation();startRename(row,s.sid,s.name);};
+    var acts=document.createElement('span');acts.className='si-acts';
+    var upBtn=mk('button','si-btn','\u2191');upBtn.title='Move up';upBtn.onclick=function(e){e.stopPropagation();moveSession(s.sid,-1);};
+    var dnBtn=mk('button','si-btn','\u2193');dnBtn.title='Move down';dnBtn.onclick=function(e){e.stopPropagation();moveSession(s.sid,1);};
+    var delBtn=mk('button','si-btn','\xd7');delBtn.title='Delete chat';delBtn.onclick=function(e){e.stopPropagation();deleteSession(s.sid);};
+    acts.appendChild(upBtn);acts.appendChild(dnBtn);acts.appendChild(delBtn);
+    row.appendChild(lbl);row.appendChild(acts);el.appendChild(row);
+  });
 }
 
 function mk(tag,cls,txt){var e=document.createElement(tag);e.className=cls;e.textContent=txt;return e;}
