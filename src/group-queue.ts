@@ -31,20 +31,26 @@ interface GroupState {
 class FolderLock {
   private chain: Promise<void> = Promise.resolve();
   private waiters = 0;
+  private holderJid: string | null = null;
   getWaiterCount(): number {
     return this.waiters;
   }
-  async acquire(): Promise<() => void> {
+  getHolderJid(): string | null {
+    return this.holderJid;
+  }
+  async acquire(jid: string): Promise<() => void> {
     this.waiters++;
     const prior = this.chain;
     let unlock!: () => void;
     this.chain = new Promise<void>((r) => (unlock = r));
     await prior;
     this.waiters--;
+    this.holderJid = jid;
     let done = false;
     return () => {
       if (done) return;
       done = true;
+      this.holderJid = null;
       unlock();
     };
   }
@@ -62,6 +68,7 @@ export class GroupQueue {
   private async acquireForState(
     state: GroupState,
     ctx: Record<string, unknown>,
+    groupJid: string,
   ): Promise<() => void> {
     const folder = state.groupFolder;
     if (!folder) {
@@ -70,7 +77,17 @@ export class GroupQueue {
     }
     let lock = this.folderLocks.get(folder);
     if (!lock) this.folderLocks.set(folder, (lock = new FolderLock()));
-    return lock.acquire();
+    // Bilateral pre-empt: if the current holder is idle-waiting, signal it to
+    // exit now so we don't wait the full IDLE_TIMEOUT (30 min). notifyIdle's
+    // own waiter check handles the case where the holder enters idle AFTER we
+    // enqueue; this branch handles the inverse — we enqueue AFTER the holder
+    // already entered idle and notifyIdle has already returned.
+    const holderJid = lock.getHolderJid();
+    if (holderJid && holderJid !== groupJid) {
+      const holderState = this.groups.get(holderJid);
+      if (holderState?.idleWaiting) this.closeStdin(holderJid);
+    }
+    return lock.acquire(groupJid);
   }
 
   private getGroup(groupJid: string): GroupState {
@@ -257,7 +274,11 @@ export class GroupQueue {
       'Starting container for group',
     );
 
-    const release = await this.acquireForState(state, { groupJid, reason });
+    const release = await this.acquireForState(
+      state,
+      { groupJid, reason },
+      groupJid,
+    );
     try {
       if (this.processMessagesFn) {
         const success = await this.processMessagesFn(groupJid);
@@ -293,10 +314,11 @@ export class GroupQueue {
       'Running queued task',
     );
 
-    const release = await this.acquireForState(state, {
+    const release = await this.acquireForState(
+      state,
+      { groupJid, taskId: task.id },
       groupJid,
-      taskId: task.id,
-    });
+    );
     try {
       await task.fn();
     } catch (err) {
