@@ -127,6 +127,16 @@ function emitOutputMarker(
   proc.stdout.push(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`);
 }
 
+async function completeProc(
+  proc: ReturnType<typeof createFakeProcess>,
+  output: ContainerOutput,
+) {
+  emitOutputMarker(proc, output);
+  await vi.advanceTimersByTimeAsync(10);
+  proc.emit('close', 0);
+  await vi.advanceTimersByTimeAsync(10);
+}
+
 describe('container-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -241,7 +251,9 @@ describe('per-folder spawn lock (D-V58)', () => {
     const proc1 = createFakeProcess();
     const proc2 = createFakeProcess();
     // Deterministically: first spawn → proc1, second spawn → proc2
-    vi.mocked(spawn).mockImplementationOnce(() => proc1 as any).mockImplementationOnce(() => proc2 as any);
+    vi.mocked(spawn)
+      .mockImplementationOnce(() => proc1 as any)
+      .mockImplementationOnce(() => proc2 as any);
 
     const p1 = runContainerAgent(testGroup, testInput, () => {});
     const p2 = runContainerAgent(testGroup, testInput, () => {});
@@ -251,10 +263,7 @@ describe('per-folder spawn lock (D-V58)', () => {
     expect(vi.mocked(spawn).mock.calls.length).toBe(1);
 
     // Complete p1 — triggers lock release → p2 acquires lock and spawns proc2
-    emitOutputMarker(proc1, { status: 'success', result: 'r1', newSessionId: 's1' });
-    await vi.advanceTimersByTimeAsync(10);
-    proc1.emit('close', 0);
-    await vi.advanceTimersByTimeAsync(10);
+    await completeProc(proc1, { status: 'success', result: 'r1', newSessionId: 's1' });
     await p1;
 
     // p2 has now spawned (in the microtask chain triggered by p1's lock release)
@@ -262,10 +271,7 @@ describe('per-folder spawn lock (D-V58)', () => {
     expect(vi.mocked(spawn).mock.calls.length).toBe(2);
 
     // Complete p2
-    emitOutputMarker(proc2, { status: 'success', result: 'r2', newSessionId: 's2' });
-    await vi.advanceTimersByTimeAsync(10);
-    proc2.emit('close', 0);
-    await vi.advanceTimersByTimeAsync(10);
+    await completeProc(proc2, { status: 'success', result: 'r2', newSessionId: 's2' });
     const r2 = await p2;
     expect(r2.status).toBe('success');
   });
@@ -274,7 +280,9 @@ describe('per-folder spawn lock (D-V58)', () => {
     const proc1 = createFakeProcess();
     const proc2 = createFakeProcess();
     let spawnCall = 0;
-    vi.mocked(spawn).mockImplementation(() => (spawnCall++ === 0 ? proc1 : proc2) as any);
+    vi.mocked(spawn).mockImplementation(
+      () => (spawnCall++ === 0 ? proc1 : proc2) as any,
+    );
 
     const groupA: RegisteredGroup = { ...testGroup, folder: 'folder-a' };
     const groupB: RegisteredGroup = { ...testGroup, folder: 'folder-b' };
@@ -299,26 +307,30 @@ describe('per-folder spawn lock (D-V58)', () => {
   });
 
   it('D-V58-G1c: releases lock when setup throws synchronously', async () => {
-    const throwGroup: RegisteredGroup = { ...testGroup, folder: 'throw-folder' };
+    const throwGroup: RegisteredGroup = {
+      ...testGroup,
+      folder: 'throw-folder',
+    };
     const throwInput = { ...testInput, groupFolder: 'throw-folder' };
 
     // Make mkdirSync throw once to trigger a sync throw inside the try block
-    vi.mocked(fs.mkdirSync as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
-      throw new Error('EACCES: permission denied');
-    });
+    vi.mocked(fs.mkdirSync as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => {
+        throw new Error('EACCES: permission denied');
+      },
+    );
 
     // First call rejects due to the throw; finally must still release the lock
-    await expect(runContainerAgent(throwGroup, throwInput, () => {})).rejects.toThrow('EACCES');
+    await expect(
+      runContainerAgent(throwGroup, throwInput, () => {}),
+    ).rejects.toThrow('EACCES');
 
     // Lock released — a subsequent same-folder call should not deadlock
     const proc = createFakeProcess();
     fakeProc = proc;
     const p = runContainerAgent(throwGroup, throwInput, () => {});
     await vi.advanceTimersByTimeAsync(0);
-    emitOutputMarker(proc, { status: 'success', result: 'recovered' });
-    await vi.advanceTimersByTimeAsync(10);
-    proc.emit('close', 0);
-    await vi.advanceTimersByTimeAsync(10);
+    await completeProc(proc, { status: 'success', result: 'recovered' });
     expect((await p).status).toBe('success');
   });
 
@@ -339,10 +351,32 @@ describe('per-folder spawn lock (D-V58)', () => {
     fakeProc = proc2;
     const p2 = runContainerAgent(errGroup, errInput, () => {});
     await vi.advanceTimersByTimeAsync(0);
-    emitOutputMarker(proc2, { status: 'success', result: 'ok' });
-    await vi.advanceTimersByTimeAsync(10);
-    proc2.emit('close', 0);
-    await vi.advanceTimersByTimeAsync(10);
+    await completeProc(proc2, { status: 'success', result: 'ok' });
+    expect((await p2).status).toBe('success');
+  });
+
+  it('D-V58-G1e: releases lock when onOutput chain rejects', async () => {
+    const rejectGroup: RegisteredGroup = { ...testGroup, folder: 'reject-folder' };
+    const rejectInput = { ...testInput, groupFolder: 'reject-folder' };
+
+    const proc1 = createFakeProcess();
+    fakeProc = proc1;
+    const onOutput = vi.fn().mockRejectedValue(new Error('downstream send failed'));
+
+    const p1 = runContainerAgent(rejectGroup, rejectInput, () => {}, onOutput);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Emit marker → onOutput rejects → catch at L491 keeps chain resolved → close fires settle
+    await completeProc(proc1, { status: 'success', result: null, newSessionId: 's1' });
+    const r1 = await p1;
+    expect(r1.status).toBe('success');
+
+    // Lock must be released — subsequent same-folder call should not deadlock
+    const proc2 = createFakeProcess();
+    fakeProc = proc2;
+    const p2 = runContainerAgent(rejectGroup, rejectInput, () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    await completeProc(proc2, { status: 'success', result: 'recovered' });
     expect((await p2).status).toBe('success');
   });
 });
