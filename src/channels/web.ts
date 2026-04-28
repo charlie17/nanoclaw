@@ -629,7 +629,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
 'use strict';
 var LS='bridge_sid',LD='bridge_dark';
 var sid=localStorage.getItem(LS)||mkSid();localStorage.setItem(LS,sid);
-var sse=null,reconDelay=1000,botDiv=null,busy=false,sessionOrder=[],showAllSessions=false,loadSessionsToken=0;
+var sse=null,reconDelay=1000,botDiv=null,busy=false,sessionOrder=[],showAllSessions=false;
 
 function mkSid(){var a=new Uint8Array(8);crypto.getRandomValues(a);return Array.from(a,function(b){return b.toString(16).padStart(2,'0')}).join('');}
 
@@ -656,11 +656,8 @@ document.getElementById('tok').addEventListener('keydown',function(e){if(e.key==
 async function api(url,opts){var r=await fetch(url,opts);if(r&&r.status===401){showLogin('Session expired \u2014 please sign in again.');return null;}return r;}
 
 async function loadSessions(){
-  var token=++loadSessionsToken;
   var r=await api('/chat/sessions'+(showAllSessions?'?showAll=1':''));if(!r)return;
-  if(token!==loadSessionsToken)return;
   var ss=await r.json();
-  if(token!==loadSessionsToken)return;
   if(sessionOrder.length){ss.sort(function(a,b){var ia=sessionOrder.indexOf(a.sid),ib=sessionOrder.indexOf(b.sid);if(ia===-1&&ib===-1)return 0;if(ia===-1)return 1;if(ib===-1)return -1;return ia-ib;});}
   var el=document.getElementById('sl');el.innerHTML='';
   ss.forEach(function(s){
