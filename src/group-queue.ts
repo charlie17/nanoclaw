@@ -27,13 +27,51 @@ interface GroupState {
   retryCount: number;
 }
 
+/** Per-folder mutex; getWaiterCount excludes the current holder. */
+class FolderLock {
+  private chain: Promise<void> = Promise.resolve();
+  private waiters = 0;
+  getWaiterCount(): number {
+    return this.waiters;
+  }
+  async acquire(): Promise<() => void> {
+    this.waiters++;
+    const prior = this.chain;
+    let unlock!: () => void;
+    this.chain = new Promise<void>((r) => (unlock = r));
+    await prior;
+    this.waiters--;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      unlock();
+    };
+  }
+}
+
 export class GroupQueue {
   private groups = new Map<string, GroupState>();
+  private folderLocks = new Map<string, FolderLock>();
   private activeCount = 0;
   private waitingGroups: string[] = [];
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
     null;
   private shuttingDown = false;
+
+  private async acquireForState(
+    state: GroupState,
+    ctx: Record<string, unknown>,
+  ): Promise<() => void> {
+    const folder = state.groupFolder;
+    if (!folder) {
+      logger.warn(ctx, 'No groupFolder known, skipping per-folder spawn lock');
+      return () => {};
+    }
+    let lock = this.folderLocks.get(folder);
+    if (!lock) this.folderLocks.set(folder, (lock = new FolderLock()));
+    return lock.acquire();
+  }
 
   private getGroup(groupJid: string): GroupState {
     let state = this.groups.get(groupJid);
@@ -59,10 +97,11 @@ export class GroupQueue {
     this.processMessagesFn = fn;
   }
 
-  enqueueMessageCheck(groupJid: string): void {
+  enqueueMessageCheck(groupJid: string, groupFolder?: string): void {
     if (this.shuttingDown) return;
 
     const state = this.getGroup(groupJid);
+    if (groupFolder) state.groupFolder = groupFolder;
 
     if (state.active) {
       state.pendingMessages = true;
@@ -87,10 +126,16 @@ export class GroupQueue {
     );
   }
 
-  enqueueTask(groupJid: string, taskId: string, fn: () => Promise<void>): void {
+  enqueueTask(
+    groupJid: string,
+    taskId: string,
+    fn: () => Promise<void>,
+    groupFolder?: string,
+  ): void {
     if (this.shuttingDown) return;
 
     const state = this.getGroup(groupJid);
+    if (groupFolder) state.groupFolder = groupFolder;
 
     // Prevent double-queuing: check both pending and currently-running task
     if (state.runningTaskId === taskId) {
@@ -142,13 +187,16 @@ export class GroupQueue {
   }
 
   /**
-   * Mark the container as idle-waiting (finished work, waiting for IPC input).
-   * If tasks are pending, preempt the idle container immediately.
+   * Mark container idle-waiting. Pre-empt via closeStdin if (a) tasks are
+   * pending OR (b) another chat is queued for the same folder (Impl-61 D-V61.4).
    */
   notifyIdle(groupJid: string): void {
     const state = this.getGroup(groupJid);
     state.idleWaiting = true;
-    if (state.pendingTasks.length > 0) {
+    const lock = state.groupFolder
+      ? this.folderLocks.get(state.groupFolder)
+      : null;
+    if (state.pendingTasks.length > 0 || (lock && lock.getWaiterCount() > 0)) {
       this.closeStdin(groupJid);
     }
   }
@@ -209,6 +257,7 @@ export class GroupQueue {
       'Starting container for group',
     );
 
+    const release = await this.acquireForState(state, { groupJid, reason });
     try {
       if (this.processMessagesFn) {
         const success = await this.processMessagesFn(groupJid);
@@ -222,10 +271,10 @@ export class GroupQueue {
       logger.error({ groupJid, err }, 'Error processing messages for group');
       this.scheduleRetry(groupJid, state);
     } finally {
+      release();
       state.active = false;
       state.process = null;
       state.containerName = null;
-      state.groupFolder = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }
@@ -244,17 +293,21 @@ export class GroupQueue {
       'Running queued task',
     );
 
+    const release = await this.acquireForState(state, {
+      groupJid,
+      taskId: task.id,
+    });
     try {
       await task.fn();
     } catch (err) {
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
+      release();
       state.active = false;
       state.isTaskContainer = false;
       state.runningTaskId = null;
       state.process = null;
       state.containerName = null;
-      state.groupFolder = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }

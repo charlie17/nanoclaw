@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 import { GroupQueue } from './group-queue.js';
+import { logger } from './logger.js';
 
 // Mock config to control concurrency limit
 vi.mock('./config.js', () => ({
@@ -480,5 +481,145 @@ describe('GroupQueue', () => {
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
+  });
+
+  // --- Impl-61: per-folder lock + cross-chat-waiter pre-empt ---
+
+  const gate = () => {
+    let r!: () => void;
+    const p = new Promise<void>((res) => (r = res));
+    p.catch(() => {});
+    return { p, r };
+  };
+  const tick = () => vi.advanceTimersByTimeAsync(10);
+  const A = 'A@g.us',
+    B = 'B@g.us';
+  const closeWriteCount = (wfs: any) =>
+    wfs.mock.calls.filter(
+      (c: any) => typeof c[0] === 'string' && c[0].endsWith('_close'),
+    ).length;
+
+  it('G2a — at most one container per folder alive (cross-chat pre-empt)', async () => {
+    const wfs = vi.mocked((await import('fs')).default.writeFileSync);
+    wfs.mockClear();
+    const live = new Set<string>();
+    let max = 0;
+    const gA = gate(),
+      bEnq = gate();
+    wfs.mockImplementation((f: any) => {
+      if (typeof f === 'string' && f.endsWith('_close')) gA.r();
+    });
+    queue.setProcessMessagesFn(async (jid) => {
+      live.add(jid);
+      max = Math.max(max, live.size);
+      if (jid === A) {
+        await bEnq.p;
+        queue.notifyIdle(jid);
+        await gA.p;
+      }
+      live.delete(jid);
+      return true;
+    });
+    queue.enqueueMessageCheck(A, 'daystrom');
+    await tick();
+    queue.enqueueMessageCheck(B, 'daystrom');
+    await tick();
+    bEnq.r();
+    for (let i = 0; i < 10 && live.size > 0; i++) await tick();
+    expect(max).toBeLessThanOrEqual(1);
+  });
+
+  it('G2b — same-chat follow-up reuse (no pre-empt)', async () => {
+    const wfs = vi.mocked((await import('fs')).default.writeFileSync);
+    wfs.mockClear();
+    const gA = gate();
+    const pm = vi.fn(async (jid: string) => {
+      queue.notifyIdle(jid);
+      await gA.p;
+      return true;
+    });
+    queue.setProcessMessagesFn(pm);
+    queue.enqueueMessageCheck(A, 'daystrom');
+    await tick();
+    expect(queue.sendMessage(A, 'follow-up')).toBe(true);
+    expect(closeWriteCount(wfs)).toBe(0);
+    expect(pm).toHaveBeenCalledTimes(1);
+    gA.r();
+    await tick();
+  });
+
+  it('G2c — different folders never block each other', async () => {
+    let maxLive = 0;
+    const live = new Set<string>();
+    const gA = gate(),
+      gB = gate();
+    queue.setProcessMessagesFn(async (jid) => {
+      live.add(jid);
+      maxLive = Math.max(maxLive, live.size);
+      await (jid === A ? gA.p : gB.p);
+      live.delete(jid);
+      return true;
+    });
+    queue.enqueueMessageCheck(A, 'daystrom');
+    queue.enqueueMessageCheck(B, 'worf');
+    await tick();
+    expect(maxLive).toBe(2);
+    gA.r();
+    gB.r();
+    await tick();
+  });
+
+  it('G2d — error path releases the folder lock', async () => {
+    const seen: string[] = [];
+    const gB = gate();
+    queue.setProcessMessagesFn(async (jid) => {
+      seen.push(jid);
+      if (jid === A) throw new Error('boom');
+      await gB.p;
+      return true;
+    });
+    queue.enqueueMessageCheck(A, 'daystrom');
+    await tick();
+    queue.enqueueMessageCheck(B, 'daystrom');
+    await tick();
+    expect(seen).toEqual([A, B]);
+    gB.r();
+    await tick();
+  });
+
+  it('G2e — drain: task acquires lock after message (no warn-skip)', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn');
+    const events: string[] = [];
+    const gM = gate(),
+      gT = gate();
+    queue.setProcessMessagesFn(async () => {
+      events.push('msg');
+      await gM.p;
+      return true;
+    });
+    queue.enqueueMessageCheck(A, 'daystrom');
+    await tick();
+    queue.enqueueTask(
+      A,
+      't1',
+      async () => {
+        events.push('task');
+        await gT.p;
+      },
+      'daystrom',
+    );
+    gM.r();
+    await tick();
+    expect(events).toEqual(['msg', 'task']);
+    gT.r();
+    await tick();
+    expect(
+      warnSpy.mock.calls.filter(
+        (c) =>
+          typeof c[1] === 'string' &&
+          (c[1] as string).includes('skipping per-folder spawn lock'),
+      ),
+    ).toHaveLength(0);
+    warnSpy.mockRestore();
   });
 });
