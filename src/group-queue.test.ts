@@ -433,6 +433,84 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
+  // --- Per-folder spawn lock (Impl-60) ---
+  const gate = () => {
+    let r!: () => void, j!: (e?: Error) => void;
+    const p = new Promise<void>((res, rej) => { r = res; j = rej; });
+    p.catch(() => {}); // suppress unhandled rejection
+    return { p, resolve: r, reject: j };
+  };
+
+  // G1a — THE Impl-58 fix invariant: chatA blocks AFTER notifyIdle (simulates
+  // persistent-container idle window); chatB MUST start before A "exits".
+  it('G1a: lock releases at notifyIdle while container still alive', async () => {
+    const order: string[] = [];
+    const a = gate();
+    queue.setProcessMessagesFn(async (jid) => {
+      if (jid === 'chatA@g.us') { order.push('A-start'); queue.notifyIdle(jid); await a.p; }
+      else order.push('B-start');
+      return true;
+    });
+    queue.enqueueMessageCheck('chatA@g.us', 'daystrom');
+    queue.enqueueMessageCheck('chatB@g.us', 'daystrom');
+    await vi.waitFor(() => expect(order).toContain('B-start'), { timeout: 500 });
+    expect(order).toEqual(['A-start', 'B-start']);
+    a.reject(new Error('teardown'));
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('G1b: different-folder chats run in parallel', async () => {
+    // Both chats block; if folder lock leaked across folders, B would wait.
+    const order: string[] = [];
+    const a = gate(), b = gate();
+    queue.setProcessMessagesFn(async (jid) => {
+      order.push(jid === 'chatA@g.us' ? 'A-start' : 'B-start');
+      await (jid === 'chatA@g.us' ? a.p : b.p);
+      return true;
+    });
+    queue.enqueueMessageCheck('chatA@g.us', 'daystrom');
+    queue.enqueueMessageCheck('chatB@g.us', 'worf');
+    await vi.advanceTimersByTimeAsync(10);
+    expect(order).toEqual(expect.arrayContaining(['A-start', 'B-start']));
+    a.resolve(); b.resolve();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('G1c: error releases folder lock', async () => {
+    const order: string[] = [];
+    queue.setProcessMessagesFn(async (jid) => {
+      if (jid === 'chatA@g.us') throw new Error('boom');
+      order.push('B-start');
+      return true;
+    });
+    queue.enqueueMessageCheck('chatA@g.us', 'daystrom');
+    queue.enqueueMessageCheck('chatB@g.us', 'daystrom');
+    await vi.advanceTimersByTimeAsync(10);
+    expect(order).toContain('B-start');
+  });
+
+  // G1d — drain-cycle: pins state.groupFolder persistence across runForGroup→
+  // runTask. chatB (same folder) blocking behind task proves runTask acquired
+  // the lock (else chatB would race ahead — implies state.groupFolder survived).
+  it('G1d: drain-cycle runTask acquires same folder lock', async () => {
+    const events: string[] = [];
+    const tg = gate();
+    queue.setProcessMessagesFn(async (jid) => {
+      events.push(jid === 'chatA@g.us' ? 'msg-A' : 'msg-B');
+      return true;
+    });
+    queue.enqueueMessageCheck('chatA@g.us', 'daystrom');
+    queue.enqueueTask('chatA@g.us', 'task-1', async () => {
+      events.push('task-start'); await tg.p;
+    });
+    queue.enqueueMessageCheck('chatB@g.us', 'daystrom');
+    await vi.waitFor(() => expect(events).toContain('task-start'), { timeout: 500 });
+    expect(events).toEqual(['msg-A', 'task-start']);
+    tg.resolve();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(events).toContain('msg-B');
+  });
+
   it('preempts when idle arrives with pending tasks', async () => {
     const fs = await import('fs');
     let resolveProcess: () => void;
