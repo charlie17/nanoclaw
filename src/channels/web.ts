@@ -720,7 +720,7 @@ function moveSession(msid,dir){
 }
 
 function setActiveSid(ns){document.querySelectorAll('#sl .si').forEach(function(row){if(row.dataset.sid===ns)row.classList.add('active');else row.classList.remove('active');});}
-function switchSid(ns){sid=ns;localStorage.setItem(LS,sid);document.getElementById('msgs').innerHTML='';botDiv=null;setActiveSid(ns);loadSessions();loadHistory();connectSse();}
+function switchSid(ns){sid=ns;localStorage.setItem(LS,sid);document.getElementById('msgs').innerHTML='';botDiv=null;setActiveSid(ns);loadSessions();loadHistory();connectSse();setTimeout(loadSessions,300);}
 
 document.getElementById('sa-btn').onclick=function(){showAllSessions=!showAllSessions;this.classList.toggle('active');loadSessions();};
 document.getElementById('new-btn').onclick=function(){switchSid(mkSid());};
