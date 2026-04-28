@@ -720,7 +720,7 @@ function moveSession(msid,dir){
 }
 
 function setActiveSid(ns){document.querySelectorAll('#sl .si').forEach(function(row){if(row.dataset.sid===ns)row.classList.add('active');else row.classList.remove('active');});}
-function switchSid(ns){sid=ns;localStorage.setItem(LS,sid);document.getElementById('msgs').innerHTML='';botDiv=null;setActiveSid(ns);loadHistory();connectSse();}
+function switchSid(ns){sid=ns;localStorage.setItem(LS,sid);document.getElementById('msgs').innerHTML='';botDiv=null;setActiveSid(ns);loadSessions();loadHistory();connectSse();}
 
 document.getElementById('sa-btn').onclick=function(){showAllSessions=!showAllSessions;this.classList.toggle('active');loadSessions();};
 document.getElementById('new-btn').onclick=function(){switchSid(mkSid());};
@@ -760,7 +760,7 @@ function scrollMsgs(){var e=document.getElementById('msgs');e.scrollTop=e.scroll
 var sseEverConnected=false;
 // Pattern from rozek/nanoclaw@9311ff1 — EventSource reconnect with exponential backoff, cap 30s
 function connectSse(){
-  if(sse){sse.onerror=null;sse.close();sse=null;}
+  if(sse){sse.onerror=null;sse.close();sse=null;reconDelay=1000;}
   var s=new EventSource('/chat/events?sid='+sid);sse=s;
   s.onopen=function(){var wasConnected=sseEverConnected;sseEverConnected=true;reconDelay=1000;loadSessions();if(wasConnected){setBusy(false);loadHistory();}};
   s.onerror=function(){s.close();sse=null;reconDelay=Math.min(reconDelay*2,30000);setTimeout(connectSse,reconDelay);};
