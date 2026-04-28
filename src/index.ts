@@ -525,7 +525,7 @@ async function startMessageLoop(): Promise<void> {
               );
           } else {
             // No active container — enqueue for a new one
-            queue.enqueueMessageCheck(chatJid, group.folder);
+            queue.enqueueMessageCheck(chatJid);
           }
         }
       }
@@ -553,7 +553,7 @@ function recoverPendingMessages(): void {
         { group: group.name, pendingCount: pending.length },
         'Recovery: found unprocessed messages',
       );
-      queue.enqueueMessageCheck(chatJid, group.folder);
+      queue.enqueueMessageCheck(chatJid);
     }
   }
 }
