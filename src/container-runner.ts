@@ -249,6 +249,7 @@ function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   stripWebTools?: boolean,
+  agentModel?: string,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -325,7 +326,9 @@ function buildContainerArgs(
 
   // D-V52.1: model self-awareness — agent answers "what model am I?" via this env var.
   // Unconditional: all group containers (Daystrom, Worf, future groups) benefit.
-  args.push('-e', 'DAYSTROM_AGENT_MODEL=claude-sonnet-4-6');
+  // FU-27a: per-group override via /model command; fallback default preserves
+  // pre-FU-27a behavior for any group never `/model`-set.
+  args.push('-e', `DAYSTROM_AGENT_MODEL=${agentModel || 'claude-sonnet-4-6'}`);
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
@@ -371,6 +374,7 @@ export async function runContainerAgent(
     mounts,
     containerName,
     stripWebTools,
+    group.agentModel,
   );
 
   logger.debug(

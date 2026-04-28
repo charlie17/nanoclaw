@@ -40,12 +40,14 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  setGroupAgentModel,
   setRegisteredGroup,
   setRouterState,
   setSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
+import { displayName, MODEL_MAP, parseModelCommand } from './model-command.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
@@ -429,6 +431,46 @@ async function runAgent(
   }
 }
 
+// FU-27a: intercept `/model` (leading-only on the latest message in batch);
+// returns true if handled (caller skips container dispatch).
+async function maybeHandleModelCommand(
+  chatJid: string,
+  group: RegisteredGroup,
+  channel: Channel,
+  groupMessages: NewMessage[],
+): Promise<boolean> {
+  const latest = groupMessages[groupMessages.length - 1];
+  const text = latest.content ?? '';
+  if (!text.trim().startsWith('/model')) return false;
+
+  const parsed = parseModelCommand(text);
+  let reply: string;
+  let respawn = false;
+  if (parsed === null) {
+    reply =
+      'Unknown model. Use /model opus or /model sonnet (or /model to show current).';
+  } else if (parsed.kind === 'show') {
+    const current = group.agentModel || 'claude-sonnet-4-6';
+    reply = `Currently using ${displayName(current)} (${current}).`;
+  } else {
+    const fullId = MODEL_MAP[parsed.model].id;
+    setGroupAgentModel(group.folder, fullId);
+    group.agentModel = fullId;
+    reply = `Switched to ${MODEL_MAP[parsed.model].display}. Active on next message.`;
+    respawn = true;
+  }
+
+  await channel
+    .sendMessage(chatJid, reply)
+    .catch((err) =>
+      logger.warn({ chatJid, err }, 'Failed to send /model reply'),
+    );
+  if (respawn) queue.closeStdin(chatJid);
+  lastAgentTimestamp[chatJid] = latest.timestamp;
+  saveState();
+  return true;
+}
+
 async function startMessageLoop(): Promise<void> {
   if (messageLoopRunning) {
     logger.debug('Message loop already running, skipping duplicate start');
@@ -476,6 +518,20 @@ async function startMessageLoop(): Promise<void> {
           const channel = findChannel(channels, chatJid);
           if (!channel) {
             logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
+            continue;
+          }
+
+          // FU-27a: intercept `/model` BEFORE trigger check so it works in any
+          // registered chat regardless of `requiresTrigger`. Bypasses both the
+          // pipe path (queue.sendMessage) and the spawn path (queue.enqueueMessageCheck).
+          if (
+            await maybeHandleModelCommand(
+              chatJid,
+              group,
+              channel,
+              groupMessages,
+            )
+          ) {
             continue;
           }
 

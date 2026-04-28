@@ -7,11 +7,13 @@ import {
   getAllChats,
   getAllRegisteredGroups,
   getConversation,
+  getGroupAgentModel,
   getLastBotMessageTimestamp,
   getMessageCountForMonth,
   getMessagesSince,
   getNewMessages,
   getTaskById,
+  setGroupAgentModel,
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
@@ -650,6 +652,33 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// FU-27a: agent_model round-trip
+describe('registered group agentModel', () => {
+  it('persists agent_model via setGroupAgentModel and reads back', () => {
+    setRegisteredGroup('main@s.whatsapp.net', {
+      name: 'Daystrom',
+      folder: 'daystrom',
+      trigger: '@Daystrom',
+      added_at: '2024-01-01T00:00:00.000Z',
+      isMain: true,
+    });
+    setGroupAgentModel('daystrom', 'claude-opus-4-7');
+    expect(getGroupAgentModel('daystrom')).toBe('claude-opus-4-7');
+    const groups = getAllRegisteredGroups();
+    expect(groups['main@s.whatsapp.net'].agentModel).toBe('claude-opus-4-7');
+  });
+
+  it('returns null when agent_model has never been set', () => {
+    setRegisteredGroup('worf@s.whatsapp.net', {
+      name: 'Worf',
+      folder: 'worf',
+      trigger: '@Worf',
+      added_at: '2024-01-01T00:00:00.000Z',
+    });
+    expect(getGroupAgentModel('worf')).toBeNull();
   });
 });
 

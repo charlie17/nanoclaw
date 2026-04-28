@@ -126,6 +126,13 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // FU-27a: per-folder agent model selection (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN agent_model TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
@@ -636,23 +643,24 @@ export function getAllSessions(): Record<string, string> {
 
 // --- Registered group accessors ---
 
+type RegisteredGroupRow = {
+  jid: string;
+  name: string;
+  folder: string;
+  trigger_pattern: string;
+  added_at: string;
+  container_config: string | null;
+  requires_trigger: number | null;
+  is_main: number | null;
+  agent_model: string | null;
+};
+
 export function getRegisteredGroup(
   jid: string,
 ): (RegisteredGroup & { jid: string }) | undefined {
   const row = db
     .prepare('SELECT * FROM registered_groups WHERE jid = ?')
-    .get(jid) as
-    | {
-        jid: string;
-        name: string;
-        folder: string;
-        trigger_pattern: string;
-        added_at: string;
-        container_config: string | null;
-        requires_trigger: number | null;
-        is_main: number | null;
-      }
-    | undefined;
+    .get(jid) as RegisteredGroupRow | undefined;
   if (!row) return undefined;
   if (!isValidGroupFolder(row.folder)) {
     logger.warn(
@@ -673,6 +681,7 @@ export function getRegisteredGroup(
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
+    agentModel: row.agent_model ?? undefined,
   };
 }
 
@@ -681,8 +690,8 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, agent_model)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -692,20 +701,14 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.containerConfig ? JSON.stringify(group.containerConfig) : null,
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.isMain ? 1 : 0,
+    group.agentModel ?? null,
   );
 }
 
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
-  const rows = db.prepare('SELECT * FROM registered_groups').all() as Array<{
-    jid: string;
-    name: string;
-    folder: string;
-    trigger_pattern: string;
-    added_at: string;
-    container_config: string | null;
-    requires_trigger: number | null;
-    is_main: number | null;
-  }>;
+  const rows = db
+    .prepare('SELECT * FROM registered_groups')
+    .all() as Array<RegisteredGroupRow>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
     if (!isValidGroupFolder(row.folder)) {
@@ -726,9 +729,26 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
+      agentModel: row.agent_model ?? undefined,
     };
   }
   return result;
+}
+
+// FU-27a: per-folder agent model accessors. Folder is the unique key.
+export function setGroupAgentModel(folder: string, model: string): void {
+  db.prepare(
+    `UPDATE registered_groups SET agent_model = ? WHERE folder = ?`,
+  ).run(model, folder);
+}
+
+export function getGroupAgentModel(folder: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT agent_model FROM registered_groups WHERE folder = ? LIMIT 1`,
+    )
+    .get(folder) as { agent_model: string | null } | undefined;
+  return row?.agent_model ?? null;
 }
 
 // --- JSON migration ---
