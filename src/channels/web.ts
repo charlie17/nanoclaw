@@ -663,8 +663,9 @@ async function loadSessions(){
   ss.forEach(function(s){
     var row=document.createElement('div');row.className='si'+(s.sid===sid?' active':'');row.dataset.sid=s.sid;
     var lbl=document.createElement('span');lbl.className='si-lbl';lbl.textContent=displayName(s);
-    lbl.onclick=function(){if(sb.classList.contains('open'))sb.classList.remove('open');if(s.sid!==sid)switchSid(s.sid);};
-    lbl.ondblclick=function(e){e.stopPropagation();startRename(row,s.sid,s.name);};
+    var clickT=null;
+    lbl.onclick=function(){clearTimeout(clickT);clickT=setTimeout(function(){if(sb.classList.contains('open'))sb.classList.remove('open');if(s.sid!==sid)switchSid(s.sid);},220);};
+    lbl.ondblclick=function(e){e.stopPropagation();clearTimeout(clickT);startRename(row,s.sid,s.name);};
     var acts=document.createElement('span');acts.className='si-acts';
     var upBtn=mk('button','si-btn','\u2191');upBtn.title='Move up';upBtn.onclick=function(e){e.stopPropagation();moveSession(s.sid,-1);};
     var dnBtn=mk('button','si-btn','\u2193');dnBtn.title='Move down';dnBtn.onclick=function(e){e.stopPropagation();moveSession(s.sid,1);};
