@@ -760,7 +760,7 @@ function scrollMsgs(){var e=document.getElementById('msgs');e.scrollTop=e.scroll
 var sseEverConnected=false;
 // Pattern from rozek/nanoclaw@9311ff1 — EventSource reconnect with exponential backoff, cap 30s
 function connectSse(){
-  if(sse){sse.close();sse=null;}
+  if(sse){sse.onerror=null;sse.close();sse=null;}
   var s=new EventSource('/chat/events?sid='+sid);sse=s;
   s.onopen=function(){var wasConnected=sseEverConnected;sseEverConnected=true;reconDelay=1000;loadSessions();if(wasConnected){setBusy(false);loadHistory();}};
   s.onerror=function(){s.close();sse=null;reconDelay=Math.min(reconDelay*2,30000);setTimeout(connectSse,reconDelay);};
