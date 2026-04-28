@@ -38,7 +38,10 @@ export class GroupQueue {
   private folderLocks = new Map<string, Promise<void>>();
 
   /** Acquire per-folder spawn lock; idempotent release (safe vs notifyIdle + finally). */
-  private async acquireForState(state: GroupState, ctx: Record<string, unknown>): Promise<() => void> {
+  private async acquireForState(
+    state: GroupState,
+    ctx: Record<string, unknown>,
+  ): Promise<() => void> {
     const folder = state.groupFolder;
     if (!folder) {
       logger.warn(ctx, 'No groupFolder known, skipping per-folder spawn lock');
@@ -47,7 +50,10 @@ export class GroupQueue {
     while (this.folderLocks.has(folder)) await this.folderLocks.get(folder);
     let unlock!: () => void;
     this.folderLocks.set(folder, new Promise<void>((r) => (unlock = r)));
-    state.folderLockRelease = () => { this.folderLocks.delete(folder); unlock(); };
+    state.folderLockRelease = () => {
+      this.folderLocks.delete(folder);
+      unlock();
+    };
     return () => {
       const r = state.folderLockRelease;
       if (!r) return;
@@ -110,7 +116,12 @@ export class GroupQueue {
     );
   }
 
-  enqueueTask(groupJid: string, taskId: string, fn: () => Promise<void>, groupFolder?: string): void {
+  enqueueTask(
+    groupJid: string,
+    taskId: string,
+    fn: () => Promise<void>,
+    groupFolder?: string,
+  ): void {
     if (this.shuttingDown) return;
 
     const state = this.getGroup(groupJid);
