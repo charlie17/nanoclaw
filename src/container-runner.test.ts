@@ -102,6 +102,8 @@ vi.mock('child_process', async () => {
 
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
+import { spawn } from 'child_process';
+import fs from 'fs';
 
 const testGroup: RegisteredGroup = {
   name: 'Test Group',
@@ -220,5 +222,127 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+});
+
+describe('per-folder spawn lock (D-V58)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+    vi.mocked(spawn).mockReset();
+    vi.mocked(spawn).mockImplementation(() => fakeProc as any);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('D-V58-G1a: serializes concurrent calls for the same group.folder', async () => {
+    const proc1 = createFakeProcess();
+    const proc2 = createFakeProcess();
+    // Deterministically: first spawn → proc1, second spawn → proc2
+    vi.mocked(spawn).mockImplementationOnce(() => proc1 as any).mockImplementationOnce(() => proc2 as any);
+
+    const p1 = runContainerAgent(testGroup, testInput, () => {});
+    const p2 = runContainerAgent(testGroup, testInput, () => {});
+
+    // Flush microtasks: p1 acquires lock + spawns proc1; p2 blocks on lock
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(spawn).mock.calls.length).toBe(1);
+
+    // Complete p1 — triggers lock release → p2 acquires lock and spawns proc2
+    emitOutputMarker(proc1, { status: 'success', result: 'r1', newSessionId: 's1' });
+    await vi.advanceTimersByTimeAsync(10);
+    proc1.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await p1;
+
+    // p2 has now spawned (in the microtask chain triggered by p1's lock release)
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(spawn).mock.calls.length).toBe(2);
+
+    // Complete p2
+    emitOutputMarker(proc2, { status: 'success', result: 'r2', newSessionId: 's2' });
+    await vi.advanceTimersByTimeAsync(10);
+    proc2.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    const r2 = await p2;
+    expect(r2.status).toBe('success');
+  });
+
+  it('D-V58-G1b: runs concurrent calls for different group.folders in parallel', async () => {
+    const proc1 = createFakeProcess();
+    const proc2 = createFakeProcess();
+    let spawnCall = 0;
+    vi.mocked(spawn).mockImplementation(() => (spawnCall++ === 0 ? proc1 : proc2) as any);
+
+    const groupA: RegisteredGroup = { ...testGroup, folder: 'folder-a' };
+    const groupB: RegisteredGroup = { ...testGroup, folder: 'folder-b' };
+    const inputA = { ...testInput, groupFolder: 'folder-a' };
+    const inputB = { ...testInput, groupFolder: 'folder-b' };
+
+    const p1 = runContainerAgent(groupA, inputA, () => {});
+    const p2 = runContainerAgent(groupB, inputB, () => {});
+
+    // Both should have acquired their own lock and spawned without waiting
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(spawn).mock.calls.length).toBe(2);
+
+    // Clean up both
+    emitOutputMarker(proc1, { status: 'success', result: 'a' });
+    emitOutputMarker(proc2, { status: 'success', result: 'b' });
+    await vi.advanceTimersByTimeAsync(10);
+    proc1.emit('close', 0);
+    proc2.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all([p1, p2]);
+  });
+
+  it('D-V58-G1c: releases lock when setup throws synchronously', async () => {
+    const throwGroup: RegisteredGroup = { ...testGroup, folder: 'throw-folder' };
+    const throwInput = { ...testInput, groupFolder: 'throw-folder' };
+
+    // Make mkdirSync throw once to trigger a sync throw inside the try block
+    vi.mocked(fs.mkdirSync as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+      throw new Error('EACCES: permission denied');
+    });
+
+    // First call rejects due to the throw; finally must still release the lock
+    await expect(runContainerAgent(throwGroup, throwInput, () => {})).rejects.toThrow('EACCES');
+
+    // Lock released — a subsequent same-folder call should not deadlock
+    const proc = createFakeProcess();
+    fakeProc = proc;
+    const p = runContainerAgent(throwGroup, throwInput, () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    emitOutputMarker(proc, { status: 'success', result: 'recovered' });
+    await vi.advanceTimersByTimeAsync(10);
+    proc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await p).status).toBe('success');
+  });
+
+  it('D-V58-G1d: releases lock after async error exit (non-zero container exit code)', async () => {
+    const errGroup: RegisteredGroup = { ...testGroup, folder: 'error-folder' };
+    const errInput = { ...testInput, groupFolder: 'error-folder' };
+
+    // First call: container exits with non-zero code → resolves with status:'error'
+    const p1 = runContainerAgent(errGroup, errInput, () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    fakeProc.emit('close', 1);
+    await vi.advanceTimersByTimeAsync(10);
+    const r1 = await p1;
+    expect(r1.status).toBe('error');
+
+    // Lock released — second same-folder call should proceed
+    const proc2 = createFakeProcess();
+    fakeProc = proc2;
+    const p2 = runContainerAgent(errGroup, errInput, () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    emitOutputMarker(proc2, { status: 'success', result: 'ok' });
+    await vi.advanceTimersByTimeAsync(10);
+    proc2.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await p2).status).toBe('success');
   });
 });

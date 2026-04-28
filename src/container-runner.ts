@@ -61,6 +61,32 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+// D-V58.2 — Per-folder spawn lock; serializes runContainerAgent calls for the
+// same group.folder so dual containers cannot run concurrently. Cross-folder
+// (e.g. Daystrom + Worf) is unaffected — each folder has its own lock entry.
+// Pre-existing race (PHASE1-CONTAINER-RACE.md §3): GroupQueue serializes by
+// groupJid (per-chat) but containers are per-folder; concurrent chats sharing
+// one folder both pass the per-chat state.active gate → two docker containers
+// for the same folder → session-file write races + state corruption.
+const folderLocks = new Map<string, Promise<void>>();
+
+async function acquireFolderLock(groupFolder: string): Promise<() => void> {
+  while (folderLocks.has(groupFolder)) {
+    logger.debug({ groupFolder }, '[container-runner] waiting on folder lock');
+    await folderLocks.get(groupFolder);
+  }
+  let release!: () => void;
+  const p = new Promise<void>((res) => {
+    release = res;
+  });
+  folderLocks.set(groupFolder, p);
+  logger.debug({ groupFolder }, '[container-runner] acquired folder lock');
+  return () => {
+    folderLocks.delete(groupFolder);
+    release();
+  };
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -356,6 +382,8 @@ export async function runContainerAgent(
   onProcess: (proc: ChildProcess, containerName: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
+  const releaseFolderLock = await acquireFolderLock(group.folder);
+  try {
   const startTime = Date.now();
 
   const groupDir = resolveGroupFolderPath(group.folder);
@@ -399,7 +427,7 @@ export async function runContainerAgent(
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
-  return new Promise((resolve) => {
+  return await new Promise<ContainerOutput>((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -743,6 +771,9 @@ export async function runContainerAgent(
       });
     });
   });
+  } finally {
+    releaseFolderLock();
+  }
 }
 
 export function writeTasksSnapshot(
