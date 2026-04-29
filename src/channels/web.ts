@@ -2306,6 +2306,12 @@ export class WebChannel implements Channel {
     const headers: http.OutgoingHttpHeaders = { ...req.headers };
     delete headers['host'];
     delete headers['connection'];
+    // Batch 2.5 fold #8: when fetching the iframe root, strip accept-encoding
+    // so OWUI returns uncompressed HTML — fold #7's history.replaceState
+    // injection does string-replace on the body, which corrupts gzipped bytes.
+    if (proxyPath === '/') {
+      delete headers['accept-encoding'];
+    }
     return new Promise<void>((resolve) => {
       const proxyReq = http.request(
         {
