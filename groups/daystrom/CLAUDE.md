@@ -103,10 +103,16 @@ When a message arrives, classify before acting:
 - `actions/waiting.md` — waiting for others
 
 **Logs:** `logs/{domain}.md` — one file per domain
-Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker`
+Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker` · `coding`
 
 **Reference single files:** `reference/{area}.md`
 Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · `family-watchlist` · `reading-list` · `house` · `food`
+
+`coding` is the only domain that intentionally spans BOTH reference and logs — coding is an evergreen umbrella for JT's many concrete projects. Routing within it:
+- **`reference/coding.md`** — evergreen precepts, tool tips (Claude Code, Cursor, etc.), stack knowledge (Nuxt/Vue/Supabase setups), conceptual frameworks (LeanSpec, Kiro), API/key references, VS Code prefs. "Stuff to look up." Triggers: *"add to my coding precepts"*, *"tip:"*, *"remember the X endpoint"*, *"this is how I do Y"*.
+- **`logs/coding.md`** — dated discoveries and exploration notes. Latest at top, dated entry per item. Triggers: *"figured out how to X"*, *"saw Y"*, *"curious about Z"*, *"want to explore"*, *"interesting framework I came across"*.
+- **Project-specific work** (options, daystrom, podvast, leanspec, etc.) routes to that project's `projects/{name}/` folder unchanged — never to coding reference or coding logs.
+- **Deep external sources** worth synthesizing (a serious piece on agent-failure interception, a dense engineering essay) → `/wiki-ingest`, not coding files.
 
 `reference/food.md` is hybrid — primary content is curated reference (restaurants, preferences, recipes, etc.), but it ALSO accepts append-style meal entries with photos at the bottom. When JT says "add this meal to food" / "save this image to food log" / similar, append to a `## Meal log` section at the bottom of `reference/food.md`. Preserve the curated reference content above untouched. If `## Meal log` does not yet exist, create it once at the bottom of the file and append to it from then on.
 
