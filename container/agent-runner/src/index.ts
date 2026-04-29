@@ -532,6 +532,40 @@ async function runQuery(
         },
       },
       hooks: {
+        // C15-c2 cherry-pick: defense-in-depth blocklist for SDK builtins that
+        // either bypass our scheduler/IPC or hang in headless containers.
+        // The `allowedTools` whitelist above already excludes these, but the
+        // hook adds belt-and-suspenders protection if a future SDK release
+        // adds a tool not yet on our allowlist.
+        PreToolUse: [
+          {
+            hooks: [
+              async (input) => {
+                const i = input as { tool_name?: string };
+                const SDK_DISALLOWED_TOOLS = [
+                  'AskUserQuestion', // SDK placeholder; we use mcp__nanoclaw__ask_user_question
+                  'EnterPlanMode',
+                  'ExitPlanMode',
+                  'EnterWorktree',
+                  'ExitWorktree',
+                  'CronCreate', // we use mcp__nanoclaw__schedule_task
+                  'CronDelete',
+                  'CronList',
+                  'ScheduleWakeup',
+                ];
+                const toolName = i.tool_name ?? '';
+                if (SDK_DISALLOWED_TOOLS.includes(toolName)) {
+                  return {
+                    decision: 'block',
+                    stopReason: `Tool '${toolName}' is not available in this environment — use the nanoclaw equivalent.`,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  } as any;
+                }
+                return { continue: true };
+              },
+            ],
+          },
+        ],
         PreCompact: [
           { hooks: [createPreCompactHook(containerInput.assistantName)] },
         ],

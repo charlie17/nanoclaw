@@ -31,7 +31,11 @@ ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Install agent-browser and claude-code globally
-RUN npm install -g agent-browser @anthropic-ai/claude-code
+# C22 cherry-pick (upstream 63b8beb): pin claude-code to known-good version for
+# build-determinism. Previously unpinned (`@latest`) — every rebuild could pull
+# a different version + introduce silent behavior changes. Bump quarterly via
+# /upstream-review or as needed for SDK feature parity.
+RUN npm install -g agent-browser @anthropic-ai/claude-code@2.1.116
 RUN npm install -g @tobilu/qmd@2.1.0
 
 # Create app directory

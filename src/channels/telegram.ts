@@ -80,10 +80,22 @@ export class TelegramChannel implements Channel {
       const attachDir = path.join(groupDir, 'attachments');
       fs.mkdirSync(attachDir, { recursive: true });
 
-      // Sanitize filename and add extension from Telegram's file_path if missing
+      // Sanitize filename and add extension from Telegram's file_path if missing.
+      // Cherry-pick from upstream 7e37b13: explicitly reject `.`/`..`/separator
+      // edge cases that the regex below would otherwise allow through (bare `..`
+      // is preserved by `[^a-zA-Z0-9._-]` since `.` is in the whitelist;
+      // `path.basename(name) === name` catches OS-specific separators on
+      // Windows runtimes too). Bridge channel (web.ts:124-132) already uses
+      // path.basename — this aligns Telegram with the same hygiene.
       const tgExt = path.extname(file.file_path);
       const localExt = path.extname(filename);
-      const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const sanitized = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const safeName =
+        sanitized === '.' ||
+        sanitized === '..' ||
+        path.basename(sanitized) !== sanitized
+          ? `attachment_${Date.now()}`
+          : sanitized;
       const finalName = localExt ? safeName : `${safeName}${tgExt}`;
       const destPath = path.join(attachDir, finalName);
 
