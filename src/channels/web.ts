@@ -1185,6 +1185,22 @@ export class WebChannel implements Channel {
     const headOnly = method === 'HEAD';
 
     // C6: All state-mutating routes are POST; GET / and static assets are unauthenticated
+    // Batch 2.5 fold #3 (revised position): catch-all-by-Referer for OWUI's
+    // absolute asset paths (`/static/*`, `/_app/*`, `/manifest.json`, etc.).
+    // MUST come before Bridge's own /static + /manifest.json handlers — those
+    // would otherwise 404 because Bridge has no such asset files. Auth gate
+    // applied inside since this is a pre-auth-gate slot. OWUI's SvelteKit emits
+    // root-absolute URLs that escape the /dash/private/* prefix; browser sends
+    // Referer as the iframe URL → use that as the routing signal.
+    if (
+      readMethod === 'GET' &&
+      typeof req.headers.referer === 'string' &&
+      req.headers.referer.includes('/dash/private')
+    ) {
+      if (!this.authorizeRequest(req, res)) return;
+      await this.handleDashPrivateProxy(req, res);
+      return;
+    }
     if (readMethod === 'GET' && urlPath === '/') {
       this.handleSpa(res, headOnly);
       return;
@@ -1245,19 +1261,7 @@ export class WebChannel implements Channel {
       await this.handleDashPrivateProxy(req, res);
       return;
     }
-    // Batch 2.5 fold #3: catch-all-by-Referer for OWUI's absolute asset paths
-    // (`/static/*`, `/_app/*`, `/manifest.json`, etc.). OWUI's SvelteKit emits
-    // root-absolute URLs that escape the `/dash/private/*` prefix. When the
-    // browser fetches them from inside the iframe, Referer is the iframe URL
-    // — gate forward by that. Auth still required at proxy edge.
-    if (
-      readMethod === 'GET' &&
-      typeof req.headers.referer === 'string' &&
-      req.headers.referer.includes('/dash/private')
-    ) {
-      await this.handleDashPrivateProxy(req, res);
-      return;
-    }
+    // (fold #3 catch-all-by-Referer was relocated above pre-auth handlers — see top of dispatch)
 
     if (method === 'GET' && urlPath === '/chat/events') {
       this.handleSse(req, res, url);
