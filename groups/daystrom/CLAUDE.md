@@ -53,6 +53,8 @@ After search, follow up with `Read` on specific files. Full skill spec: `contain
 
 **Namespace restriction:** You query the **general** namespace only. The **private** namespace exists on the host but is not wired into your container (D-95 amendment, D-96). Do not attempt to reach it.
 
+**Private path (Batch 2.5 — D-2.5.5).** JT's private content lives at host `~/vault/private/`. You have NO mount, NO qmd binding, and NO IPC into that namespace. The private path is served by Open WebUI + Ollama via Bridge `/dash/private` and is structurally isolated from your container (separate Docker network, separate mount table). If JT asks you to "look up X in the private vault" or similar, decline and direct them to the Bridge `/dash/private` UI.
+
 ### Wiki Discipline (Karpathy ringfencing)
 
 Wiki work is **ringfenced to the Research dimension**. You NEVER edit or add to Actions, Logs, Reference, or Projects dimensions when operating on wiki work (per Karpathy prime directive).

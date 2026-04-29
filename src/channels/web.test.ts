@@ -126,6 +126,7 @@ const mockConfig = vi.hoisted(() => ({
   NANOCLAW_WEB_PORT: 0,
   ASSISTANT_NAME: 'Daystrom',
   CLAUDE_USAGE_PORT: 8080,
+  OWUI_PORT: 8081,
 }));
 
 vi.mock('../config.js', () => ({
@@ -143,6 +144,9 @@ vi.mock('../config.js', () => ({
   },
   get CLAUDE_USAGE_PORT() {
     return mockConfig.CLAUDE_USAGE_PORT;
+  },
+  get OWUI_PORT() {
+    return mockConfig.OWUI_PORT;
   },
   CREDENTIAL_PROXY_PORT: 3001,
   NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH: 0.2,
@@ -1864,6 +1868,154 @@ describe('WebChannel HTTP — claude-usage proxy (/dash/usage)', () => {
     } finally {
       mockConfig.CLAUDE_USAGE_PORT = savedPort;
     }
+  });
+});
+
+// ── Batch 2.5 — Open WebUI proxy (/dash/private) ──────────────────────────────
+
+describe('WebChannel HTTP — Open WebUI proxy (/dash/private)', () => {
+  let proxyChannel: WebChannel;
+  let proxyPort: number;
+  let mockUpstream: http.Server;
+  let mockUpstreamPort: number;
+
+  beforeAll(async () => {
+    mockUpstream = http.createServer((upReq, upRes) => {
+      upRes.writeHead(200, { 'content-type': 'text/html' });
+      upRes.end(`<html>owui method=${upReq.method} path=${upReq.url}</html>`);
+    });
+    await new Promise<void>((resolve) =>
+      mockUpstream.listen(0, '127.0.0.1', resolve),
+    );
+    mockUpstreamPort = (mockUpstream.address() as AddressInfo).port;
+    mockConfig.OWUI_PORT = mockUpstreamPort;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => mockUpstream.close(() => resolve()));
+    mockConfig.OWUI_PORT = 8081;
+  });
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    netMock.reset();
+    execFileMock.stdout = 'container-a,running\n';
+    execFileMock.shouldFail = false;
+    vi.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+    );
+    vi.mocked(statfs).mockResolvedValue({
+      bsize: 4096,
+      blocks: 10000,
+      bavail: 5000,
+      bfree: 5100,
+      ffree: 1000,
+      files: 2000,
+      favail: 900,
+      f_frsize: 4096,
+      namemax: 255,
+      type: 0,
+    } as unknown as Awaited<ReturnType<typeof statfs>>);
+    vi.mocked(readdir).mockResolvedValue(
+      [] as unknown as Awaited<ReturnType<typeof readdir>>,
+    );
+    proxyChannel = new WebChannel(makeOpts());
+    await proxyChannel.connect();
+    proxyPort = (
+      (
+        proxyChannel as unknown as { server: http.Server }
+      ).server.address() as AddressInfo
+    ).port;
+  });
+
+  afterEach(async () => {
+    await proxyChannel.disconnect();
+  });
+
+  // PV-1: unauthenticated proxied path → 401 (covers brief §C.2 case 1)
+  it('PV-1: GET /dash/private unauthenticated → 401', async () => {
+    const r = await req(proxyPort, { method: 'GET', path: '/dash/private' });
+    expect(r.status).toBe(401);
+  });
+
+  // PV-2: wrapper page authed → 200 + red banner + iframe + CSP frame-src 'self'
+  // (covers brief §C.2 case 5 — CSP includes OWUI's required directives)
+  it('PV-2: GET /dash/private authed → 200 + banner + iframe + CSP frame-src self', async () => {
+    const r = await req(proxyPort, {
+      method: 'GET',
+      path: '/dash/private',
+      headers: { Authorization: 'Bearer test-secret-token' },
+    });
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('PRIVATE');
+    expect(r.body).toContain('Local-Only');
+    expect(r.body).toContain('src="/dash/private/"');
+    expect(r.body).toContain(
+      'sandbox="allow-scripts allow-forms allow-same-origin"',
+    );
+    expect(r.headers['content-security-policy']).toContain("frame-src 'self'");
+  });
+
+  // PV-3: sub-path proxy + path rewrite + query string preserved
+  // (covers brief §C.2 cases 2 + 3 — forwards to OWUI loopback, path stripped, query preserved)
+  it('PV-3: GET /dash/private/api/foo?q=1 authed → path /api/foo?q=1 upstream', async () => {
+    const r = await req(proxyPort, {
+      method: 'GET',
+      path: '/dash/private/api/foo?q=1',
+      headers: { Authorization: 'Bearer test-secret-token' },
+    });
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('path=/api/foo?q=1');
+  });
+
+  // PV-4: POST passes through with method preserved (OWUI uses POST for chat ops)
+  it('PV-4: POST /dash/private/api/chat authed → 200 + method=POST upstream', async () => {
+    const r = await req(
+      proxyPort,
+      {
+        method: 'POST',
+        path: '/dash/private/api/chat',
+        headers: {
+          Authorization: 'Bearer test-secret-token',
+          'Content-Type': 'application/json',
+        },
+      },
+      JSON.stringify({ msg: 'hi' }),
+    );
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('method=POST');
+  });
+
+  // PV-5: WebSocket upgrade outside /dash/private/* rejected (covers brief §C.2 case 4)
+  it('PV-5: WebSocket upgrade to /chat/events rejected (allowlist guard)', async () => {
+    await new Promise<void>((resolve) => {
+      const r = http.request({
+        hostname: '127.0.0.1',
+        port: proxyPort,
+        path: '/chat/events',
+        method: 'GET',
+        headers: {
+          Connection: 'Upgrade',
+          Upgrade: 'websocket',
+          'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+          'Sec-WebSocket-Version': '13',
+          Cookie: 'nanoclaw_token=test-secret-token',
+        },
+      });
+      let upgraded = false;
+      r.on('upgrade', () => {
+        upgraded = true;
+      });
+      r.on('close', () => {
+        expect(upgraded).toBe(false);
+        resolve();
+      });
+      r.on('error', () => {
+        expect(upgraded).toBe(false);
+        resolve();
+      });
+      r.end();
+    });
   });
 });
 

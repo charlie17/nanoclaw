@@ -109,6 +109,9 @@ export const CLAUDE_USAGE_PORT = parseInt(
   10,
 );
 
+// JT: Batch 2.5 D-2.5.3 — Open WebUI port (localhost-only; Bridge reverse-proxies at /dash/private)
+export const OWUI_PORT = parseInt(process.env.OWUI_PORT || '8081', 10);
+
 // Bridge web channel — spec §5.5 (D-91, Impl-16, 2026-04-16)
 export const NANOCLAW_WEB_PORT = parseInt(
   process.env.NANOCLAW_WEB_PORT || envConfig.NANOCLAW_WEB_PORT || '3099',

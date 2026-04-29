@@ -12,6 +12,7 @@ import type { AddressInfo } from 'net';
 import { readFile, readdir, stat, statfs, writeFile } from 'node:fs/promises';
 import os from 'os';
 import path from 'node:path';
+import type { Duplex } from 'node:stream';
 
 import {
   ASSISTANT_NAME,
@@ -21,6 +22,7 @@ import {
   NANOCLAW_TOKEN,
   NANOCLAW_WEB_HOST,
   NANOCLAW_WEB_PORT,
+  OWUI_PORT,
 } from '../config.js';
 // JT: D-93 — added getConversation (display-history) + storeMessage (bot-reply persistence)
 // JT: Impl-26 Batch 3.1c — added getMessageCountForMonth (OAuth monthly counter for /dash/api-usage)
@@ -66,8 +68,9 @@ const DASH_CACHE_TTL_MS = 5_000; // D-S3.10
 // claude-usage dashboard (D-CU2 reverse-proxy at /dash/usage). claude-usage's SPA loads
 // Chart.js from CDN (`<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/...">`).
 // Without this allowance the browser blocks the CDN load and chart canvases render blank.
+// Batch 2.5 D-2.5.3: frame-src 'self' + ws:/wss: connect for /dash/private OWUI iframe.
 const CSP =
-  "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:";
+  "default-src 'self'; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; frame-src 'self'";
 
 // D-S2.3 — extension allowlist (case-insensitive; .tar.gz checked separately via endsWith)
 const ALLOWED_EXTENSIONS = new Set([
@@ -551,6 +554,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
 #tnav{display:flex;gap:.35rem;padding:.35rem .6rem;border-bottom:1px solid var(--bd);flex-shrink:0}
 .nb{border:none;background:none;cursor:pointer;font-size:.85rem;padding:.25rem .65rem;border-radius:6px;color:var(--fg);opacity:.55;font-weight:500}
 .nb.active{background:var(--bub-u);color:#fff;opacity:1}
+.nb.priv{color:#7a1f1f}body.dark .nb.priv{color:#e58a8a}
 #ca{flex:1;display:flex;flex-direction:row;overflow:hidden;min-width:0}
 #app.view-dash #ca{display:none}
 #dash-panel{flex:1;overflow-y:auto;padding:1rem;display:none;max-width:880px;width:100%;margin-inline:auto;box-sizing:border-box}
@@ -597,6 +601,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
     <button id="sb-toggle" title="Menu">☰</button>
     <button class="nb active" id="nav-chat">Chat</button>
     <button class="nb" id="nav-dash">Dash</button>
+    <button class="nb priv" id="nav-priv" title="Private path (local LLM, no cloud)">Private</button>
   </div>
   <div id="ca">
     <div id="sidebar">
@@ -622,6 +627,7 @@ body.dark .m code,body.dark .m pre{background:rgba(255,255,255,.1)}
     <div class="dc" id="dc-cost"><div class="dch">Cost</div><div class="dcb" id="dc-cost-body">Loading\u2026</div><div class="dcf" id="dc-cost-foot"></div></div>
     <div class="dc" id="dc-api-usage"><div class="dch">API Usage</div><div class="dcb" id="dc-api-usage-body">Loading\u2026</div><div class="dcf" id="dc-api-usage-foot"></div></div>
     <div class="dc" id="dc-usage-link"><div class="dch">Usage (detail)</div><div class="dcb"><a href="/dash/usage" target="_blank" rel="noreferrer" style="font-size:1.1em">&#8594; Open dashboard</a></div><div class="dcf">Token detail by model &amp; session</div></div>
+    <div class="dc" id="dc-private-link"><div class="dch" style="color:#7a1f1f">Private (local LLM)</div><div class="dcb"><a href="/dash/private" style="font-size:1.1em;color:#7a1f1f">&#8594; Open private chat</a></div><div class="dcf">Local-only — no cloud egress</div></div>
   </div>
 </div>
 <script>
@@ -954,12 +960,17 @@ function setView(v){
 window.addEventListener('hashchange',function(){setView(location.hash==='#/dash'?'dash':'chat');});
 document.getElementById('nav-chat').onclick=function(){location.hash='#/';};
 document.getElementById('nav-dash').onclick=function(){location.hash='#/dash';};
+document.getElementById('nav-priv').onclick=function(){location.href='/dash/private';};
 if(location.hash==='#/dash')setView('dash');
 })();
 </script>
 </body>
 </html>`;
 /* eslint-enable no-useless-escape */
+
+// Batch 2.5 D-2.5.4 — wrapper page for /dash/private. Sandbox omits allow-top-navigation
+// to prevent OWUI breakout. Iframe src has trailing slash so relative fetches proxy-mount.
+const PRIVATE_WRAPPER_HTML = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PRIVATE — ${ASSISTANT_NAME}</title><style>*{box-sizing:border-box;margin:0;padding:0}html,body{height:100%;background:#1a0808;color:#f4d8d8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}#pv-banner{position:fixed;top:0;left:0;right:0;height:34px;background:#7a1f1f;color:#ffe5e5;display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;border-bottom:2px solid #4a0a0a;z-index:10}#pv-frame{position:fixed;top:34px;left:0;right:0;bottom:0;width:100%;border:none;background:#fff}</style></head><body><div id="pv-banner">PRIVATE — Local-Only (no cloud)</div><iframe id="pv-frame" src="/dash/private/" sandbox="allow-scripts allow-forms allow-same-origin" title="Open WebUI (private)"></iframe></body></html>`;
 
 // ── WebChannel class ──────────────────────────────────────────────────────────
 
@@ -999,6 +1010,10 @@ export class WebChannel implements Channel {
         logger.error({ err }, '[bridge] Unhandled request error');
         if (!res.headersSent) res.writeHead(500).end('Internal Server Error');
       });
+    });
+    // D-2.5.3: WS upgrade handler for /dash/private/* (OWUI Socket.IO).
+    this.server.on('upgrade', (req, socket, head) => {
+      this.handleUpgrade(req, socket, head);
     });
     await new Promise<void>((resolve) => {
       this.server!.listen(NANOCLAW_WEB_PORT, NANOCLAW_WEB_HOST, () => {
@@ -1212,6 +1227,16 @@ export class WebChannel implements Channel {
       (urlPath === '/dash/usage' || urlPath.startsWith('/dash/usage/'))
     ) {
       await this.handleDashUsageProxy(req, res);
+      return;
+    }
+    // D-2.5.3: /dash/private — Bridge wrapper page (red theme + PRIVATE banner)
+    if (readMethod === 'GET' && urlPath === '/dash/private') {
+      this.handleDashPrivateWrapper(res, headOnly);
+      return;
+    }
+    // D-2.5.3: /dash/private/* reverse-proxy to Open WebUI (localhost:OWUI_PORT)
+    if (urlPath.startsWith('/dash/private/')) {
+      await this.handleDashPrivateProxy(req, res);
       return;
     }
 
@@ -2210,6 +2235,134 @@ export class WebChannel implements Channel {
       });
       proxyReq.end();
     });
+  }
+
+  // JT: Batch 2.5 D-2.5.4 — wrapper page at GET /dash/private (exact). Iframe targets
+  // /dash/private/ which routes through handleDashPrivateProxy.
+  private handleDashPrivateWrapper(
+    res: ServerResponse,
+    headOnly = false,
+  ): void {
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': CSP,
+      'Cache-Control': 'no-cache',
+    });
+    headOnly ? res.end() : res.end(PRIVATE_WRAPPER_HTML);
+  }
+
+  // JT: Batch 2.5 D-2.5.3 — reverse-proxy /dash/private/* → OWUI loopback. Auth enforced
+  // by authorizeRequest() upstream. Path strip: /dash/private/foo → /foo. All methods
+  // forwarded (OWUI uses POST/PUT/DELETE). Body streamed; transfer-encoding/connection
+  // headers stripped so Node manages framing.
+  private handleDashPrivateProxy(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const proxyPath =
+      (req.url ?? '/dash/private/').slice('/dash/private'.length) || '/';
+    const headers: http.OutgoingHttpHeaders = { ...req.headers };
+    delete headers['host'];
+    delete headers['connection'];
+    return new Promise<void>((resolve) => {
+      const proxyReq = http.request(
+        {
+          hostname: '127.0.0.1',
+          port: OWUI_PORT,
+          path: proxyPath,
+          method: req.method ?? 'GET',
+          headers,
+        },
+        (proxyRes) => {
+          const outHeaders: http.OutgoingHttpHeaders = {};
+          for (const [k, v] of Object.entries(proxyRes.headers)) {
+            if (
+              k !== 'transfer-encoding' &&
+              k !== 'connection' &&
+              v !== undefined
+            ) {
+              outHeaders[k] = v;
+            }
+          }
+          // Force same-origin frame embedding (wrapper page lives on this origin).
+          outHeaders['x-frame-options'] = 'SAMEORIGIN';
+          res.writeHead(proxyRes.statusCode ?? 200, outHeaders);
+          proxyRes.pipe(res, { end: true });
+          proxyRes.on('end', resolve);
+        },
+      );
+      proxyReq.on('error', () => {
+        if (!res.headersSent) {
+          res.writeHead(502, { 'content-type': 'text/plain' });
+          res.end('Open WebUI unavailable');
+        }
+        resolve();
+      });
+      req.pipe(proxyReq, { end: true });
+    });
+  }
+
+  // JT: Batch 2.5 D-2.5.3 — WS upgrade for /dash/private/* (OWUI Socket.IO). Cookie-gated;
+  // non-/dash/private upgrades are destroyed.
+  private handleUpgrade(
+    req: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+  ): void {
+    const urlPath = (req.url ?? '/').split('?')[0];
+    if (!urlPath.startsWith('/dash/private/')) {
+      socket.destroy();
+      return;
+    }
+    if (NANOCLAW_TOKEN) {
+      const cookie = req.headers.cookie ?? '';
+      const provided = parseCookie(cookie, 'nanoclaw_token');
+      if (!provided || !checkToken(provided, NANOCLAW_TOKEN)) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+    }
+    const fullPath =
+      (req.url ?? '/dash/private/').slice('/dash/private'.length) || '/';
+    const headers = { ...req.headers };
+    delete headers['host'];
+    const proxyReq = http.request({
+      hostname: '127.0.0.1',
+      port: OWUI_PORT,
+      path: fullPath,
+      method: req.method ?? 'GET',
+      headers,
+    });
+    proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+      let respLines = `HTTP/1.1 ${proxyRes.statusCode ?? 101} ${proxyRes.statusMessage ?? 'Switching Protocols'}\r\n`;
+      for (const [k, v] of Object.entries(proxyRes.headers)) {
+        if (Array.isArray(v))
+          v.forEach((vv) => (respLines += `${k}: ${vv}\r\n`));
+        else if (v !== undefined) respLines += `${k}: ${v}\r\n`;
+      }
+      respLines += '\r\n';
+      socket.write(respLines);
+      if (proxyHead && proxyHead.length) socket.write(proxyHead);
+      if (head && head.length) proxySocket.write(head);
+      proxySocket.pipe(socket).pipe(proxySocket);
+      const cleanup = () => {
+        try {
+          proxySocket.destroy();
+        } catch {}
+        try {
+          socket.destroy();
+        } catch {}
+      };
+      proxySocket.on('error', cleanup);
+      socket.on('error', cleanup);
+    });
+    proxyReq.on('error', () => {
+      try {
+        socket.destroy();
+      } catch {}
+    });
+    proxyReq.end();
   }
 
   // ── Typing indicator ──────────────────────────────────────────────────────
