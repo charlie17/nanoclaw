@@ -1245,6 +1245,19 @@ export class WebChannel implements Channel {
       await this.handleDashPrivateProxy(req, res);
       return;
     }
+    // Batch 2.5 fold #3: catch-all-by-Referer for OWUI's absolute asset paths
+    // (`/static/*`, `/_app/*`, `/manifest.json`, etc.). OWUI's SvelteKit emits
+    // root-absolute URLs that escape the `/dash/private/*` prefix. When the
+    // browser fetches them from inside the iframe, Referer is the iframe URL
+    // — gate forward by that. Auth still required at proxy edge.
+    if (
+      readMethod === 'GET' &&
+      typeof req.headers.referer === 'string' &&
+      req.headers.referer.includes('/dash/private')
+    ) {
+      await this.handleDashPrivateProxy(req, res);
+      return;
+    }
 
     if (method === 'GET' && urlPath === '/chat/events') {
       this.handleSse(req, res, url);
@@ -2265,8 +2278,12 @@ export class WebChannel implements Channel {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const proxyPath =
-      (req.url ?? '/dash/private/').slice('/dash/private'.length) || '/';
+    // Strip /dash/private prefix when present; pass through as-is for catch-all
+    // OWUI absolute asset paths reached via Referer fallback (fold #3).
+    const reqUrl = req.url ?? '/dash/private/';
+    const proxyPath = reqUrl.startsWith('/dash/private')
+      ? reqUrl.slice('/dash/private'.length) || '/'
+      : reqUrl;
     const headers: http.OutgoingHttpHeaders = { ...req.headers };
     delete headers['host'];
     delete headers['connection'];
