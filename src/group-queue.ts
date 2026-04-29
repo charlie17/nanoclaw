@@ -13,6 +13,19 @@ import { logger } from './logger.js';
  * query iterations. */
 const CLOSE_STDIN_DEADLINE_MS = 30_000;
 
+/** FU-Single-chat retry-storm watchdog: if the container has produced no SDK
+ * output within this window AND is not in idle-wait state (i.e., it should
+ * be processing), force docker stop. Catches single-chat scenarios where
+ * FU-30's closeStdin path is never triggered (no other chat waiting), but
+ * an Anthropic 5xx retry-storm has the SDK silently retrying for many
+ * minutes with the container alive but unproductive. Reset on every output;
+ * cleared when container goes idle (idle is the persistent-container UX
+ * win — agent finished current turn, waiting for follow-up). 5 minutes is
+ * long enough for normal queries (incl. multi-tool deep-research) under
+ * load but short enough that a stuck retry-storm doesn't hold the chat
+ * surface for an unbounded window. */
+const NO_OUTPUT_DEADLINE_MS = 5 * 60 * 1000;
+
 interface QueuedTask {
   id: string;
   groupJid: string;
@@ -34,6 +47,7 @@ interface GroupState {
   groupFolder: string | null;
   retryCount: number;
   closeStdinDeadline: NodeJS.Timeout | null;
+  noOutputDeadline: NodeJS.Timeout | null;
 }
 
 /** Per-folder mutex; getWaiterCount excludes the current holder. */
@@ -114,6 +128,7 @@ export class GroupQueue {
         groupFolder: null,
         retryCount: 0,
         closeStdinDeadline: null,
+        noOutputDeadline: null,
       };
       this.groups.set(groupJid, state);
     }
@@ -211,6 +226,51 @@ export class GroupQueue {
     state.process = proc;
     state.containerName = containerName;
     if (groupFolder) state.groupFolder = groupFolder;
+    this.armNoOutputWatchdog(state, groupJid);
+  }
+
+  /** Called from the host's onOutput callback when the container emits an SDK
+   * result. Resets the no-output watchdog. */
+  markOutputReceived(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    if (!state.active) return;
+    this.armNoOutputWatchdog(state, groupJid);
+  }
+
+  private armNoOutputWatchdog(state: GroupState, groupJid: string): void {
+    this.clearNoOutputWatchdog(state);
+    if (!state.containerName) return;
+    const containerName = state.containerName;
+    state.noOutputDeadline = setTimeout(() => {
+      state.noOutputDeadline = null;
+      if (!state.active || state.containerName !== containerName) return;
+      // Skip if the container is in legitimate idle-wait — that's the
+      // persistent-container UX win, not a stuck retry-storm.
+      if (state.idleWaiting) return;
+      logger.warn(
+        {
+          groupJid,
+          containerName,
+          deadlineMs: NO_OUTPUT_DEADLINE_MS,
+        },
+        'Container produced no SDK output within deadline; forcing docker stop (single-chat retry-storm watchdog)',
+      );
+      try {
+        stopContainer(containerName);
+      } catch (err) {
+        logger.error(
+          { groupJid, containerName, err },
+          'No-output watchdog: stopContainer threw',
+        );
+      }
+    }, NO_OUTPUT_DEADLINE_MS);
+  }
+
+  private clearNoOutputWatchdog(state: GroupState): void {
+    if (state.noOutputDeadline) {
+      clearTimeout(state.noOutputDeadline);
+      state.noOutputDeadline = null;
+    }
   }
 
   /**
@@ -220,6 +280,9 @@ export class GroupQueue {
   notifyIdle(groupJid: string): void {
     const state = this.getGroup(groupJid);
     state.idleWaiting = true;
+    // No-output watchdog applies only to actively-processing containers.
+    // Clear when entering idle-wait; re-armed by sendMessage's idleWaiting=false.
+    this.clearNoOutputWatchdog(state);
     const lock = state.groupFolder
       ? this.folderLocks.get(state.groupFolder)
       : null;
@@ -237,6 +300,8 @@ export class GroupQueue {
     if (!state.active || !state.groupFolder || state.isTaskContainer)
       return false;
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
+    // Re-arm the no-output watchdog: container is processing again.
+    this.armNoOutputWatchdog(state, groupJid);
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
@@ -360,6 +425,7 @@ export class GroupQueue {
       this.scheduleRetry(groupJid, state);
     } finally {
       this.clearCloseStdinDeadline(state);
+      this.clearNoOutputWatchdog(state);
       release();
       state.active = false;
       state.process = null;
@@ -393,6 +459,7 @@ export class GroupQueue {
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
       this.clearCloseStdinDeadline(state);
+      this.clearNoOutputWatchdog(state);
       release();
       state.active = false;
       state.isTaskContainer = false;

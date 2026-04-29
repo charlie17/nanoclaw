@@ -292,6 +292,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
     }
+    // Reset the no-output watchdog on every output marker (incl. result:null
+    // session-update markers — those still indicate the SDK is alive and
+    // emitting; the watchdog catches the case where NO output emerges at all).
+    queue.markOutputReceived(chatJid);
 
     if (result.status === 'success') {
       queue.notifyIdle(chatJid);
