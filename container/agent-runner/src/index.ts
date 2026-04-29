@@ -442,6 +442,10 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
+      // FU-27a: actually wire DAYSTROM_AGENT_MODEL to the SDK so /model switches
+      // change the SDK's model, not just an informational env var. Falls back
+      // to undefined (SDK default) if the env var is not set.
+      model: process.env.DAYSTROM_AGENT_MODEL,
       systemPrompt: globalClaudeMd
         ? {
             type: 'preset' as const,
