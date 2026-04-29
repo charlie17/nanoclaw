@@ -1117,17 +1117,25 @@ export class WebChannel implements Channel {
       return false;
     }
 
-    // Extract token from header or cookie — C5: ?token= param never accepted
+    // Extract token from header or cookie — C5: ?token= param never accepted.
+    // Batch 2.5 fold #6: try BOTH Authorization Bearer and cookie, accept if
+    // EITHER is valid. OWUI sets its own Authorization: Bearer header for its
+    // session inside the iframe; under the prior short-circuit logic, Bridge
+    // would validate OWUI's token (which is NOT Bridge's NANOCLAW_TOKEN) and
+    // reject with 401 before ever checking the cookie. The cookie WAS sent
+    // (same-origin iframe with SameSite=Lax) but never read.
     const auth = req.headers.authorization;
-    let provided: string | null = null;
-    if (auth?.startsWith('Bearer ')) {
-      provided = auth.slice(7);
-    } else {
-      const cookie = req.headers.cookie ?? '';
-      provided = parseCookie(cookie, 'nanoclaw_token');
-    }
+    const bearerToken = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
+    const cookieToken = parseCookie(
+      req.headers.cookie ?? '',
+      'nanoclaw_token',
+    );
+    const bearerValid =
+      bearerToken !== null && checkToken(bearerToken, NANOCLAW_TOKEN);
+    const cookieValid =
+      cookieToken !== null && checkToken(cookieToken, NANOCLAW_TOKEN);
 
-    if (provided && checkToken(provided, NANOCLAW_TOKEN)) {
+    if (bearerValid || cookieValid) {
       this.authAttempts.delete(ip); // clear on success
       return true;
     }
@@ -2358,10 +2366,7 @@ export class WebChannel implements Channel {
     const urlPath = (req.url ?? '/').split('?')[0];
     // OWUI's Socket.IO connects to /ws/socket.io/* directly (root-absolute).
     // Allow /dash/private/* (legacy) and /ws/* (OWUI Socket.IO).
-    if (
-      !urlPath.startsWith('/dash/private/') &&
-      !urlPath.startsWith('/ws/')
-    ) {
+    if (!urlPath.startsWith('/dash/private/') && !urlPath.startsWith('/ws/')) {
       socket.destroy();
       return;
     }
