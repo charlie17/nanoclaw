@@ -106,7 +106,7 @@ When a message arrives, classify before acting:
 Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker` · `coding`
 
 **Reference single files:** `reference/{area}.md`
-Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · `family-watchlist` · `reading-list` · `house` · `food`
+Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · `family-watchlist` · `reading-list` · `food`
 
 `coding` is the only domain that intentionally spans BOTH reference and logs — coding is an evergreen umbrella for JT's many concrete projects. Routing within it:
 - **`reference/coding.md`** — evergreen precepts, tool tips (Claude Code, Cursor, etc.), stack knowledge (Nuxt/Vue/Supabase setups), conceptual frameworks (LeanSpec, Kiro), API/key references, VS Code prefs. "Stuff to look up." Triggers: *"add to my coding precepts"*, *"tip:"*, *"remember the X endpoint"*, *"this is how I do Y"*.
@@ -119,6 +119,11 @@ Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · 
 **Reference folders:**
 - `reference/learning/{source-name}-{YYYY-MM}.md` — e.g., `atomic-habits-2026-03.md`
 - `reference/travel/Travel - {Destination}.md` — e.g., `Travel - AZ.md`
+- `reference/house/{topic-slug}.md` — e.g., `kitchen-renovation.md`, `hvac.md`, `paint-colors.md`. Kebab-case topic slugs; no date prefix (house notes are evergreen reference). Promoted from single-file to folder 2026-04-29 per JT directive — legacy `reference/house.md` content will migrate into per-topic files at JT's discretion.
+
+### Single file vs folder — promotion path
+
+Single-file vs folder is not permanent. Some areas start as `reference/{area}.md` and graduate to `reference/{area}/` when content volume grows or topic count multiplies (precedent: `learning/` and `travel/` are folders by design from the start; `house/` graduated 2026-04-29). When you observe a single-file area becoming unwieldy (~50+ entries, ~10+ distinct subtopics, recurring grep difficulty, JT mentions "this file is getting too big"), **propose the split to JT explicitly** — name the area, the proposed sub-file naming convention, and the migration plan. Do NOT promote unilaterally — promoting creates a new directory, which violates the write-discipline rule above. JT approves; Archie ratifies the schema in this CLAUDE.md; then Daystrom executes the migration following Archie's authoritative routing entry.
 
 **Projects:**
 - `projects/priorities.md` — runway list
