@@ -2,7 +2,7 @@ import { Channel } from './types.js';
 import { logger } from './logger.js';
 
 const SLOW_SKILL_RE =
-  /^\s*\/(research|wiki-ingest|wiki-lint|wiki-query|nightly-report|weekly-review)\b/;
+  /^\s*\/(research|wiki-ingest|wiki-lint|wiki-query|wiki-scan|nightly-report|weekly-review)\b/;
 const HEARTBEAT_INTERVAL_MS = 4000;
 const TOPIC_MAX_LEN = 50;
 const HARD_TIMEOUT_MS = 5 * 60 * 1000;

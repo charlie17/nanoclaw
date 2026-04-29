@@ -65,13 +65,26 @@ describe('slow-skill-ack', () => {
 
   it('non-slow message is no-op', async () => {
     const channel = makeTelegramChannel();
-    const stop = startSlowSkillAck('jid:1', channel, '/wiki-scan something');
+    const stop = startSlowSkillAck('jid:1', channel, 'hello daystrom');
 
     expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(channel.setTyping).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(8000);
     expect(channel.setTyping).not.toHaveBeenCalled();
+
+    stop();
+  });
+
+  it('/wiki-scan is a slow-skill (allowlist regression)', async () => {
+    const channel = makeTelegramChannel();
+    const stop = startSlowSkillAck('jid:1', channel, '/wiki-scan');
+
+    expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage.mock.calls[0][1]).toContain(
+      'working on your wiki-scan request',
+    );
+    expect(channel.setTyping).toHaveBeenCalledTimes(1);
 
     stop();
   });

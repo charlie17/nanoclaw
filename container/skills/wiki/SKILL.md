@@ -10,9 +10,10 @@ When JT invokes `/wiki-ingest`, process the next unprocessed `daystrom-wiki`-tag
 4. Discuss key takeaways with JT. Surface what's new, what connects, what contradicts prior understanding. **Provenance distinction:** clearly indicate what came from the raw Readwise source vs. existing vault content (Karpathy L9 mandate).
 5. Integrate into the wiki: create/update pages at `general/wiki/<slug>.md` with standard wiki-page frontmatter (below). Maintain `[[wikilinks]]` cross-references. One source may touch many pages.
 6. Update `_processed.json`. Schema: `{ "<readwise-doc-id>": { "ingested_at": "<ISO8601 UTC>", "pages_touched": ["<slug>.md", ...] } }`
-7. Update `!index.md` (add/modify entries; maintain category groupings). Append to `log.md`:
-   <!-- JT: pattern from upstream add-karpathy-llm-wiki/llm-wiki.md L50 -->
-   `## [YYYY-MM-DD] ingest | <Article Title>`
+7. Update `!index.md` (add/modify entries; maintain category groupings). Append to `log.md` as a body-text bullet (NOT a markdown header — keeps the log scannable as it grows):
+   <!-- JT: bullet format per JT directive 2026-04-29 — `##` headers are too garish over time -->
+   `- **<YYYY-MM-DD>** ingest: *<Article Title>* — <source attribution> → \`<slug>.md\``
+   Example: `- **2026-04-29** ingest: *The 0% Tax Bracket Most Retirees Walk Right Past* — Tyler Gardner newsletter → \`retirement-tax-efficiency.md\``
 
 ## Vault-only path (D-80)
 
