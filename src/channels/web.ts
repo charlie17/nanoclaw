@@ -1200,13 +1200,23 @@ export class WebChannel implements Channel {
     //       `/manifest.json`) — only forward when iframe context is the
     //       requester
     // Auth gate is applied inside since this slot is pre-auth-gate.
-    // Batch 2.5 fold #10: stub `/favicon.png` to silence OWUI Placeholder.svelte
-    // 404 storm. OWUI's chat-avatar fallback fetches bare /favicon.png (its
-    // actual favicon is at /static/favicon.png — internal OWUI bug). Without
-    // this stub the request reaches OWUI via Referer-fallback and 404s, which
-    // shows broken-image icons in the chat avatar slots. Returns a 1x1
-    // transparent PNG so browsers render nothing instead of broken-image.
-    if (readMethod === 'GET' && urlPath === '/favicon.png') {
+    // Batch 2.5 folds #10+#11: stub all favicon-class paths OWUI references.
+    // OWUI's HTML emits <link rel="icon" href="/static/favicon.png|.svg|.ico|
+    // -96x96.png">, <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">,
+    // and Placeholder.svelte fetches bare /favicon.png. Browsers fetch
+    // <link rel="icon"> WITHOUT Referer, so fold #3's catch-all misses them.
+    // Bridge has no real favicons either — return a 1x1 transparent PNG so
+    // browsers render nothing instead of broken-image icons. /static/icon-192
+    // and /static/icon-512 (Bridge PWA icons) are NOT in this list — those
+    // remain handled by handleStatic for Bridge's own PWA install path.
+    const isOwuiFaviconPath =
+      urlPath === '/favicon.png' ||
+      urlPath === '/favicon.ico' ||
+      urlPath === '/static/favicon.png' ||
+      urlPath === '/static/favicon-96x96.png' ||
+      urlPath === '/static/favicon.svg' ||
+      urlPath === '/static/favicon.ico';
+    if (readMethod === 'GET' && isOwuiFaviconPath) {
       const transparentPng = Buffer.from(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=',
         'base64',
