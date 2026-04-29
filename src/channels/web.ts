@@ -1185,17 +1185,27 @@ export class WebChannel implements Channel {
     const headOnly = method === 'HEAD';
 
     // C6: All state-mutating routes are POST; GET / and static assets are unauthenticated
-    // Batch 2.5 fold #3 (revised position): catch-all-by-Referer for OWUI's
-    // absolute asset paths (`/static/*`, `/_app/*`, `/manifest.json`, etc.).
-    // MUST come before Bridge's own /static + /manifest.json handlers — those
-    // would otherwise 404 because Bridge has no such asset files. Auth gate
-    // applied inside since this is a pre-auth-gate slot. OWUI's SvelteKit emits
-    // root-absolute URLs that escape the /dash/private/* prefix; browser sends
-    // Referer as the iframe URL → use that as the routing signal.
+    // Batch 2.5 fold #3+#4: route OWUI's absolute asset paths to its proxy.
+    // OWUI's SvelteKit emits root-absolute URLs (`/static/*`, `/_app/*`,
+    // `/manifest.json`, `/api/*`, `/ws/*`, `/openapi.json`) that escape the
+    // `/dash/private/*` prefix. Two routing signals used:
+    //   (a) explicit-prefix paths Bridge doesn't claim: always forward
+    //       (covers dynamic-import chunks where browsers strip Referer)
+    //   (b) Referer-based catch-all for paths Bridge ALSO claims (`/static/*`,
+    //       `/manifest.json`) — only forward when iframe context is the
+    //       requester
+    // Auth gate is applied inside since this slot is pre-auth-gate.
+    const owuiOwnedPrefix =
+      urlPath.startsWith('/_app/') ||
+      urlPath.startsWith('/api/') ||
+      urlPath.startsWith('/ws/') ||
+      urlPath === '/openapi.json';
+    const refererFromIframe =
+      typeof req.headers.referer === 'string' &&
+      req.headers.referer.includes('/dash/private');
     if (
       readMethod === 'GET' &&
-      typeof req.headers.referer === 'string' &&
-      req.headers.referer.includes('/dash/private')
+      (owuiOwnedPrefix || refererFromIframe)
     ) {
       if (!this.authorizeRequest(req, res)) return;
       await this.handleDashPrivateProxy(req, res);
