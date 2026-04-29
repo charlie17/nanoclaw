@@ -68,9 +68,15 @@ const DASH_CACHE_TTL_MS = 5_000; // D-S3.10
 // claude-usage dashboard (D-CU2 reverse-proxy at /dash/usage). claude-usage's SPA loads
 // Chart.js from CDN (`<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/...">`).
 // Without this allowance the browser blocks the CDN load and chart canvases render blank.
-// Batch 2.5 D-2.5.3: frame-src 'self' + ws:/wss: connect for /dash/private OWUI iframe.
+// Batch 2.5 D-2.5.3: frame-src 'self' for /dash/private OWUI iframe.
+// Vera iter-1 Should Fix #2: connect-src tightened from 'self' ws: wss: to 'self'.
+// Modern CSP semantics: 'self' covers same-origin WebSocket (ws://+wss://) without explicit
+// scheme prefix. The wildcard ws:/wss: was an XSS lateral-movement risk to attacker-controlled
+// hosts; OWUI's Socket.IO targets only same-origin (`/dash/private/...`) under our wrapper.
+// If a runtime probe (D-2.5-G5) shows OWUI Socket.IO breaks, scope explicitly to the deploy
+// hostname: replace 'self' here with 'self' wss://daystrom.charlie17.dev (per REVIEW-REQUEST §3).
 const CSP =
-  "default-src 'self'; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; frame-src 'self'";
+  "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; frame-src 'self'";
 
 // D-S2.3 — extension allowlist (case-insensitive; .tar.gz checked separately via endsWith)
 const ALLOWED_EXTENSIONS = new Set([
@@ -2304,6 +2310,15 @@ export class WebChannel implements Channel {
 
   // JT: Batch 2.5 D-2.5.3 — WS upgrade for /dash/private/* (OWUI Socket.IO). Cookie-gated;
   // non-/dash/private upgrades are destroyed.
+  //
+  // Buffer-ordering invariant (Vera iter-1 Nit #2 — explanatory comment):
+  //   `head`      = client bytes that arrived in the same TCP segment as the upgrade request
+  //                  but past the request headers. Must be relayed UPSTREAM (to proxySocket).
+  //   `proxyHead` = backend's initial frames sent in the same segment as its 101 response.
+  //                  Must be relayed DOWNSTREAM (to client socket) AFTER the 101 status line.
+  // Future maintainer: do NOT swap these; do NOT collapse the dual write. Both buffers can be
+  // empty in steady state but are non-empty under load (curl --http1.1 -N + fast Socket.IO
+  // handshake), and dropping either causes silent first-frame loss.
   private handleUpgrade(
     req: IncomingMessage,
     socket: Duplex,
@@ -2314,14 +2329,26 @@ export class WebChannel implements Channel {
       socket.destroy();
       return;
     }
+    // Vera iter-1 Should Fix #1: rate-limit WS upgrade auth path (mirror authorizeRequest).
+    // Without this, the WS path is an unhardened brute-force surface (HTTP path is rate-limited
+    // via recordFailedAuth + isRateLimited; WS path bypasses both).
     if (NANOCLAW_TOKEN) {
+      const ip = req.socket.remoteAddress ?? 'unknown';
+      const now = Date.now();
+      if (this.isRateLimited(ip, now)) {
+        socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n');
+        socket.destroy();
+        return;
+      }
       const cookie = req.headers.cookie ?? '';
       const provided = parseCookie(cookie, 'nanoclaw_token');
       if (!provided || !checkToken(provided, NANOCLAW_TOKEN)) {
+        this.recordFailedAuth(ip, now);
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
       }
+      this.authAttempts.delete(ip); // clear on success — mirrors authorizeRequest:1125
     }
     const fullPath =
       (req.url ?? '/dash/private/').slice('/dash/private'.length) || '/';

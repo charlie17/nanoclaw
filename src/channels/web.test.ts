@@ -2017,6 +2017,74 @@ describe('WebChannel HTTP — Open WebUI proxy (/dash/private)', () => {
       r.end();
     });
   });
+
+  // PV-6: WS upgrade to /dash/private/* WITHOUT cookie → 401 + socket destroyed.
+  // Vera iter-1 Should Fix #3: regression-pin the auth gate on the WS path. Mirrors PV-5
+  // structure but flips the path to /dash/private/foo and drops the cookie. Asserts that the
+  // upgrade is NOT honored (no 'upgrade' event) AND that the server wrote a 401 status line
+  // before destroying the socket.
+  it('PV-6: WS upgrade to /dash/private/foo unauth → 401 + socket destroyed', async () => {
+    await new Promise<void>((resolve) => {
+      const r = http.request({
+        hostname: '127.0.0.1',
+        port: proxyPort,
+        path: '/dash/private/foo',
+        method: 'GET',
+        headers: {
+          Connection: 'Upgrade',
+          Upgrade: 'websocket',
+          'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+          'Sec-WebSocket-Version': '13',
+          // deliberately NO Cookie + NO Authorization headers
+        },
+      });
+      let upgraded = false;
+      let sawUnauthorized = false;
+      r.on('upgrade', () => {
+        upgraded = true;
+      });
+      // socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n') is emitted as a synthetic response;
+      // node's http client may surface it as a 'response' (statusCode 401) before the socket
+      // is destroyed. Capture either signal as proof of the auth-gate firing.
+      r.on('response', (resp) => {
+        if (resp.statusCode === 401) sawUnauthorized = true;
+      });
+      r.on('close', () => {
+        expect(upgraded).toBe(false);
+        expect(sawUnauthorized).toBe(true);
+        resolve();
+      });
+      r.on('error', () => {
+        // close handler is the canonical assertion site; error path covers socket-destroyed-pre-response
+        expect(upgraded).toBe(false);
+        resolve();
+      });
+      r.end();
+    });
+  });
+
+  // CSP-snapshot regression test (Vera iter-1 Should Fix #2): pin every directive so a
+  // future maintainer can't silently re-introduce the ws:/wss: wildcard. One assertion per
+  // directive — exact-match string compare on the wrapper page CSP header.
+  it('CSP snapshot — every directive pinned (no ws:/wss: wildcard)', async () => {
+    const r = await req(proxyPort, {
+      method: 'GET',
+      path: '/dash/private',
+      headers: { Authorization: 'Bearer test-secret-token' },
+    });
+    expect(r.status).toBe(200);
+    const csp = r.headers['content-security-policy'] ?? '';
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).not.toContain('ws:');
+    expect(csp).not.toContain('wss:');
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+    expect(csp).toContain(
+      "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+    );
+    expect(csp).toContain("img-src 'self' data:");
+    expect(csp).toContain("frame-src 'self'");
+  });
 });
 
 // ── TYPING_TIMEOUT_MS constant (D-V52.5) ──────────────────────────────────────
