@@ -2335,7 +2335,7 @@ export class WebChannel implements Channel {
             proxyRes.on('end', () => {
               const body = Buffer.concat(chunks).toString('utf-8');
               const link =
-                '<a href="/" style="position:fixed;top:8px;left:8px;z-index:9999;background:rgba(0,0,0,0.75);color:#fff;padding:5px 11px;border-radius:4px;text-decoration:none;font-size:12px;font-family:-apple-system,sans-serif">&larr; Daystrom</a>';
+                '<a href="/" style="position:fixed;top:8px;right:8px;z-index:9999;background:rgba(0,0,0,0.75);color:#fff;padding:5px 11px;border-radius:4px;text-decoration:none;font-size:12px;font-family:-apple-system,sans-serif">&larr; Daystrom</a>';
               const patched = body.replace(/<\/body>/i, `${link}</body>`);
               res.end(patched);
               resolve();
