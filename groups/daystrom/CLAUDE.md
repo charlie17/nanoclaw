@@ -171,7 +171,7 @@ If JT explicitly requests a different format, follow his instruction — these a
 
 ## Telegram Output Format
 
-When your response surfaces to Telegram (any skill JT invokes from Telegram — `/wiki-scan`, `/wiki-ingest`, `/wiki-query`, `/research`, `/readwise-*`, ad-hoc chat), render tabular or list-style content as a **plain-text numbered list**, one item per line. Telegram's MarkdownV2 parser does NOT render `|` column syntax or `-+-` header rules — pipes and dashes pass through as literal characters and look broken.
+**Hard rule — you MUST NEVER emit `|` column syntax (markdown tables) in any Telegram reply, no exceptions.** This applies to every skill JT invokes from Telegram (`/wiki-scan`, `/wiki-ingest`, `/wiki-query`, `/research`, `/readwise-*`, ad-hoc chat) AND to ad-hoc agent responses where you might naturally reach for a table to show comparison data, structured results, schema dumps, etc. Telegram's MarkdownV2 parser does NOT render `|` column syntax or `-+-` header rules — pipes and dashes pass through as literal characters and the message looks broken on JT's phone.
 
 **WRONG (markdown table — renders as literal pipes/dashes on Telegram):**
 ```
@@ -187,7 +187,28 @@ When your response surfaces to Telegram (any skill JT invokes from Telegram — 
 2. Spacing Effect Explained — Oakley · Saved Apr 09
 ```
 
-Use em-dashes (`—`), middle dots (`·`), or labels (`[your note: "..."]`) to separate inline attributes. Never pipes. This rule applies even when content is naturally tabular (ranked backlogs, source lists, comparison items) — express the structure through consistent per-line formatting, not through table syntax. Bold, italic, inline code, and inline links DO render on Telegram and are fine to use.
+Use em-dashes (`—`), middle dots (`·`), or labels (`[your note: "..."]`) to separate inline attributes. Never pipes. **This rule applies even when content is naturally tabular** (ranked backlogs, source lists, comparison items, multi-column schemas) — express structure through consistent per-line formatting, not through table syntax. Bold, italic, inline code, and inline links DO render on Telegram and are fine to use.
+
+### Escape hatch — when you genuinely want a table
+
+If you judge that the data is *meaningfully better* as a multi-column markdown table (5+ columns, alignment matters, comparison-grid format, schema dump, etc.) — and converting to a numbered list would be substantively worse — DO NOT emit the table inline in Telegram. Instead:
+
+1. **Write the table to a vault file** at `general/tmp/<descriptive-slug>-<YYYY-MM-DD>.md` with brief framing prose around the table. Vault tmp files are short-lived working space; JT prunes them periodically. Include a top-of-file note describing what the table covers.
+2. **Reply on Telegram with a brief 1-3 sentence summary + an Obsidian deep-link** to the file using the standard pattern (CLAUDE.md `### Deep-linking items you surface` → vault file). JT taps through to read the rendered table in Obsidian.
+3. **Offer the table inline as a numbered-list alternative** in case JT prefers to read it on Telegram anyway: "Wrote the comparison to `[link]`. If you'd prefer it inline, I can re-render as a numbered list — just say so."
+
+Pattern in skill responses where a table is the natural representation:
+
+```
+Compared the 4 framework options. Wrote the side-by-side at [Comparison: framework
+shortlist](https://daystrom-link.daystrom.workers.dev/?u=...).
+
+TL;DR — Option B is the lowest-friction fit; A and D are the strongest on the
+extensibility axis but cost is real. If you'd prefer the comparison inline as a
+numbered list, just say so.
+```
+
+Never default to inline tables and never apologize after-the-fact for rendering broken — apply this rule preemptively. Per `feedback_telegram_no_tables` (Impl-30 D6) + JT directive 2026-04-29.
 
 ### Deep-linking items you surface
 
