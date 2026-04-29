@@ -89,6 +89,19 @@ describe('slow-skill-ack', () => {
     stop();
   });
 
+  it('/moc-refresh is a slow-skill (allowlist regression)', async () => {
+    const channel = makeTelegramChannel();
+    const stop = startSlowSkillAck('jid:1', channel, '/moc-refresh');
+
+    expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage.mock.calls[0][1]).toContain(
+      'working on your moc-refresh request',
+    );
+    expect(channel.setTyping).toHaveBeenCalledTimes(1);
+
+    stop();
+  });
+
   it('topic extraction and fallback', () => {
     const ch1 = makeTelegramChannel();
     startSlowSkillAck('jid:1', ch1, '/research foo bar');

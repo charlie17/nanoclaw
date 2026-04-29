@@ -121,6 +121,30 @@ Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · 
 - `reference/travel/Travel - {Destination}.md` — e.g., `Travel - AZ.md`
 - `reference/house/{topic-slug}.md` — e.g., `kitchen-renovation.md`, `hvac.md`, `paint-colors.md`. Kebab-case topic slugs; no date prefix (house notes are evergreen reference). Promoted from single-file to folder 2026-04-29 per JT directive — legacy `reference/house.md` content will migrate into per-topic files at JT's discretion.
 
+### MOC maintenance (Maps of Content)
+
+The vault is navigated via three tiers of MOC (Map of Content) files — separate from qmd vector search. MOCs are *navigation* (humans browse); qmd is *search* (you query). Per pre-pass A11 + scope plan §6 + BA §F12.
+
+**MOC tree:**
+- `general/index.md` — hub. Links to each domain MOC + each per-project MOC.
+- `logs/index.md` — links to every `logs/<domain>.md` file with a one-sentence scope phrase.
+- `reference/index.md` — links to every `reference/{area}.md` single-file AND every `reference/{folder}/` folder area.
+- `projects/{name}/index.md` — per-project MOC; one per project folder.
+
+**Excluded (not MOC-managed):** `general/wiki/!index.md` (Karpathy wiki — owned by `/wiki-lint` + `/wiki-ingest`, separate system). `actions/`, `research/`, `general/tmp/`, `quarantine/`, `private/` — no MOCs.
+
+**On-write rule:** when you write a NEW file in any MOC-covered namespace (e.g., a new `logs/<domain>.md`, a new `reference/<area>.md`, a new `projects/<name>/<file>.md`), you MUST also append an entry to the relevant MOC file (`logs/index.md`, `reference/index.md`, `projects/<name>/index.md`) with a context phrase explaining what the file is. Bare link lists are a defect — every entry has a 4-12 word context phrase. If you're auto-generating the phrase (no JT-provided language to inherit), tag it with `<!-- AUTO -->` at end-of-line so JT can grep for review-pending entries.
+
+**On-write exemption:** appending content to an EXISTING file does NOT require a MOC update (the entry already exists). MOC update is only on file creation, file rename, or file deletion.
+
+**Bulk maintenance + repair:** the `/moc-refresh` skill walks the full MOC tree, detects orphan files (exist in namespace but missing from MOC), broken links (MOC entry points to non-existent file), bare-link entries (no context phrase), and fixes orphans + bare-links by adding AUTO-tagged context phrases. Manually invokable; JT may run periodically. NEVER touches `general/wiki/!index.md`. Never overwrites JT-authored (non-AUTO) context phrases.
+
+**Context-phrase length:** 4-12 words. One short clause. Match neighbors' tone when neighbors exist. Sources for the phrase (in priority order): file H1 → frontmatter `description:` → first body sentence → filename slug as last resort.
+
+**Standard MOC entry shape:**
+- `- [[some-file]] — short context phrase here. <!-- AUTO -->` (with AUTO tag if generated)
+- `- [[some-file]] — short context phrase here.` (after JT review + tag removal)
+
 ### Single file vs folder — promotion path
 
 Single-file vs folder is not permanent. Some areas start as `reference/{area}.md` and graduate to `reference/{area}/` when content volume grows or topic count multiplies (precedent: `learning/` and `travel/` are folders by design from the start; `house/` graduated 2026-04-29). When you observe a single-file area becoming unwieldy (~50+ entries, ~10+ distinct subtopics, recurring grep difficulty, JT mentions "this file is getting too big"), **propose the split to JT explicitly** — name the area, the proposed sub-file naming convention, and the migration plan. Do NOT promote unilaterally — promoting creates a new directory, which violates the write-discipline rule above. JT approves; Archie ratifies the schema in this CLAUDE.md; then Daystrom executes the migration following Archie's authoritative routing entry.
