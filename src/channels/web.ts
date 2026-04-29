@@ -1126,10 +1126,7 @@ export class WebChannel implements Channel {
     // (same-origin iframe with SameSite=Lax) but never read.
     const auth = req.headers.authorization;
     const bearerToken = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
-    const cookieToken = parseCookie(
-      req.headers.cookie ?? '',
-      'nanoclaw_token',
-    );
+    const cookieToken = parseCookie(req.headers.cookie ?? '', 'nanoclaw_token');
     const bearerValid =
       bearerToken !== null && checkToken(bearerToken, NANOCLAW_TOKEN);
     const cookieValid =
@@ -2331,9 +2328,35 @@ export class WebChannel implements Channel {
           }
           // Force same-origin frame embedding (wrapper page lives on this origin).
           outHeaders['x-frame-options'] = 'SAMEORIGIN';
-          res.writeHead(proxyRes.statusCode ?? 200, outHeaders);
-          proxyRes.pipe(res, { end: true });
-          proxyRes.on('end', resolve);
+
+          // Batch 2.5 fold #7: inject history.replaceState into OWUI's index HTML
+          // so SvelteKit's router sees `/` instead of `/dash/private/` (OWUI has
+          // no /dash/private route → 404). Only patch the iframe's root index
+          // response; pass everything else through unchanged via streaming pipe.
+          const isHtmlIndex =
+            proxyPath === '/' &&
+            typeof outHeaders['content-type'] === 'string' &&
+            (outHeaders['content-type'] as string).includes('text/html');
+          if (isHtmlIndex) {
+            // Buffer + rewrite: swap the first <head> with <head><script>...</script>
+            const chunks: Buffer[] = [];
+            // Drop content-length if present — body length will change after injection.
+            delete outHeaders['content-length'];
+            res.writeHead(proxyRes.statusCode ?? 200, outHeaders);
+            proxyRes.on('data', (chunk: Buffer) => chunks.push(chunk));
+            proxyRes.on('end', () => {
+              const body = Buffer.concat(chunks).toString('utf-8');
+              const injection =
+                "<script>history.replaceState(null,'','/');</script>";
+              const patched = body.replace(/<head>/i, `<head>${injection}`);
+              res.end(patched);
+              resolve();
+            });
+          } else {
+            res.writeHead(proxyRes.statusCode ?? 200, outHeaders);
+            proxyRes.pipe(res, { end: true });
+            proxyRes.on('end', resolve);
+          }
         },
       );
       proxyReq.on('error', () => {
