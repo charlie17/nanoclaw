@@ -976,7 +976,7 @@ if(location.hash==='#/dash')setView('dash');
 
 // Batch 2.5 D-2.5.4 — wrapper page for /dash/private. Sandbox omits allow-top-navigation
 // to prevent OWUI breakout. Iframe src has trailing slash so relative fetches proxy-mount.
-const PRIVATE_WRAPPER_HTML = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PRIVATE — ${ASSISTANT_NAME}</title><style>*{box-sizing:border-box;margin:0;padding:0}html,body{height:100vh;width:100vw;overflow:hidden;background:#1a0808;color:#f4d8d8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}body{display:flex;flex-direction:column}#pv-banner{flex:0 0 34px;background:#7a1f1f;color:#ffe5e5;display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;border-bottom:2px solid #4a0a0a}#pv-frame{flex:1 1 auto;width:100%;border:none;background:#fff;display:block}</style></head><body><div id="pv-banner">PRIVATE — Local-Only (no cloud)</div><iframe id="pv-frame" src="/dash/private/" sandbox="allow-scripts allow-forms allow-same-origin" title="Open WebUI (private)"></iframe></body></html>`;
+const PRIVATE_WRAPPER_HTML = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PRIVATE — ${ASSISTANT_NAME}</title><style>*{box-sizing:border-box;margin:0;padding:0}html,body{height:100vh;width:100vw;overflow:hidden;background:#1a0808;color:#f4d8d8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}body{display:flex;flex-direction:column}#pv-banner{flex:0 0 34px;background:#7a1f1f;color:#ffe5e5;display:flex;align-items:center;justify-content:space-between;padding:0 .75rem;font-size:.82rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;border-bottom:2px solid #4a0a0a}#pv-back{color:#ffe5e5;text-decoration:none;flex:0 0 auto}#pv-back:hover{text-decoration:underline}#pv-title{flex:1 1 auto;text-align:center}#pv-spacer{flex:0 0 auto;visibility:hidden}#pv-frame{flex:1 1 auto;width:100%;border:none;background:#fff;display:block}</style></head><body><div id="pv-banner"><a id="pv-back" href="/" target="_top">← Daystrom</a><span id="pv-title">PRIVATE — Local-Only (no cloud)</span><span id="pv-spacer">← Daystrom</span></div><iframe id="pv-frame" src="/dash/private/" sandbox="allow-scripts allow-forms allow-same-origin" title="Open WebUI (private)"></iframe></body></html>`;
 
 // ── WebChannel class ──────────────────────────────────────────────────────────
 
@@ -1138,9 +1138,20 @@ export class WebChannel implements Channel {
     }
 
     this.recordFailedAuth(ip, now);
-    res
-      .writeHead(401, { 'WWW-Authenticate': 'Bearer realm="NanoClaw"' })
-      .end('Unauthorized');
+    // Batch 2.5 fold #12: for browser-navigation HTML requests, redirect to
+    // Bridge's login UI at / instead of returning a bare 401 + "Unauthorized"
+    // body. API calls (Accept: application/json or */*) still get 401 — they
+    // can't follow redirects meaningfully.
+    const accept = req.headers.accept ?? '';
+    const isHtmlNav =
+      (req.method ?? 'GET') === 'GET' && accept.includes('text/html');
+    if (isHtmlNav) {
+      res.writeHead(302, { Location: '/' }).end();
+    } else {
+      res
+        .writeHead(401, { 'WWW-Authenticate': 'Bearer realm="NanoClaw"' })
+        .end('Unauthorized');
+    }
     logger.info({ ip }, '[bridge] Auth failed');
     return false;
   }
