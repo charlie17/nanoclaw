@@ -1200,6 +1200,25 @@ export class WebChannel implements Channel {
     //       `/manifest.json`) — only forward when iframe context is the
     //       requester
     // Auth gate is applied inside since this slot is pre-auth-gate.
+    // Batch 2.5 fold #10: stub `/favicon.png` to silence OWUI Placeholder.svelte
+    // 404 storm. OWUI's chat-avatar fallback fetches bare /favicon.png (its
+    // actual favicon is at /static/favicon.png — internal OWUI bug). Without
+    // this stub the request reaches OWUI via Referer-fallback and 404s, which
+    // shows broken-image icons in the chat avatar slots. Returns a 1x1
+    // transparent PNG so browsers render nothing instead of broken-image.
+    if (readMethod === 'GET' && urlPath === '/favicon.png') {
+      const transparentPng = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=',
+        'base64',
+      );
+      res.writeHead(200, {
+        'content-type': 'image/png',
+        'content-length': String(transparentPng.length),
+        'cache-control': 'public, max-age=86400',
+      });
+      res.end(transparentPng);
+      return;
+    }
     const owuiOwnedPrefix =
       urlPath.startsWith('/_app/') ||
       urlPath.startsWith('/api/') ||
