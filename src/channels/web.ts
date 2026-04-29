@@ -1198,15 +1198,15 @@ export class WebChannel implements Channel {
     const owuiOwnedPrefix =
       urlPath.startsWith('/_app/') ||
       urlPath.startsWith('/api/') ||
+      urlPath.startsWith('/assets/') ||
       urlPath.startsWith('/ws/') ||
       urlPath === '/openapi.json';
     const refererFromIframe =
       typeof req.headers.referer === 'string' &&
       req.headers.referer.includes('/dash/private');
-    if (
-      readMethod === 'GET' &&
-      (owuiOwnedPrefix || refererFromIframe)
-    ) {
+    // OWUI-owned prefixes: forward ANY method (POST /api/v1/auths/signin,
+    // PUT, DELETE, etc.). Referer fallback: GET-only (iframe asset requests).
+    if (owuiOwnedPrefix || (readMethod === 'GET' && refererFromIframe)) {
       if (!this.authorizeRequest(req, res)) return;
       await this.handleDashPrivateProxy(req, res);
       return;
@@ -2356,7 +2356,12 @@ export class WebChannel implements Channel {
     head: Buffer,
   ): void {
     const urlPath = (req.url ?? '/').split('?')[0];
-    if (!urlPath.startsWith('/dash/private/')) {
+    // OWUI's Socket.IO connects to /ws/socket.io/* directly (root-absolute).
+    // Allow /dash/private/* (legacy) and /ws/* (OWUI Socket.IO).
+    if (
+      !urlPath.startsWith('/dash/private/') &&
+      !urlPath.startsWith('/ws/')
+    ) {
       socket.destroy();
       return;
     }
@@ -2381,8 +2386,11 @@ export class WebChannel implements Channel {
       }
       this.authAttempts.delete(ip); // clear on success — mirrors authorizeRequest:1125
     }
-    const fullPath =
-      (req.url ?? '/dash/private/').slice('/dash/private'.length) || '/';
+    // Strip /dash/private prefix when present; pass /ws/* through as-is.
+    const reqUrl = req.url ?? '/dash/private/';
+    const fullPath = reqUrl.startsWith('/dash/private')
+      ? reqUrl.slice('/dash/private'.length) || '/'
+      : reqUrl;
     const headers = { ...req.headers };
     delete headers['host'];
     const proxyReq = http.request({
