@@ -1246,7 +1246,18 @@ export class WebChannel implements Channel {
       urlPath.startsWith('/assets/') ||
       urlPath.startsWith('/ws/') ||
       urlPath === '/openapi.json';
+    // Referer fallback for OWUI iframe assets that escape the /dash/private
+    // prefix (fold #3). MUST exclude Bridge-owned paths — without this guard,
+    // navigating away from /dash/private (e.g., clicking "← Daystrom" link
+    // back to /) would hijack to OWUI because the navigation Referer is the
+    // /dash/private wrapper page (fold #13).
+    const isBridgeOwnedPath =
+      urlPath === '/' ||
+      urlPath.startsWith('/dash/') ||
+      urlPath.startsWith('/auth/') ||
+      urlPath.startsWith('/chat/');
     const refererFromIframe =
+      !isBridgeOwnedPath &&
       typeof req.headers.referer === 'string' &&
       req.headers.referer.includes('/dash/private');
     // OWUI-owned prefixes: forward ANY method (POST /api/v1/auths/signin,
