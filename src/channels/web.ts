@@ -2290,6 +2290,18 @@ export class WebChannel implements Channel {
   ): Promise<void> {
     const proxyPath =
       (req.url ?? '/dash/usage').slice('/dash/usage'.length) || '/';
+    // JT 2026-04-29: inject a floating "← Daystrom" link into the index HTML
+    // so the embedded claude-usage dashboard has a way back to Bridge. Same
+    // buffer-and-string-replace pattern as fold #7 for /dash/private.
+    const isHtmlIndex = proxyPath === '/';
+    const reqHeaders: http.OutgoingHttpHeaders = {};
+    if (isHtmlIndex) {
+      // Strip accept-encoding so the response is plaintext for our injection.
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (k !== 'accept-encoding' && v !== undefined) reqHeaders[k] = v;
+      }
+      delete reqHeaders['host'];
+    }
     return new Promise<void>((resolve) => {
       const proxyReq = http.request(
         {
@@ -2297,6 +2309,7 @@ export class WebChannel implements Channel {
           port: CLAUDE_USAGE_PORT,
           path: proxyPath,
           method: 'GET',
+          ...(isHtmlIndex ? { headers: reqHeaders } : {}),
         },
         (proxyRes) => {
           const headers: http.OutgoingHttpHeaders = {};
@@ -2310,9 +2323,28 @@ export class WebChannel implements Channel {
             }
           }
           headers['x-frame-options'] = 'SAMEORIGIN';
-          res.writeHead(proxyRes.statusCode ?? 200, headers);
-          proxyRes.pipe(res, { end: true });
-          proxyRes.on('end', resolve);
+          const isHtmlResponse =
+            isHtmlIndex &&
+            typeof headers['content-type'] === 'string' &&
+            (headers['content-type'] as string).includes('text/html');
+          if (isHtmlResponse) {
+            const chunks: Buffer[] = [];
+            delete headers['content-length'];
+            res.writeHead(proxyRes.statusCode ?? 200, headers);
+            proxyRes.on('data', (chunk: Buffer) => chunks.push(chunk));
+            proxyRes.on('end', () => {
+              const body = Buffer.concat(chunks).toString('utf-8');
+              const link =
+                '<a href="/" style="position:fixed;top:8px;left:8px;z-index:9999;background:rgba(0,0,0,0.75);color:#fff;padding:5px 11px;border-radius:4px;text-decoration:none;font-size:12px;font-family:-apple-system,sans-serif">&larr; Daystrom</a>';
+              const patched = body.replace(/<\/body>/i, `${link}</body>`);
+              res.end(patched);
+              resolve();
+            });
+          } else {
+            res.writeHead(proxyRes.statusCode ?? 200, headers);
+            proxyRes.pipe(res, { end: true });
+            proxyRes.on('end', resolve);
+          }
         },
       );
       proxyReq.on('error', () => {
