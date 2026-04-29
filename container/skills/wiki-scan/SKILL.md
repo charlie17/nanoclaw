@@ -6,7 +6,7 @@ Announce model at start: "Running `/wiki-scan` with Haiku — diagnostic report 
 
 ## Scan flow
 
-1. Call `mcp__readwise__reader_list_documents({tag: ["daystrom-wiki"], location: "archive"})` → collect all tagged Readwise doc IDs and titles.
+1. Call `mcp__readwise__reader_list_documents({tag: ["daystrom-wiki"]})` → collect all tagged Readwise doc IDs and titles across all locations (inbox / later / archive). The `daystrom-wiki` tag is the explicit "include in wiki" signal; Reader location reflects JT's reading workflow and is orthogonal to wiki-readiness.
 2. Read `general/wiki/_processed.json` → collect set of already-processed doc IDs.
 3. Compute delta: tagged items NOT in `_processed.json` = unprocessed backlog.
 4. Rank the delta by Readwise signal: starred items first, then by highlight density (items with more highlights rank higher), then by recency.
