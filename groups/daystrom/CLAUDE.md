@@ -122,16 +122,17 @@ When a message arrives, classify before acting:
 - `actions/waiting.md` — waiting for others
 
 **Logs:** `logs/{domain}.md` — one file per domain
-Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker` · `coding`
+Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker`
 
 **Reference single files:** `reference/{area}.md`
-Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · `family-watchlist` · `reading-list` · `food`
+Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · `family-watchlist` · `reading-list` · `food` · `greece`
 
-`coding` is the only domain that intentionally spans BOTH reference and logs — coding is an evergreen umbrella for JT's many concrete projects. Routing within it:
-- **`reference/coding.md`** — evergreen precepts, tool tips (Claude Code, Cursor, etc.), stack knowledge (Nuxt/Vue/Supabase setups), conceptual frameworks (LeanSpec, Kiro), API/key references, VS Code prefs. "Stuff to look up." Triggers: *"add to my coding precepts"*, *"tip:"*, *"remember the X endpoint"*, *"this is how I do Y"*.
-- **`logs/coding.md`** — dated discoveries and exploration notes. Latest at top, dated entry per item. Triggers: *"figured out how to X"*, *"saw Y"*, *"curious about Z"*, *"want to explore"*, *"interesting framework I came across"*.
-- **Project-specific work** (options, daystrom, podvast, leanspec, etc.) routes to that project's `projects/{name}/` folder unchanged — never to coding reference or coding logs.
-- **Deep external sources** worth synthesizing (a serious piece on agent-failure interception, a dense engineering essay) → `/wiki-ingest`, not coding files.
+**`reference/coding.md`** is the canonical home for all coding-related content — evergreen precepts (Claude Code / Cursor / etc.), tool tips, stack knowledge (Nuxt/Vue/Supabase setups), conceptual frameworks (LeanSpec, Kiro), API/key references, VS Code prefs, AND dated discoveries / exploration notes / "interesting framework I came across" entries. Coding is one file, not split across logs + reference. Triggers (any of): *"add to my coding precepts"*, *"tip:"*, *"figured out how to X"*, *"saw Y"*, *"curious about Z"*, *"interesting framework I came across"*.
+
+- **Project-specific coding work** (options, daystrom, podvast, leanspec, etc.) routes to that project's `projects/{name}/` folder unchanged — never to `reference/coding.md`.
+- **Deep external sources** worth synthesizing (a dense engineering essay, a serious piece on agent-failure interception) → `/wiki-ingest`, not `reference/coding.md`.
+
+**`reference/greece.md`** is JT-curated reference about Greece (places, recipes, cultural notes, etc.). Migrated 2026-04-29 from `logs/greece.md` (was incorrectly classified as a log domain initially — content shape was reference, not chronological log).
 
 `reference/food.md` is hybrid — primary content is curated reference (restaurants, preferences, recipes, etc.), but it ALSO accepts append-style meal entries with photos at the bottom. When JT says "add this meal to food" / "save this image to food log" / similar, append to a `## Meal log` section at the bottom of `reference/food.md`. Preserve the curated reference content above untouched. If `## Meal log` does not yet exist, create it once at the bottom of the file and append to it from then on.
 
@@ -170,7 +171,8 @@ Single-file vs folder is not permanent. Some areas start as `reference/{area}.md
 
 **Projects:**
 - `projects/priorities.md` — runway list
-- `projects/{name}/next.md` — project todos
+- `projects/{name}/next.md` — project todos (default)
+- `projects/{name}/next-{discriminator}.md` — additional `next-*` files for projects that benefit from splitting their todo stream by axis. Recognized example: `projects/options/next-coding.md` (coding-task track for the options project, sibling to `projects/options/next.md` which holds the strategy/research/ops track). Discriminator is kebab-case, descriptive of the axis. Project authors decide whether to split — most projects use the default single `next.md`.
 - `projects/{name}/notes/{projectname}-{YYYY-MM-DD}-{topic}.md` — free-form notes
 
 **Research:** `research/research-{YYYY-MM-DD}-{topic}.md` — e.g., `research-2026-03-22-hiking-trails-az.md`
