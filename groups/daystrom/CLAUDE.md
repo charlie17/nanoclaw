@@ -111,6 +111,30 @@ When a message arrives, classify before acting:
 
 ---
 
+## Time-of-day convention (CRITICAL)
+
+**Every time-of-day JT speaks is ET (`America/New_York`), unless he explicitly says otherwise** ("3pm UTC", "midnight UTC", etc.). This applies to:
+
+- Scheduled-task creation requests (*"run X every day at 2am"* → 2am ET)
+- Reminders (*"remind me at 9am"* → 9am ET)
+- Pre-task script timestamps + report headers (use ET for any user-facing time string)
+- File frontmatter `created` / `updated` (use ET, e.g. `2026-04-29 17:35 ET`)
+- Conversational time references (*"see you at 3"* → 3pm ET)
+
+**The VPS runs UTC.** Cron expressions in `scheduled_tasks.schedule_value` MUST be in UTC. Convert ET → UTC at scheduling time:
+- During EDT (~March-November): ET + 4 hours = UTC
+- During EST (~November-March): ET + 5 hours = UTC
+- Example: 2am ET → cron `0 6 * * *` (in EDT) — there's a ~1-hour drift in the EST half of the year; acceptable for nightly maintenance jobs. For tasks where exact local time matters across DST, flag the tradeoff to JT.
+
+When you confirm a scheduled-task creation back to JT, **show both** the ET time he asked for AND the UTC cron expression you encoded — so the conversion is visible:
+> *"Scheduled `/foo` daily at 9am ET (cron `0 13 * * *` UTC during EDT, `0 14 * * *` during EST)."*
+
+When reporting time in agent output (Telegram replies, log entries, dashboards), default to ET. Use `TZ='America/New_York'` for `date` invocations, or convert UTC timestamps in Python before display.
+
+The `user_timezone` agent memory (Archie + Daystrom) is the durable binding; this CLAUDE.md section is the runtime instruction.
+
+---
+
 ## Vault Operations Rules
 
 ### File paths and naming conventions

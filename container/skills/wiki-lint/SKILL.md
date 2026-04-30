@@ -1,6 +1,6 @@
 # /wiki-lint — Karpathy wiki health-check, aggressive fix-don't-just-report
 
-When JT invokes `/wiki-lint` (manually OR via the nightly @ 2am UTC scheduled run), audit the wiki for health issues. **Fix what can be fixed; report what requires judgment.** Announce model: "Running `/wiki-lint` with Sonnet — wiki audit."
+When JT invokes `/wiki-lint` (manually OR via the nightly @ 2am ET (cron `0 6 * * *` UTC during EDT) scheduled run), audit the wiki for health issues. **Fix what can be fixed; report what requires judgment.** Announce model: "Running `/wiki-lint` with Sonnet — wiki audit."
 
 ## Audit dimensions (Karpathy line 66)
 
