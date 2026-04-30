@@ -43,6 +43,8 @@ Per pre-pass A11 + scope plan §6 + BA §F12. Three explicit tiers + one extensi
 
 5. **Report to JT** as a Telegram-friendly numbered list (per CLAUDE.md `## Telegram Output Format` — never tables).
 
+6. **Update last-run marker** so the nightly skip-when-quiet check sees this run. Use Bash: `touch /workspace/extra/vault/.moc-refresh-last-run`. The mtime of that file is what the prefetch script compares against.
+
 ## Context-phrase generation rules
 
 When generating a context phrase for a new or upgraded entry:

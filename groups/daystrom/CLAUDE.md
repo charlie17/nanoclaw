@@ -57,17 +57,36 @@ After search, follow up with `Read` on specific files. Full skill spec: `contain
 
 ### Wiki Discipline (Karpathy ringfencing)
 
-Wiki work is **ringfenced to the Research dimension**. You NEVER edit or add to Actions, Logs, Reference, or Projects dimensions when operating on wiki work (per Karpathy prime directive).
+Wiki work is **ringfenced to `wiki/`** (host: `~/vault/general/wiki/`). You NEVER edit or add to Actions, Logs, Reference, or Projects dimensions when operating on wiki work (per Karpathy prime directive).
 
-**Provenance stamping is mandatory** for every wiki page you create or modify. Frontmatter schema per SA §5.3 wiki-page type: `provenance.source` (`readwise` | `vault`), `provenance.by: daystrom`, `provenance.via` (`/wiki-ingest` | `/wiki-query`), `source-refs: [<readwise-doc-ids>]` (empty list for D-80 vault path).
+**Three-layer wiki structure** per Karpathy line 52:
+- **`wiki/raw/<doc-id>.md`** — Immutable source archive (raw text, 200KB cap; above cap, metadata + URL + first ~1000 words). Read-only after write.
+- **`wiki/sources/<doc-id>.md`** — Per-source summary pages. One per ingested source. Frontmatter: `type: source-summary`, source attribution, deep-link to raw.
+- **`wiki/<topic-slug>.md`** — Concept/entity pages built across multiple sources. Topic-themed slugs. Each source cited via `([[sources/<doc-id>]])`. Karpathy compounding layer.
+
+**Plus three navigation/meta files:**
+- **`wiki/home.md`** — **HUMAN entry point.** Narrative TL;DR + current state of thinking. Updated when the picture shifts, not on every ingest.
+- **`wiki/!index.md`** — **AGENT catalog.** Flat list of every page with one-line summary. Updated every ingest.
+- **`wiki/log.md`** — Chronological op log (bullet format per JT directive 2026-04-29).
+- **`wiki/_processed.json`** — Processed Readwise doc ID ledger.
+
+Both `home.md` and `!index.md` carry an explicit role banner at the top (see `/wiki-ingest` SKILL.md for the scaffold templates) so the distinction is visible to anyone — human or agent — opening either file cold.
+
+**Provenance stamping is mandatory** for every wiki page you create or modify. Frontmatter schema:
+- Source-summary pages: `type: source-summary` + `provenance.source: readwise` (or `vault`) + `provenance.by: daystrom` + `provenance.via: /wiki-ingest` + `source-id` + `raw-archive: [[raw/<doc-id>]]`
+- Concept pages: `type: concept-page` + `wiki-topic: <slug>` + `provenance.by: daystrom` + `provenance.via: /wiki-ingest` + `source-refs: [<doc-ids>]` (list of all sources contributing)
+
+**In-body provenance via citation:** every claim in a concept page that derives from a source MUST cite that source via `([[sources/<doc-id>]])`. The citation pattern IS the in-body provenance — JT can grep concept pages to find which sources support which claims; source pages have `provenance.source` to distinguish Readwise-derived from vault-derived material.
 
 **qmd scope distinction by skill:**
 - `/wiki-query` — primary `mcp__qmd__query -c wiki`; secondary `mcp__qmd__query -c general` for cross-reference surfacing only
-- `/wiki-ingest` — `mcp__qmd__query -c general` to pull existing vault context into new-source synthesis; writes ONLY to `general/wiki/`
-- `/wiki-lint` — reads `general/wiki/` only; writes only to `general/wiki/log.md` + `general/wiki/!index.md` + wiki pages (cross-ref adds, not content rewrites)
+- `/wiki-ingest` — `mcp__qmd__query -c general` to pull existing vault context into new-source synthesis; writes ONLY to `wiki/`. Distinguish provenance to JT during discussion ("from your existing vault" vs "from this Readwise source").
+- `/wiki-lint` — reads `wiki/` only; writes only to `wiki/log.md` + `wiki/!index.md` + wiki page wikilinks (not content rewrites).
+
+**Full-ripple every ingest (mandatory).** Per Karpathy line 60: *"a single source might touch 10-15 wiki pages."* Every `/wiki-ingest` run MUST do the full ripple — create source-summary at `wiki/sources/`, create or update relevant concept pages at `wiki/<topic>/`, cross-link aggressively, update `!index.md`, append `log.md`. No shortcuts. No "I'll come back later." If you find yourself touching only 1-2 pages on a substantive source, you're probably under-propagating — re-check.
 
 <!-- JT: pattern from upstream add-karpathy-llm-wiki/SKILL.md §3c -->
-**One-at-a-time ingest discipline.** When JT points at multiple sources or a tagged backlog, process one at a time. Read → discuss → integrate → finalize that one before moving to the next. Never batch-read many sources then synthesize — the pattern produces shallow pages instead of deep integration.
+**One-at-a-time ingest discipline.** When JT points at multiple sources or a tagged backlog, process one at a time. Read → discuss → integrate (full ripple) → finalize that one before moving to the next. Never batch-read many sources then synthesize — the pattern produces shallow pages instead of deep integration.
 
 ---
 

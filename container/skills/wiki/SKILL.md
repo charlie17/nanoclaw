@@ -1,59 +1,192 @@
-# /wiki-ingest — Skill Spec (Karpathy ingest, one-at-a-time)
+# /wiki-ingest — Karpathy-method ingest with full ripple
 
-When JT invokes `/wiki-ingest`, process the next unprocessed `daystrom-wiki`-tagged Readwise item into the wiki. One source per invocation. Announce model: "Running `/wiki-ingest` with Opus."
+When JT invokes `/wiki-ingest`, process one source from Readwise (or naturally-pointed-at vault content) into the wiki. **One source per invocation.** Announce model: "Running `/wiki-ingest` with Opus."
+
+## Architecture (three layers, per Karpathy)
+
+The wiki has three layers under `wiki/` (host: `~/vault/general/wiki/`):
+
+1. **`wiki/raw/<doc-id>.md`** — Immutable source archive. Read-only after write. Karpathy line 52: *"This is your source of truth."*
+2. **`wiki/sources/<doc-id>.md`** — Per-source summary pages. One per ingested source. Frontmatter carries `provenance` + source attribution.
+3. **`wiki/<topic-slug>.md`** — Concept/entity pages built across multiple sources. The Karpathy compounding layer. Topic-themed slug (e.g., `retirement-tax-efficiency.md`). Cite each source via `([[sources/<doc-id>]])`.
+
+Plus three navigation/meta files:
+- **`wiki/home.md`** — Human narrative entry point. Updated when the picture shifts.
+- **`wiki/!index.md`** — Agent catalog. Updated every ingest.
+- **`wiki/log.md`** — Chronological op log. Append-only bullet format.
+- **`wiki/_processed.json`** — Processed Readwise doc ID ledger.
 
 ## Readwise path (default)
 
-1. Read `general/wiki/_processed.json`. Call `mcp__readwise__reader_list_documents({tag: ["daystrom-wiki"]})` to list tagged items across all locations (inbox / later / archive — the `daystrom-wiki` tag is the explicit "include in wiki" signal; Reader location reflects JT's reading workflow and is orthogonal to wiki-readiness). Select the next item NOT in the ledger. Capture its `id` + `location` for deep-linking (per CLAUDE.md `### Deep-linking items you surface`). Fetch its content with `mcp__readwise__reader_get_document_details({document_id: "<id>"})` and highlights with `mcp__readwise__reader_get_document_highlights({document_id: "<id>"})`. When you announce the source to JT ("Reading 'Make It Stick'…"), wrap the title as a markdown deep-link `[Title](https://read.readwise.io/{location}/read/{id})` so JT can tap through to the Readwise Reader view.
-2. Run `mcp__qmd__query` over the full `general` namespace to surface what Daystrom already knows that's relevant to this source.
-3. **Ask JT about emphasis** before synthesizing: *"Should I build the page primarily from your highlights and notes, or treat the full body as primary with highlights and notes as color?"* Ask fresh each ingest — do not persist across sessions.
-4. Discuss key takeaways with JT. Surface what's new, what connects, what contradicts prior understanding. **Provenance distinction:** clearly indicate what came from the raw Readwise source vs. existing vault content (Karpathy L9 mandate).
-5. Integrate into the wiki: create/update pages at `general/wiki/<slug>.md` with standard wiki-page frontmatter (below). Maintain `[[wikilinks]]` cross-references. One source may touch many pages.
-6. Update `_processed.json`. Schema: `{ "<readwise-doc-id>": { "ingested_at": "<ISO8601 UTC>", "pages_touched": ["<slug>.md", ...] } }`
-7. Update `!index.md` (add/modify entries; maintain category groupings). Append to `log.md` as a body-text bullet (NOT a markdown header — keeps the log scannable as it grows):
-   <!-- JT: bullet format per JT directive 2026-04-29 — `##` headers are too garish over time -->
-   `- **<YYYY-MM-DD>** ingest: *<Article Title>* — <source attribution> → \`<slug>.md\``
-   Example: `- **2026-04-29** ingest: *The 0% Tax Bracket Most Retirees Walk Right Past* — Tyler Gardner newsletter → \`retirement-tax-efficiency.md\``
+Per the SKILL.md the agent follows step-by-step:
 
-## Vault-only path (D-80)
+### Step 1 — Pick the next source + announce
 
-If JT invokes naturally without a Readwise source — e.g. *"Create a wiki page on X"* — skip steps 1 and 3 above. Instead:
-- Run `mcp__qmd__query` over the full `general` namespace to gather vault material.
-- Announce what you found and ask JT to confirm scope before synthesizing.
-- Proceed from step 5. Do NOT update `_processed.json`. Set `provenance.source: vault`, `source-refs: []`.
+1. Read `wiki/_processed.json` (collect already-processed doc IDs).
+2. Call `mcp__readwise__reader_list_documents({tag: ["daystrom-wiki"]})` to list all tagged items across inbox/later/archive (location-agnostic per JT directive 2026-04-29).
+3. Select the next item NOT in the ledger. If JT pointed at a specific item naturally (e.g. "ingest the Make It Stick article"), use that.
+4. Capture `id` + `location` for the deep-link.
+5. Announce to JT: *"Reading [Title](https://read.readwise.io/{location}/read/{id})..."*
 
-## Wiki page frontmatter
+### Step 2 — Fetch + archive raw
+
+1. Call `mcp__readwise__reader_get_document_details({document_id: "<id>"})` for body content.
+2. Call `mcp__readwise__reader_get_document_highlights({document_id: "<id>"})` for highlights.
+3. **Write raw archive** to `wiki/raw/<doc-id>.md` with this shape:
+
+```yaml
+---
+type: raw-source
+doc-id: <readwise-doc-id>
+title: <title>
+author: <author>
+url: <reader URL>
+saved-date: <YYYY-MM-DD>
+fetched-at: <YYYY-MM-DD HH:MM ET>
+truncated: false   # true if size cap hit
+---
+
+# <Title>
+
+<full body content>
+```
+
+**Size cap: 200KB.** If the raw body exceeds 200KB, write the metadata block + first ~1000 words + a truncation marker:
+```
+[truncated — full source at <reader URL>; this archive contains first 1000 words for grep / re-ingest scaffolding]
+```
+Set `truncated: true` in frontmatter. Karpathy mandates raw storage as source-of-truth (line 52); the cap keeps disk usage bounded for occasional 50-page PDFs.
+
+### Step 3 — Surface related vault content (provenance distinction)
+
+1. Run `mcp__qmd__query` over the full `general` namespace to find vault content semantically related to this source.
+2. **Distinguish provenance clearly when discussing with JT** — surface vault hits as *"From your existing vault: [[path]]"* and source content as *"From this Readwise source: <quote>"*. The agent reasons across both but is transparent about origin.
+
+### Step 4 — Discuss with JT
+
+1. **Ask emphasis question** (every ingest, fresh — never persist across sessions): *"Should I build the page primarily from your highlights and notes, or treat the full body as primary with highlights/notes as color?"*
+2. Discuss key takeaways. Surface what's new, what connects, what contradicts prior understanding.
+3. **Provenance distinction in this discussion is mandatory** — JT must be able to tell what came from the raw Readwise source vs existing vault content.
+4. Wait for JT to confirm scope before writing.
+
+### Step 5 — Write source-summary page
+
+Create `wiki/sources/<doc-id>.md`:
 
 ```yaml
 ---
 created: <YYYY-MM-DD HH:MM ET>
 updated: <YYYY-MM-DD HH:MM ET>
-type: wiki-page
-wiki-topic: <slug>
+type: source-summary
+title: <title>
+author: <author>
+source-url: <reader URL>
+saved-date: <YYYY-MM-DD>
 provenance:
-  source: readwise          # or "vault" for D-80 path
+  source: readwise
   by: daystrom
   via: /wiki-ingest
-source-refs:                # list of Readwise doc IDs; [] for D-80 vault path
-  - <readwise-doc-id>
-related-pages:              # optional: sibling wiki pages
-  - "[[other-wiki-page]]"
+source-id: <readwise-doc-id>
+raw-archive: "[[raw/<doc-id>]]"
+related-pages:
+  - "[[<topic-slug>]]"   # concept pages this source feeds
+---
+
+# <Title> (source summary)
+
+<TL;DR — 1-2 sentences capturing the source's core argument or contribution>
+
+## Key takeaways
+
+<3-7 bullets summarizing what this source delivers, opinionated voice, blog-post style>
+
+## Notable claims
+
+<Claims worth citing into concept pages, each as a sentence or short paragraph>
+
+## Related vault material
+
+<Vault content that surfaced via qmd, with provenance attribution>
+```
+
+### Step 6 — Full-ripple propagation (MANDATORY EVERY RUN)
+
+This is the load-bearing Karpathy operation. **Every `/wiki-ingest` must do the full ripple — no shortcuts, no "I'll come back later," no skipping.** Per Karpathy line 60: *"a single source might touch 10-15 wiki pages."*
+
+For each topic/concept this source materially informs:
+
+1. **Determine if a concept page exists** at `wiki/<topic-slug>.md`. If yes, you're updating; if no, you're creating.
+2. **Create or update the concept page** with claims from this source. Each claim cites the source: *"... according to ([[sources/<doc-id>]])."*
+3. **Surgical edits, not rewrites** — when updating an existing concept page, integrate new claims into the existing structure. Don't duplicate sections.
+4. **Cross-link aggressively (no orphans):**
+   - The new/updated concept page links OUT to other related concept pages already in the wiki.
+   - Find 2-3 existing pages that should reference this concept page and add `[[wikilinks]]` from them TO it.
+   - Read `!index.md` to know what other pages exist.
+5. **Flag contradictions** — if this source contradicts an existing claim on another page, mark inline with `> [!contradiction]` callout. Surface in your reply to JT.
+6. **Concept-page frontmatter:**
+
+```yaml
+---
+created: <when first created>
+updated: <YYYY-MM-DD HH:MM ET>
+type: concept-page
+wiki-topic: <slug>
+provenance:
+  by: daystrom
+  via: /wiki-ingest
+source-refs:                 # all sources that contribute to this page
+  - <doc-id-1>
+  - <doc-id-2>
+related-pages:
+  - "[[other-concept]]"
 ---
 ```
 
-## One-at-a-time discipline
+**Number of pages touched per ingest is typically 3-10**, sometimes more for dense sources. If the source only touches 1 page, that's a signal — either you're under-propagating or the source is genuinely narrow. Justify in your reply to JT.
 
-<!-- JT: pattern from upstream add-karpathy-llm-wiki/SKILL.md §3c -->
-When JT points at multiple sources or a tagged backlog, process one at a time. For each source: read it, discuss takeaways, create/update all wiki pages (summary, entities, concepts, cross-references, index, log), and completely finish before moving to the next. Never batch-read many sources then synthesize — the pattern produces shallow pages instead of deep integration.
+### Step 7 — Update meta files
+
+1. **`wiki/_processed.json`** — append/update entry: `"<doc-id>": { "ingested_at": "<ISO8601 UTC>", "source_summary": "sources/<doc-id>.md", "concept_pages": ["<topic1>.md", "<topic2>.md"] }`
+2. **`wiki/!index.md`** — agent catalog. Add new pages with one-line summary; update existing entries if their summary shifted. Group by category (concepts / sources / etc.).
+3. **`wiki/home.md`** — narrative entry point. **Update only if this source materially shifts the wiki's big-picture narrative.** Don't update for incremental additions; do update when a new theme emerges or an existing theme changes shape.
+4. **`wiki/log.md`** — append a bullet entry per the format established 2026-04-29:
+   ```
+   - **<YYYY-MM-DD>** ingest: *<Article Title>* — <source attribution> → `sources/<doc-id>.md` + concept pages: `<topic1>.md`, `<topic2>.md`
+   ```
+
+### Step 8 — Report to JT
+
+Telegram-friendly summary per CLAUDE.md `## Telegram Output Format` — plain-text numbered list, NEVER tables. Include:
+- Source ingested (with deep-link)
+- Source-summary page created (path)
+- Concept pages created or updated (paths)
+- Existing pages cross-linked (paths)
+- Any contradictions flagged
+- Brief judgment-call notes worth JT review
+
+## Vault-only path (D-80)
+
+If JT invokes naturally without a Readwise source — e.g. *"Create a wiki page on X"* — skip Steps 1, 2, 5 above. Instead:
+- Run `mcp__qmd__query` over the full `general` namespace to gather vault material.
+- Discuss scope with JT.
+- Skip raw archive + source-summary creation (no Readwise doc).
+- Proceed with Step 6 (concept page creation) — `provenance.source: vault`, `source-refs: []`, citations point at vault paths instead of source-summary slugs.
+- Update `!index.md` + `log.md` with a `vault-ingest` op type.
 
 ## What you MUST NOT do
 
-- Do NOT batch-read multiple sources before processing — one at a time, always.
-- Do NOT write to vault dimensions other than `general/wiki/` — wiki work is ringfenced to the Research dimension only (Karpathy prime directive).
-- Do NOT invent Readwise doc IDs — use only IDs returned by `mcp__readwise__reader_list_documents`.
-- Do NOT skip the `_processed.json` update on the Readwise path (D-17 idempotency).
-- Do NOT self-trigger `/wiki-ingest` — invocation is always explicit by JT (D-17).
+- **Do NOT batch-read multiple sources before processing.** One at a time, always (Karpathy + JT directive).
+- **Do NOT skip the full ripple.** Step 6 is mandatory every run. *"I'll deepen this later"* is the wrong answer.
+- **Do NOT write inline tables in Telegram replies** — plain-text numbered list per CLAUDE.md `## Telegram Output Format`.
+- **Do NOT touch any vault content outside `wiki/`** — Karpathy ringfence + JT directive. Wiki work is `general/wiki/` only.
+- **Do NOT write to `wiki/raw/` after initial archive** — raw is immutable.
+- **Do NOT modify a non-AUTO context phrase in `!index.md`** — JT-authored prose is sacred. Only fill blanks or upgrade AUTO entries.
+- **Do NOT modify schema files (CLAUDE.md, this SKILL.md).** Architect-controlled.
 
 ## Rationale
 
-The Karpathy method builds a persistent, compounding knowledge base by integrating each source into the existing wiki — not just summarizing in isolation. Four correctness invariants: provenance stamping (Karpathy L9) + ledger idempotency (D-17) + `daystrom-wiki` tag gate (D-58, D-59) + Research-dimension ringfencing (D-63). The D-80 vault-only path preserves tag-gated Readwise discipline while enabling wiki pages from existing vault content. Cite SA §6.4 + BA §8.3.
+Karpathy line 30: *"the LLM doesn't just index it for later retrieval. It reads it, extracts the key information, and integrates it into the existing wiki — updating entity pages, revising topic summaries, noting where new data contradicts old claims, strengthening or challenging the evolving synthesis."*
+
+The compounding effect comes from concept-page maintenance across many sources. Source pages are leaf nodes; concept pages are where ideas get woven. Without the split, the wiki shape is "list of summaries" not "graph of ideas." This skill enforces the split + the full ripple.
+
+The 200KB raw cap, the deep-link-on-announcement pattern, the `<!-- AUTO -->` MOC tag, and the no-tables Telegram format are Daystrom-specific conventions. Everything else is Karpathy.
