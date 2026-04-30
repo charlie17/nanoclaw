@@ -60,23 +60,23 @@ After search, follow up with `Read` on specific files. Full skill spec: `contain
 Wiki work is **ringfenced to `wiki/`** (host: `~/vault/general/wiki/`). You NEVER edit or add to Actions, Logs, Reference, or Projects dimensions when operating on wiki work (per Karpathy prime directive).
 
 **Three-layer wiki structure** per Karpathy line 52:
-- **`wiki/raw/<doc-id>.md`** — Immutable source archive (raw text, 200KB cap; above cap, metadata + URL + first ~1000 words). Read-only after write.
-- **`wiki/sources/<doc-id>.md`** — Per-source summary pages. One per ingested source. Frontmatter: `type: source-summary`, source attribution, deep-link to raw.
-- **`wiki/<topic-slug>.md`** — Concept/entity pages built across multiple sources. Topic-themed slugs. Each source cited via `([[sources/<doc-id>]])`. Karpathy compounding layer.
+- **`wiki/raw/<doc-id>.md`** — Immutable source archive (raw text, 200KB cap; above cap, metadata + URL + first ~1000 words). Read-only after write. **Filename uses Readwise doc ID** — programmatic backstop, never browsed by humans.
+- **`wiki/sources/<source-slug>.md`** — Per-source summary pages. One per ingested source. **Filename is a kebab-case slug derived from the article title** (NOT the doc ID — doc ID lives in frontmatter `source-id`). Slug snapshotted at first ingest, recorded in `_processed.json`, never regenerated.
+- **`wiki/<topic-slug>.md`** — Concept/entity pages built across multiple sources. Topic-themed slugs. Each source cited via `([[sources/<source-slug>]])` — readable inline. Karpathy compounding layer.
 
-**Plus three navigation/meta files:**
-- **`wiki/home.md`** — **HUMAN entry point.** Narrative TL;DR + current state of thinking. Updated when the picture shifts, not on every ingest.
+**Plus four navigation/meta files:**
+- **`wiki/!home.md`** — **HUMAN entry point.** Narrative TL;DR + current state of thinking. Updated when the picture shifts, not on every ingest. (`!` prefix sorts to top of file tree.)
 - **`wiki/!index.md`** — **AGENT catalog.** Flat list of every page with one-line summary. Updated every ingest.
 - **`wiki/log.md`** — Chronological op log (bullet format per JT directive 2026-04-29).
-- **`wiki/_processed.json`** — Processed Readwise doc ID ledger.
+- **`wiki/_processed.json`** — Processed Readwise doc ID ledger; tracks doc ID → slug mapping + concept pages touched.
 
-Both `home.md` and `!index.md` carry an explicit role banner at the top (see `/wiki-ingest` SKILL.md for the scaffold templates) so the distinction is visible to anyone — human or agent — opening either file cold.
+Both `!home.md` and `!index.md` carry an explicit role banner at the top so the distinction is visible to anyone — human or agent — opening either file cold.
 
 **Provenance stamping is mandatory** for every wiki page you create or modify. Frontmatter schema:
-- Source-summary pages: `type: source-summary` + `provenance.source: readwise` (or `vault`) + `provenance.by: daystrom` + `provenance.via: /wiki-ingest` + `source-id` + `raw-archive: [[raw/<doc-id>]]`
+- Source-summary pages: `type: source-summary` + `provenance.source: readwise` (or `vault`) + `provenance.by: daystrom` + `provenance.via: /wiki-ingest` + `source-id` (Readwise doc ID) + `raw-archive: [[raw/<doc-id>]]`
 - Concept pages: `type: concept-page` + `wiki-topic: <slug>` + `provenance.by: daystrom` + `provenance.via: /wiki-ingest` + `source-refs: [<doc-ids>]` (list of all sources contributing)
 
-**In-body provenance via citation:** every claim in a concept page that derives from a source MUST cite that source via `([[sources/<doc-id>]])`. The citation pattern IS the in-body provenance — JT can grep concept pages to find which sources support which claims; source pages have `provenance.source` to distinguish Readwise-derived from vault-derived material.
+**In-body provenance via citation:** every claim in a concept page that derives from a source MUST cite that source via `([[sources/<source-slug>]])`. The citation pattern IS the in-body provenance — JT can grep concept pages to find which sources support which claims; source pages have `provenance.source` in frontmatter to distinguish Readwise-derived from vault-derived material.
 
 **qmd scope distinction by skill:**
 - `/wiki-query` — primary `mcp__qmd__query -c wiki`; secondary `mcp__qmd__query -c general` for cross-reference surfacing only

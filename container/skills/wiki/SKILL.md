@@ -7,11 +7,11 @@ When JT invokes `/wiki-ingest`, process one source from Readwise (or naturally-p
 The wiki has three layers under `wiki/` (host: `~/vault/general/wiki/`):
 
 1. **`wiki/raw/<doc-id>.md`** — Immutable source archive. Read-only after write. Karpathy line 52: *"This is your source of truth."*
-2. **`wiki/sources/<doc-id>.md`** — Per-source summary pages. One per ingested source. Frontmatter carries `provenance` + source attribution.
-3. **`wiki/<topic-slug>.md`** — Concept/entity pages built across multiple sources. The Karpathy compounding layer. Topic-themed slug (e.g., `retirement-tax-efficiency.md`). Cite each source via `([[sources/<doc-id>]])`.
+2. **`wiki/sources/<source-slug>.md`** — Per-source summary pages. One per ingested source. **Filename is a human-readable kebab-case slug derived from the article title** (NOT the Readwise doc ID — that lives in frontmatter). Frontmatter carries `source-id` (doc ID), `provenance`, source attribution. See §"Source-summary slug rules" below.
+3. **`wiki/<topic-slug>.md`** — Concept/entity pages built across multiple sources. The Karpathy compounding layer. Topic-themed slug (e.g., `retirement-tax-efficiency.md`). Cite each source via `([[sources/<source-slug>]])` — readable inline.
 
 Plus three navigation/meta files:
-- **`wiki/home.md`** — Human narrative entry point. Updated when the picture shifts.
+- **`wiki/!home.md`** — Human narrative entry point. Updated when the picture shifts.
 - **`wiki/!index.md`** — Agent catalog. Updated every ingest.
 - **`wiki/log.md`** — Chronological op log. Append-only bullet format.
 - **`wiki/_processed.json`** — Processed Readwise doc ID ledger.
@@ -71,7 +71,19 @@ Set `truncated: true` in frontmatter. Karpathy mandates raw storage as source-of
 
 ### Step 5 — Write source-summary page
 
-Create `wiki/sources/<doc-id>.md`:
+#### Source-summary slug rules
+
+Filename for the source-summary page is a kebab-case slug derived from the article title — readable in the file tree + readable as a wikilink target. Doc ID lives in frontmatter, NOT in the filename.
+
+1. **Generate slug from title** — kebab-case, lowercase, ASCII-only. Drop punctuation other than hyphens. Soft cap ~50 chars; preserve meaningful tokens; truncate trailing fluff if needed. Examples:
+   - `"The 0% Tax Bracket Most Retirees Walk Right Past"` → `the-0-percent-tax-bracket-most-retirees-walk-right-past`
+   - `"Make It Stick: The Science of Successful Learning"` → `make-it-stick-science-of-successful-learning`
+2. **Collision detection BEFORE writing** — the doc ID, NOT the filename, is the dedup key:
+   - If `_processed.json` already contains this `doc-id`, the source has been ingested. Read the existing `slug` field from `_processed.json` and use it (do NOT re-slug the title — slugs snapshot at first ingest, even if Readwise retitles the article).
+   - If `_processed.json` does NOT contain this doc ID, but the filesystem has `sources/<slug>.md` already (rare, e.g. two different articles with the same title), append `-2`, `-3` to the slug to disambiguate. Record the chosen slug in `_processed.json`.
+3. **Slug snapshot is permanent.** Once recorded in `_processed.json`, never regenerate.
+
+Create `wiki/sources/<source-slug>.md`:
 
 ```yaml
 ---
@@ -116,7 +128,7 @@ This is the load-bearing Karpathy operation. **Every `/wiki-ingest` must do the 
 For each topic/concept this source materially informs:
 
 1. **Determine if a concept page exists** at `wiki/<topic-slug>.md`. If yes, you're updating; if no, you're creating.
-2. **Create or update the concept page** with claims from this source. Each claim cites the source: *"... according to ([[sources/<doc-id>]])."*
+2. **Create or update the concept page** with claims from this source. Each claim cites the source: *"... according to ([[sources/<source-slug>]])."*
 3. **Surgical edits, not rewrites** — when updating an existing concept page, integrate new claims into the existing structure. Don't duplicate sections.
 4. **Cross-link aggressively (no orphans):**
    - The new/updated concept page links OUT to other related concept pages already in the wiki.
@@ -146,12 +158,12 @@ related-pages:
 
 ### Step 7 — Update meta files
 
-1. **`wiki/_processed.json`** — append/update entry: `"<doc-id>": { "ingested_at": "<ISO8601 UTC>", "source_summary": "sources/<doc-id>.md", "concept_pages": ["<topic1>.md", "<topic2>.md"] }`
+1. **`wiki/_processed.json`** — append/update entry: `"<doc-id>": { "ingested_at": "<ISO8601 UTC>", "slug": "<source-slug>", "source_summary": "sources/<source-slug>.md", "concept_pages": ["<topic1>.md", "<topic2>.md"], "raw_archive": "raw/<doc-id>.md" }`. Note: raw archive still uses doc-id naming (programmatic backstop, never browsed); only sources/ uses slug-naming.
 2. **`wiki/!index.md`** — agent catalog. Add new pages with one-line summary; update existing entries if their summary shifted. Group by category (concepts / sources / etc.).
-3. **`wiki/home.md`** — narrative entry point. **Update only if this source materially shifts the wiki's big-picture narrative.** Don't update for incremental additions; do update when a new theme emerges or an existing theme changes shape.
+3. **`wiki/!home.md`** — narrative entry point. **Update only if this source materially shifts the wiki's big-picture narrative.** Don't update for incremental additions; do update when a new theme emerges or an existing theme changes shape.
 4. **`wiki/log.md`** — append a bullet entry per the format established 2026-04-29:
    ```
-   - **<YYYY-MM-DD>** ingest: *<Article Title>* — <source attribution> → `sources/<doc-id>.md` + concept pages: `<topic1>.md`, `<topic2>.md`
+   - **<YYYY-MM-DD>** ingest: *<Article Title>* — <source attribution> → `sources/<source-slug>.md` + concept pages: `<topic1>.md`, `<topic2>.md`
    ```
 
 ### Step 8 — Report to JT

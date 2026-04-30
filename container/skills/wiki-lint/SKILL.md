@@ -60,7 +60,7 @@ Always append a bullet entry per the format established 2026-04-29:
 
 ## What you MUST NOT do
 
-- **Do NOT modify wiki page content beyond adding/fixing wikilinks** in concept and source pages. Don't rewrite prose; don't touch `home.md`'s narrative.
+- **Do NOT modify wiki page content beyond adding/fixing wikilinks** in concept and source pages. Don't rewrite prose; don't touch `!home.md`'s narrative.
 - **Do NOT auto-correct contradictions or stale claims** — editorial judgment required.
 - **Do NOT touch `wiki/raw/`** — immutable per Karpathy.
 - **Do NOT write to vault dimensions outside `wiki/`.**
