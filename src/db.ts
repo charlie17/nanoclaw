@@ -164,6 +164,15 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // Add retry_count column if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN retry_count INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
 }
 
 export function initDatabase(): void {
@@ -544,6 +553,24 @@ export function updateTask(
   db.prepare(
     `UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`,
   ).run(...values);
+}
+
+export function setRetryState(
+  id: string,
+  retryCount: number,
+  nextRun?: string,
+): void {
+  if (nextRun !== undefined) {
+    db
+      .prepare(
+        `UPDATE scheduled_tasks SET retry_count = ?, next_run = ? WHERE id = ?`,
+      )
+      .run(retryCount, nextRun, id);
+  } else {
+    db
+      .prepare(`UPDATE scheduled_tasks SET retry_count = ? WHERE id = ?`)
+      .run(retryCount, id);
+  }
 }
 
 export function deleteTask(id: string): void {

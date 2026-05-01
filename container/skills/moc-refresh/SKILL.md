@@ -10,10 +10,10 @@ Per pre-pass A11 + scope plan §6 + BA §F12. Three explicit tiers + one extensi
 
 | MOC | Scope | Links to |
 |---|---|---|
-| `general/index.md` (hub) | Top-level entry point | All domain MOCs (`logs/index.md`, `reference/index.md`, `projects/{name}/index.md` for each project) |
-| `logs/index.md` | Log-domain MOC | Each `logs/<domain>.md` file (arts, pops, mpm, dogs, family, gifts, slaters, sawyer, poker, coding) |
-| `reference/index.md` | Reference-area MOC | Single-file areas (coding, quotes, facts-stats, remember, org-approach, family-watchlist, reading-list, food) + folder areas (learning/, travel/, house/) |
-| `projects/{name}/index.md` | Per-project MOC | Files inside that project's folder (next.md, notes/, etc.) |
+| `general/!index.md` (hub) | Top-level entry point | All domain MOCs (`logs/!index.md`, `reference/!index.md`, `projects/{name}/!index.md` for each project) |
+| `logs/!index.md` | Log-domain MOC | Each `logs/<domain>.md` file (arts, pops, mpm, dogs, family, gifts, slaters, sawyer, poker, coding) |
+| `reference/!index.md` | Reference-area MOC | Single-file areas (coding, quotes, facts-stats, remember, org-approach, family-watchlist, reading-list, food) + folder areas (learning/, travel/, house/) |
+| `projects/{name}/!index.md` | Per-project MOC | Files inside that project's folder (next.md, notes/, etc.) |
 
 **OUT OF SCOPE for `/moc-refresh`:**
 - `general/wiki/!index.md` — Karpathy wiki's own catalog. Owned by `/wiki-lint` + `/wiki-ingest`. Do NOT touch.
@@ -74,10 +74,10 @@ For folder-pattern areas (which contain multiple files), point to the folder + g
 - [[reference/house/]] — House topics: renovations, paint colors, vendor contacts, HVAC, etc. <!-- AUTO -->
 ```
 
-For per-project MOC entries inside `general/index.md`, link to the project's own MOC, not directly to project files:
+For per-project MOC entries inside `general/!index.md`, link to the project's own MOC, not directly to project files:
 
 ```
-- [[projects/options/index]] — Trading systems and options strategy work. <!-- AUTO -->
+- [[projects/options/!index]] — Trading systems and options strategy work. <!-- AUTO -->
 ```
 
 ## Standard MOC template
@@ -101,7 +101,7 @@ updated: <YYYY-MM-DD HH:MM ET>
 
 ```
 
-For `general/index.md` (the hub), use a sectioned shape:
+For `general/!index.md` (the hub), use a sectioned shape:
 
 ```markdown
 # Vault hub
@@ -110,13 +110,13 @@ For `general/index.md` (the hub), use a sectioned shape:
 
 ## Domains
 
-- [[logs/index]] — Log domains (arts, pops, family, etc.). Append-only chronological streams. <!-- AUTO -->
-- [[reference/index]] — Evergreen reference (coding, food, house, learning notes, travel guides). <!-- AUTO -->
+- [[logs/!index]] — Log domains (arts, pops, family, etc.). Append-only chronological streams. <!-- AUTO -->
+- [[reference/!index]] — Evergreen reference (coding, food, house, learning notes, travel guides). <!-- AUTO -->
 
 ## Projects
 
-- [[projects/options/index]] — ... <!-- AUTO -->
-- [[projects/daystrom/index]] — ... <!-- AUTO -->
+- [[projects/options/!index]] — ... <!-- AUTO -->
+- [[projects/daystrom/!index]] — ... <!-- AUTO -->
 
 ## Other
 
@@ -128,17 +128,17 @@ For `general/index.md` (the hub), use a sectioned shape:
 Per CLAUDE.md `## Telegram Output Format` — plain-text numbered list, NEVER tables. Report:
 
 ```
-1. general/index.md — created (was missing). 4 orphan domains added with AUTO tags.
-2. logs/index.md — 3 orphans added (coding.md, dogs.md, gifts.md). All AUTO-tagged.
-3. reference/index.md — 1 broken link flagged (reference/old-thing.md → file does not exist). 2 bare links upgraded with AUTO context phrases.
-4. projects/options/index.md — clean. No changes.
-5. projects/daystrom/index.md — created (was missing). 3 orphans added.
+1. general/!index.md — created (was missing). 4 orphan domains added with AUTO tags.
+2. logs/!index.md — 3 orphans added (coding.md, dogs.md, gifts.md). All AUTO-tagged.
+3. reference/!index.md — 1 broken link flagged (reference/old-thing.md → file does not exist). 2 bare links upgraded with AUTO context phrases.
+4. projects/options/!index.md — clean. No changes.
+5. projects/daystrom/!index.md — created (was missing). 3 orphans added.
 
 Total: 2 MOCs created · 9 entries added · 2 entries upgraded · 1 broken link flagged for JT review.
 
 Suggested next actions:
 - Review AUTO-tagged entries (grep `<!-- AUTO -->` across general/) and rewrite phrases that don't match your voice
-- Fix the broken link at reference/index.md (search "old-thing")
+- Fix the broken link at reference/!index.md (search "old-thing")
 ```
 
 If grep would help JT find AUTO entries: include the exact command at the end of the report.
@@ -146,7 +146,7 @@ If grep would help JT find AUTO entries: include the exact command at the end of
 ## What you MUST NOT do
 
 - **Do NOT touch `general/wiki/!index.md`** — Karpathy's wiki system is owned by `/wiki-lint` + `/wiki-ingest`. Wiki ringfence holds.
-- **Do NOT create directories.** Per the no-new-directories write-discipline rule, MOCs only get created inside directories that already exist. If `projects/foo/` doesn't exist, do NOT create `projects/foo/index.md` — flag to JT.
+- **Do NOT create directories.** Per the no-new-directories write-discipline rule, MOCs only get created inside directories that already exist. If `projects/foo/` doesn't exist, do NOT create `projects/foo/!index.md` — flag to JT.
 - **Do NOT overwrite JT-authored context phrases.** Only fill blanks or create AUTO entries.
 - **Do NOT silently delete broken-link entries.** Flag them.
 - **Do NOT touch `quarantine/` or `private/`** — structurally unreachable anyway.

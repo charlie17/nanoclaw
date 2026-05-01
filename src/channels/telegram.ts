@@ -1,5 +1,6 @@
 import fs from 'fs';
 import https from 'https';
+import net from 'net';
 import path from 'path';
 
 import { Api, Bot } from 'grammy';
@@ -45,16 +46,63 @@ async function sendTelegramMessage(
   }
 }
 
+interface PrivateWriteResult {
+  status: 'ok' | 'error';
+  file?: string;
+  entryCount?: number;
+  reason?: string;
+}
+
+async function forwardToPrivateWriteService(
+  text: string,
+): Promise<PrivateWriteResult> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection(
+      '/run/daystrom-private-write.sock',
+      () => {
+        socket.write(JSON.stringify({ text }) + '\n');
+      },
+    );
+
+    let buf = '';
+    socket.on('data', (chunk) => {
+      buf += chunk.toString();
+    });
+    socket.on('end', () => {
+      try {
+        resolve(JSON.parse(buf) as PrivateWriteResult);
+      } catch {
+        resolve({ status: 'error', reason: 'invalid JSON from private-write service' });
+      }
+    });
+    socket.on('error', (err) => {
+      logger.error({ err: err.message }, 'Private-write service connection error');
+      resolve({ status: 'error', reason: 'private-write service unavailable' });
+    });
+    socket.setTimeout(10000, () => {
+      socket.destroy();
+      resolve({ status: 'error', reason: 'private-write service timeout' });
+    });
+  });
+}
+
 export class TelegramChannel implements Channel {
   name = 'telegram';
 
   private bot: Bot | null = null;
+  private privateBot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  private privateBotToken: string | null;
 
-  constructor(botToken: string, opts: TelegramChannelOpts) {
+  constructor(
+    botToken: string,
+    opts: TelegramChannelOpts,
+    privateBotToken: string | null = null,
+  ) {
     this.botToken = botToken;
     this.opts = opts;
+    this.privateBotToken = privateBotToken;
   }
 
   /**
@@ -357,20 +405,74 @@ export class TelegramChannel implements Channel {
     });
 
     // Start polling — returns a Promise that resolves when started
-    return new Promise<void>((resolve) => {
+    const mainConnected = new Promise<void>((resolve) => {
       this.bot!.start({
         onStart: (botInfo) => {
           logger.info(
             { username: botInfo.username, id: botInfo.id },
             'Telegram bot connected',
           );
-          console.log(`\n  Telegram bot: @${botInfo.username}`);
+          console.log(`
+  Telegram bot: @${botInfo.username}`);
           console.log(
-            `  Send /chatid to the bot to get a chat's registration ID\n`,
+            `  Send /chatid to the bot to get a chat's registration ID
+`,
           );
           resolve();
         },
       });
+    });
+
+    if (this.privateBotToken) {
+      this.privateBot = new Bot(this.privateBotToken, {
+        client: {
+          baseFetchConfig: { agent: https.globalAgent, compress: true },
+        },
+      });
+      this.setupPrivateBotHandlers(this.privateBot);
+      this.privateBot.catch((err) => {
+        logger.error({ err: err.message }, 'Private Telegram bot error');
+      });
+      void this.privateBot.start({
+        onStart: (botInfo) => {
+          logger.info(
+            { username: botInfo.username, id: botInfo.id },
+            'Private Telegram bot connected',
+          );
+          console.log(`  Private Telegram bot: @${botInfo.username}
+`);
+        },
+      });
+    }
+
+    return mainConnected;
+  }
+
+  private setupPrivateBotHandlers(bot: Bot): void {
+    const allowedChatId =
+      process.env.DAYSTROM_PRIVATE_ALLOWED_CHAT_ID ?? '';
+
+    bot.on('message:text', async (ctx) => {
+      if (String(ctx.chat.id) !== allowedChatId) {
+        // Unauthorized sender — silent drop, no reply, no log of message body
+        return;
+      }
+      const text = ctx.message.text ?? '';
+      const result = await forwardToPrivateWriteService(text);
+      if (result.status === 'ok') {
+        await ctx.reply(
+          `added entry to ${result.file} (entries now: ${result.entryCount})`,
+        );
+      } else {
+        await ctx.reply(`error: ${result.reason ?? 'unknown error'}`);
+      }
+    });
+
+    // Non-text messages to private bot — brief acknowledgement, no logging
+    bot.on('message', async (ctx) => {
+      if (String(ctx.chat.id) !== allowedChatId) return;
+      if ('text' in ctx.message) return;
+      await ctx.reply('Only text commands are supported by the private bot.');
     });
   }
 
@@ -422,6 +524,10 @@ export class TelegramChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    if (this.privateBot) {
+      this.privateBot.stop();
+      this.privateBot = null;
+    }
     if (this.bot) {
       this.bot.stop();
       this.bot = null;
@@ -441,12 +547,19 @@ export class TelegramChannel implements Channel {
 }
 
 registerChannel('telegram', (opts: ChannelOpts) => {
-  const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN']);
+  const envVars = readEnvFile([
+    'TELEGRAM_BOT_TOKEN',
+    'DAYSTROM_PRIVATE_BOT_TOKEN',
+  ]);
   const token =
     process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
   if (!token) {
     logger.warn('Telegram: TELEGRAM_BOT_TOKEN not set');
     return null;
   }
-  return new TelegramChannel(token, opts);
+  const privateToken =
+    process.env.DAYSTROM_PRIVATE_BOT_TOKEN ||
+    envVars.DAYSTROM_PRIVATE_BOT_TOKEN ||
+    null;
+  return new TelegramChannel(token, opts, privateToken);
 });

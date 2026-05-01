@@ -116,10 +116,18 @@ for rel, fp, _ in all_vault_md:
     except Exception:
         pass
 
+ORPHAN_EXCLUDE_PREFIXES = (
+    'actions/',
+    'logs/daystrom-reports/',
+    'logs/daystrom-reviews/',
+    'tmp/',
+)
+
 orphans = [
     rel for rel, _, _ in all_vault_md
     if os.path.splitext(rel)[0].lower().replace(os.sep, '/') not in referenced
     and os.path.splitext(os.path.basename(rel))[0].lower() not in referenced
+    and not any(rel.replace(os.sep, '/').startswith(p) for p in ORPHAN_EXCLUDE_PREFIXES)
 ]
 
 # Wiki-lint log

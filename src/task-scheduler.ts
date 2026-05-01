@@ -13,6 +13,7 @@ import {
   getDueTasks,
   getTaskById,
   logTaskRun,
+  setRetryState,
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
@@ -230,6 +231,24 @@ async function runTask(
     result,
     error,
   });
+
+  const isSystemTask = task.id.startsWith('daystrom-');
+  const retryCount = task.retry_count ?? 0;
+
+  if (error && isSystemTask) {
+    if (retryCount === 0) {
+      // First failure — schedule retry in 2 minutes, do not advance cron schedule
+      const retryAt = new Date(Date.now() + 120_000).toISOString();
+      setRetryState(task.id, 1, retryAt);
+      logger.info({ taskId: task.id, retryAt }, 'System task failed; scheduling retry in 2 min');
+      return;
+    }
+    // Second failure — reset retry count and fall through to normal cron advance
+    setRetryState(task.id, 0);
+  } else if (!error && retryCount > 0) {
+    // Successful retry — reset counter before advancing to next cron fire
+    setRetryState(task.id, 0);
+  }
 
   const nextRun = computeNextRun(task);
   const resultSummary = error

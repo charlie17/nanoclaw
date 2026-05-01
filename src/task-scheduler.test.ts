@@ -7,6 +7,12 @@ import {
   startSchedulerLoop,
 } from './task-scheduler.js';
 
+vi.mock('./container-runner.js', () => ({
+  runContainerAgent: vi.fn(),
+  writeTasksSnapshot: vi.fn(),
+}));
+
+
 describe('task scheduler', () => {
   beforeEach(() => {
     _initTestDatabase();
@@ -125,5 +131,154 @@ describe('task scheduler', () => {
     const offset =
       (new Date(nextRun!).getTime() - new Date(scheduledTime).getTime()) % ms;
     expect(offset).toBe(0);
+  });
+
+  describe('system-task retry policy', () => {
+    const makeSystemTask = (id = 'daystrom-test-task') => {
+      createTask({
+        id,
+        group_folder: 'daystrom',
+        chat_jid: 'tg:8669367924',
+        prompt: '/nightly-report',
+        schedule_type: 'cron',
+        schedule_value: '0 5 * * *',
+        context_mode: 'isolated',
+        next_run: new Date(Date.now() - 1000).toISOString(),
+        status: 'active',
+        created_at: new Date().toISOString(),
+      });
+    };
+
+    const makeUserTask = (id = 'task-user-remind-1') => {
+      createTask({
+        id,
+        group_folder: 'daystrom',
+        chat_jid: 'tg:8669367924',
+        prompt: '/remind test',
+        schedule_type: 'once',
+        schedule_value: new Date(Date.now() - 1000).toISOString(),
+        context_mode: 'isolated',
+        next_run: new Date(Date.now() - 1000).toISOString(),
+        status: 'active',
+        created_at: new Date().toISOString(),
+      });
+    };
+
+    const makeDeps = () => ({
+      registeredGroups: () => ({
+        'tg:8669367924': {
+          jid: 'tg:8669367924',
+          name: 'Daystrom',
+          folder: 'daystrom',
+          triggerPattern: '@Daystrom',
+          requiresTrigger: false,
+          isMain: true,
+          containerConfig: {},
+        } as any,
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: vi.fn(
+          (_jid: string, _taskId: string, fn: () => Promise<void>) => {
+            void fn();
+          },
+        ),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      onProcess: vi.fn(),
+      sendMessage: vi.fn(async () => {}),
+    });
+
+    it('system task error → retry scheduled at now+120s, does not advance cron', async () => {
+      const { runContainerAgent } = await import('./container-runner.js');
+      vi.mocked(runContainerAgent).mockResolvedValue({
+        status: 'error',
+        error: 'Container exited with code 137',
+        result: null,
+      });
+      makeSystemTask();
+      startSchedulerLoop(makeDeps() as any);
+      await vi.advanceTimersByTimeAsync(50);
+
+      const task = getTaskById('daystrom-test-task');
+      expect(task?.retry_count).toBe(1);
+      const nextRun = new Date(task!.next_run!).getTime();
+      const expected = Date.now() + 120_000;
+      expect(Math.abs(nextRun - expected)).toBeLessThan(5000);
+    });
+
+    it('system task retry failure → retry_count resets, next_run advances to cron', async () => {
+      const { runContainerAgent } = await import('./container-runner.js');
+      vi.mocked(runContainerAgent).mockResolvedValue({
+        status: 'error',
+        error: 'Container exited with code 137',
+        result: null,
+      });
+      makeSystemTask('daystrom-double-fail');
+      startSchedulerLoop(makeDeps() as any);
+      await vi.advanceTimersByTimeAsync(50);
+
+      const afterFirst = getTaskById('daystrom-double-fail');
+      expect(afterFirst?.retry_count).toBe(1);
+
+      // Simulate retry tick: reset loop, manually set next_run to past, fire again
+      _resetSchedulerLoopForTests();
+      // The scheduler reads next_run from DB; advance time past the retry window
+      await vi.advanceTimersByTimeAsync(121_000);
+      await vi.advanceTimersByTimeAsync(50);
+
+      const afterSecond = getTaskById('daystrom-double-fail');
+      expect(afterSecond?.retry_count ?? 0).toBe(0);
+      // next_run should now be a future cron fire, not another +120s
+      const nextRun = new Date(afterSecond!.next_run!).getTime();
+      expect(nextRun).toBeGreaterThan(Date.now() + 60_000);
+    });
+
+    it('user /remind task error → no retry, once-task completes', async () => {
+      const { runContainerAgent } = await import('./container-runner.js');
+      vi.mocked(runContainerAgent).mockResolvedValue({
+        status: 'error',
+        error: 'Some error',
+        result: null,
+      });
+      makeUserTask();
+      startSchedulerLoop(makeDeps() as any);
+      await vi.advanceTimersByTimeAsync(50);
+
+      const task = getTaskById('task-user-remind-1');
+      expect(task?.retry_count ?? 0).toBe(0);
+      expect(task?.status).toBe('completed');
+    });
+
+    it('system task success → no retry, retry_count stays 0, next_run advances to cron', async () => {
+      const { runContainerAgent } = await import('./container-runner.js');
+      vi.mocked(runContainerAgent).mockResolvedValue({
+        status: 'success',
+        result: 'Done',
+      });
+      makeSystemTask('daystrom-success-task');
+      startSchedulerLoop(makeDeps() as any);
+      await vi.advanceTimersByTimeAsync(50);
+
+      const task = getTaskById('daystrom-success-task');
+      expect(task?.retry_count ?? 0).toBe(0);
+      const nextRun = new Date(task!.next_run!).getTime();
+      expect(nextRun).toBeGreaterThan(Date.now() + 60_000);
+    });
+
+    it('non-system task success → retry_count stays 0', async () => {
+      const { runContainerAgent } = await import('./container-runner.js');
+      vi.mocked(runContainerAgent).mockResolvedValue({
+        status: 'success',
+        result: 'Done',
+      });
+      makeUserTask('task-user-success-1');
+      startSchedulerLoop(makeDeps() as any);
+      await vi.advanceTimersByTimeAsync(50);
+
+      const task = getTaskById('task-user-success-1');
+      expect(task?.retry_count ?? 0).toBe(0);
+    });
   });
 });

@@ -79,7 +79,7 @@ If done.md paths present: Read each at `/workspace/extra/vault/<path>`, extract 
 
 ### 2. Actions Review
 
-Read `data.components['2'].actions_files`. For each entry, Read `/workspace/extra/vault/<path>`. Surface all open (unchecked `- [ ]`) todos grouped by file. Highlight any dated before `data.window_start` as potentially overdue.
+Read `data.components['2'].actions_files`. For each entry, Read `/workspace/extra/vault/<path>`. Surface all open (unchecked `- [ ]`) todos grouped by file. Render each open item as a plain bullet (`- item text`) — do NOT include the `[ ]` checkbox in the output (the checkbox would imply interactivity that can't propagate back to the source file). Highlight any dated before `data.window_start` as potentially overdue.
 
 Cross-reference `mtime_iso` — action files not touched since before `data.window_start` are candidates for stale-item callout (the file as a whole hasn't moved this review window, beyond any individual dated items).
 
@@ -87,7 +87,14 @@ Empty-state (no action files): "No action files found in vault."
 
 ### 3. Logs Highlights
 
-Read `data.components['3'].log_files_in_window`. For each path, Read `/workspace/extra/vault/<path>`. Summarize entries created during the review window (use entry dates, not file mtime). One bullet per log file.
+Read `data.components['3'].log_files_in_window`. For each path, Read `/workspace/extra/vault/<path>`. One bullet per log file. Format: **`<path>`** — <≤8-word recap of WHAT was touched, NOT a content restatement>.
+
+Examples:
+- **`mpm.md`** — care meeting notes + cognition score change.
+- **`pops.md`** — MC transition coordinator call.
+- **`arts.md`** — Hacks finale + Succession start + hockey.
+
+Do NOT restate the contents of entries. Names, scores, specific details belong in the source file — the weekly review surfaces *what was touched*, not *what was said*.
 
 Empty-state: "No log files updated since last review."
 
@@ -96,7 +103,7 @@ Empty-state: "No log files updated since last review."
 If `data.components['4'].convention_not_adopted` is true — emit this exact text, no paraphrase:
 > "No project runway surfaced (next.md convention not yet adopted in vault)."
 
-If next.md paths present: Read each, synthesize open project priorities + items.
+If next.md paths present: Read each, synthesize open project priorities + items. Render open items as plain bullets (`- item text`) — do NOT include `[ ]` checkbox in output.
 
 ### 5. Pattern Recognition
 
@@ -186,19 +193,26 @@ Challenge priorities that conflict with the data (e.g., do not propose a goal wi
 
 ### Big 5 Personality Diagnostic (closing section)
 
-H2: `## Big 5 Personality Diagnostic`
+H2: `## Big 5 Personality Diagnostic (Daystrom self-assessment)`
 
-Self-assessment across 5 dimensions, one sentence each with score x/5. Ground scores in the conversation patterns visible in Component 10 data.
+**This is Daystrom's self-assessment of its own behavior in the review window. Score Daystrom, NOT JT.** Ground scores in Component 10 messages — look at how Daystrom responded across the window: did it follow through on multi-step skill calls, did it push back appropriately, did it stay focused, etc.
 
-- **Openness** — receptiveness to new ideas, curiosity, exploration
-- **Conscientiousness** — follow-through on todos, systematic planning, discipline
-- **Extraversion** — initiative in conversation, social engagement signals
-- **Agreeableness** — collaboration, flexibility, responsiveness
-- **Neuroticism** — stress signals, frustration patterns, reactivity
+One sentence per dimension with score x/5:
 
-Example: `Conscientiousness: 3/5 — 4 todos from last week carried forward without resolution.`
+- **Openness** — Daystrom's willingness to explore novel skill invocations, novel routing decisions, unusual conversational territory.
+- **Conscientiousness** — Daystrom's follow-through on multi-step operations (full-ripple ingests, skill chains). Did Daystrom complete what it started?
+- **Extraversion** — Daystrom's initiative in conversation. Did Daystrom proactively surface signals JT didn't ask for, or did it stay reactive?
+- **Agreeableness** — Daystrom's pushback discipline. Did Daystrom push back on JT when warranted (per `feedback_no_sweeping_under_rug`), or did it roll over?
+- **Neuroticism** — Daystrom's stability under load (slow-skill-ack lapses, going-dark mid-task, repeated apologies). Lower is better.
 
-Be honest. Do not inflate scores to be encouraging.
+Examples (good — assess Daystrom):
+- `Conscientiousness: 4/5 — Daystrom completed full ripple on both wiki ingests this week, but missed the raw-archive backfill on the first one until JT prompted.`
+- `Neuroticism: 2/5 — Three "are you there" prompts during long-running operations indicate occasional going-dark; otherwise stable.`
+
+Examples (bad — DO NOT do this; this is assessing JT):
+- `Conscientiousness: 3/5 — 14 stale todos this week.` ← wrong subject; that's JT.
+
+Be honest. Do not inflate scores. If a dimension can't be assessed from this week's messages, write `Neuroticism: insufficient signal — Daystrom was largely passive this week.`
 
 ## Quarterly model-pin review banner
 
