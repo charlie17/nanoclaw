@@ -570,6 +570,9 @@ registerChannel('telegram', (opts: ChannelOpts) => {
     process.env.DAYSTROM_PRIVATE_BOT_TOKEN ||
     envVars.DAYSTROM_PRIVATE_BOT_TOKEN ||
     null;
-  const privateAllowedChatId = process.env.DAYSTROM_PRIVATE_ALLOWED_CHAT_ID || envVars.DAYSTROM_PRIVATE_ALLOWED_CHAT_ID || '';
+  const privateAllowedChatId =
+    process.env.DAYSTROM_PRIVATE_ALLOWED_CHAT_ID ||
+    envVars.DAYSTROM_PRIVATE_ALLOWED_CHAT_ID ||
+    '';
   return new TelegramChannel(token, opts, privateToken, privateAllowedChatId);
 });

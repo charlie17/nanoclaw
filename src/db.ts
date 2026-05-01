@@ -577,9 +577,9 @@ export function setRetryState(
     values.push(lastResult);
   }
   values.push(id);
-  db.prepare(`UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`).run(
-    ...values,
-  );
+  db.prepare(
+    `UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`,
+  ).run(...values);
 }
 
 export function deleteTask(id: string): void {
