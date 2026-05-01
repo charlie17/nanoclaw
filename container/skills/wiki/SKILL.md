@@ -8,7 +8,7 @@ The wiki has three layers under `wiki/` (host: `~/vault/general/wiki/`):
 
 1. **`wiki/raw/<doc-id>.md`** — Immutable source archive. Read-only after write. Karpathy line 52: *"This is your source of truth."*
 2. **`wiki/sources/<source-slug>.md`** — Per-source summary pages. One per ingested source. **Filename is a human-readable kebab-case slug derived from the article title** (NOT the Readwise doc ID — that lives in frontmatter). Frontmatter carries `source-id` (doc ID), `provenance`, source attribution. See §"Source-summary slug rules" below.
-3. **`wiki/<topic-slug>.md`** — Concept/entity pages built across multiple sources. The Karpathy compounding layer. Topic-themed slug (e.g., `retirement-tax-efficiency.md`). Cite each source via `([[sources/<source-slug>]])` — readable inline.
+3. **`wiki/<topic-slug>.md`** — Concept/entity pages built across multiple sources. The Karpathy compounding layer. Topic-themed slug (e.g., `retirement-tax-efficiency.md`). Cite each source via Obsidian footnotes (see §"Citation pattern — footnotes" below).
 
 Plus three navigation/meta files:
 - **`wiki/!home.md`** — Human narrative entry point. Updated when the picture shifts.
@@ -121,14 +121,62 @@ related-pages:
 <Vault content that surfaced via qmd, with provenance attribution>
 ```
 
-### Step 6 — Full-ripple propagation (MANDATORY EVERY RUN)
+## Citation pattern — footnotes
+
+**Concept pages cite sources via Obsidian footnotes, NOT via repeated inline `[[sources/<slug>]]` links.** The repeated inline pattern was used in early ingests (Apr 29, 2026) and produced visual clutter — a single source could be cited 7+ times on one page. Migrated to footnotes 2026-05-01 per JT directive.
+
+### Pattern
+
+For each source cited on a concept page:
+
+1. **Pick a stable footnote key** for the source — short, lowercase, kebab-case if multi-word. Conventions:
+   - Author surname (e.g., `gardner` for Tyler Gardner).
+   - First distinctive slug word if author is unknown or generic (e.g., `sbloc` if no author identified).
+   - If two cited sources collide on key, append disambiguator (e.g., `gardner-2026-04`).
+   - Record the chosen key in the source-summary frontmatter as `wiki-key: <key>` so future re-ingests of the same source reuse it.
+
+2. **First reference** to the source on the page: include the full wikilink AND the footnote anchor.
+   ```
+   ... according to [[sources/the-0-percent-tax-bracket-most-retirees-walk-right-past]][^gardner].
+   ```
+
+3. **Subsequent references** on the same page: footnote anchor only.
+   ```
+   ... per Mechanism #2[^gardner].
+   ```
+
+4. **Bottom of page** — a `## Sources informing this page` H2 section with one footnote definition per source:
+   ```
+   ## Sources informing this page
+
+   [^gardner]: [[sources/the-0-percent-tax-bracket-most-retirees-walk-right-past]] — Tyler Gardner, *Your Money Guide on the Side*: all five core mechanisms.
+   [^kawashima]: [[sources/securities-based-line-of-credit]] — Chris Kawashima, *Schwab Center for Financial Research*: SBLOC mechanics + use cases.
+   ```
+
+   The footnote definition lines REPLACE the previous bullet-list catalog (same content, footnote syntax). Obsidian renders the inline `[^gardner]` as a clickable superscript number that jumps to the def.
+
+### Why footnotes
+
+- **Visual cleanliness.** Inline `[[sources/<long-slug>]]` repeated 7× on one page is unreadable; `[^gardner]` is unobtrusive.
+- **Single source of truth.** The footnote definitions at the bottom replace the prior `## Sources informing this page` bullet list — same content, single representation.
+- **First-reference context preserved.** The first inline use still shows the full source link, so a reader scanning the page top-to-bottom sees the source name explicitly. Re-references after that are compact.
+- **Obsidian-native.** No plugin required; standard markdown footnote syntax that Obsidian renders out-of-box.
+
+### What NOT to do
+
+- Do NOT use `([[sources/<slug>]])` parenthesized inline citations (the legacy Apr 29, 2026 pattern). All concept pages migrated to footnotes 2026-05-01.
+- Do NOT use plain numeric footnote keys (`[^1]`, `[^2]`) — they are not stable across edits (insertion of a new source between `[^1]` and `[^2]` forces renumbering). Always use named keys.
+- Do NOT duplicate the source in BOTH the footnote def AND a bullet list at the bottom — the footnote defs ARE the source catalog now.
+
+
+## Step 6 — Full-ripple propagation (MANDATORY EVERY RUN)
 
 This is the load-bearing Karpathy operation. **Every `/wiki-ingest` must do the full ripple — no shortcuts, no "I'll come back later," no skipping.** Per Karpathy line 60: *"a single source might touch 10-15 wiki pages."*
 
 For each topic/concept this source materially informs:
 
 1. **Determine if a concept page exists** at `wiki/<topic-slug>.md`. If yes, you're updating; if no, you're creating.
-2. **Create or update the concept page** with claims from this source. Each claim cites the source: *"... according to ([[sources/<source-slug>]])."*
+2. **Create or update the concept page** with claims from this source. Each claim cites the source via the footnote pattern below.
 3. **Surgical edits, not rewrites** — when updating an existing concept page, integrate new claims into the existing structure. Don't duplicate sections.
 4. **Cross-link aggressively (no orphans):**
    - The new/updated concept page links OUT to other related concept pages already in the wiki.
