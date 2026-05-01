@@ -12,7 +12,6 @@ vi.mock('./container-runner.js', () => ({
   writeTasksSnapshot: vi.fn(),
 }));
 
-
 describe('task scheduler', () => {
   beforeEach(() => {
     _initTestDatabase();
@@ -279,6 +278,53 @@ describe('task scheduler', () => {
 
       const task = getTaskById('task-user-success-1');
       expect(task?.retry_count ?? 0).toBe(0);
+    });
+
+    it('system task first failure → last_run + last_result reflect failed attempt (SF-5)', async () => {
+      const { runContainerAgent } = await import('./container-runner.js');
+      vi.mocked(runContainerAgent).mockResolvedValue({
+        status: 'error',
+        error: 'Container exited with code 137',
+        result: null,
+      });
+      makeSystemTask('daystrom-sf5-task');
+      startSchedulerLoop(makeDeps() as any);
+      await vi.advanceTimersByTimeAsync(50);
+
+      const task = getTaskById('daystrom-sf5-task');
+      expect(task?.retry_count).toBe(1);
+      expect(task?.last_run).not.toBeNull();
+      expect(task?.last_result).toBe('Error: Container exited with code 137');
+    });
+
+    it('system task with interval schedule → no retry on error (SF-6)', async () => {
+      const { runContainerAgent } = await import('./container-runner.js');
+      vi.mocked(runContainerAgent).mockResolvedValue({
+        status: 'error',
+        error: 'Some error',
+        result: null,
+      });
+      createTask({
+        id: 'daystrom-interval-task',
+        group_folder: 'daystrom',
+        chat_jid: 'tg:8669367924',
+        prompt: '/some-skill',
+        schedule_type: 'interval',
+        schedule_value: '3600000',
+        context_mode: 'isolated',
+        next_run: new Date(Date.now() - 1000).toISOString(),
+        status: 'active',
+        created_at: new Date().toISOString(),
+      });
+      startSchedulerLoop(makeDeps() as any);
+      await vi.advanceTimersByTimeAsync(50);
+
+      const task = getTaskById('daystrom-interval-task');
+      // Interval tasks must NOT retry — retry_count stays 0
+      expect(task?.retry_count ?? 0).toBe(0);
+      // next_run should be the next interval fire (not now+120s)
+      const nextRun = new Date(task!.next_run!).getTime();
+      expect(nextRun).toBeGreaterThan(Date.now() + 60_000);
     });
   });
 });

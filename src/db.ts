@@ -559,18 +559,27 @@ export function setRetryState(
   id: string,
   retryCount: number,
   nextRun?: string,
+  lastRun?: string,
+  lastResult?: string,
 ): void {
+  const fields: string[] = ['retry_count = ?'];
+  const values: unknown[] = [retryCount];
   if (nextRun !== undefined) {
-    db
-      .prepare(
-        `UPDATE scheduled_tasks SET retry_count = ?, next_run = ? WHERE id = ?`,
-      )
-      .run(retryCount, nextRun, id);
-  } else {
-    db
-      .prepare(`UPDATE scheduled_tasks SET retry_count = ? WHERE id = ?`)
-      .run(retryCount, id);
+    fields.push('next_run = ?');
+    values.push(nextRun);
   }
+  if (lastRun !== undefined) {
+    fields.push('last_run = ?');
+    values.push(lastRun);
+  }
+  if (lastResult !== undefined) {
+    fields.push('last_result = ?');
+    values.push(lastResult);
+  }
+  values.push(id);
+  db.prepare(`UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`).run(
+    ...values,
+  );
 }
 
 export function deleteTask(id: string): void {

@@ -233,14 +233,20 @@ async function runTask(
   });
 
   const isSystemTask = task.id.startsWith('daystrom-');
+  const isCronTask = task.schedule_type === 'cron';
   const retryCount = task.retry_count ?? 0;
 
-  if (error && isSystemTask) {
+  if (error && isSystemTask && isCronTask) {
     if (retryCount === 0) {
-      // First failure — schedule retry in 2 minutes, do not advance cron schedule
+      // First failure — schedule retry in 2 minutes, do not advance cron schedule.
+      // Also record last_run + last_result so the failed attempt is visible.
       const retryAt = new Date(Date.now() + 120_000).toISOString();
-      setRetryState(task.id, 1, retryAt);
-      logger.info({ taskId: task.id, retryAt }, 'System task failed; scheduling retry in 2 min');
+      const now = new Date().toISOString();
+      setRetryState(task.id, 1, retryAt, now, `Error: ${error}`);
+      logger.info(
+        { taskId: task.id, retryAt },
+        'System task failed; scheduling retry in 2 min',
+      );
       return;
     }
     // Second failure — reset retry count and fall through to normal cron advance

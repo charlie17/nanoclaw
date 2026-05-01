@@ -58,7 +58,7 @@ async function forwardToPrivateWriteService(
 ): Promise<PrivateWriteResult> {
   return new Promise((resolve) => {
     const socket = net.createConnection(
-      '/run/daystrom-private-write.sock',
+      '/run/daystrom-private-write/socket',
       () => {
         socket.write(JSON.stringify({ text }) + '\n');
       },
@@ -72,11 +72,17 @@ async function forwardToPrivateWriteService(
       try {
         resolve(JSON.parse(buf) as PrivateWriteResult);
       } catch {
-        resolve({ status: 'error', reason: 'invalid JSON from private-write service' });
+        resolve({
+          status: 'error',
+          reason: 'invalid JSON from private-write service',
+        });
       }
     });
     socket.on('error', (err) => {
-      logger.error({ err: err.message }, 'Private-write service connection error');
+      logger.error(
+        { err: err.message },
+        'Private-write service connection error',
+      );
       resolve({ status: 'error', reason: 'private-write service unavailable' });
     });
     socket.setTimeout(10000, () => {
@@ -94,15 +100,18 @@ export class TelegramChannel implements Channel {
   private opts: TelegramChannelOpts;
   private botToken: string;
   private privateBotToken: string | null;
+  private privateAllowedChatId: string;
 
   constructor(
     botToken: string,
     opts: TelegramChannelOpts,
     privateBotToken: string | null = null,
+    privateAllowedChatId: string = '',
   ) {
     this.botToken = botToken;
     this.opts = opts;
     this.privateBotToken = privateBotToken;
+    this.privateAllowedChatId = privateAllowedChatId;
   }
 
   /**
@@ -449,8 +458,7 @@ export class TelegramChannel implements Channel {
   }
 
   private setupPrivateBotHandlers(bot: Bot): void {
-    const allowedChatId =
-      process.env.DAYSTROM_PRIVATE_ALLOWED_CHAT_ID ?? '';
+    const allowedChatId = this.privateAllowedChatId;
 
     bot.on('message:text', async (ctx) => {
       if (String(ctx.chat.id) !== allowedChatId) {
@@ -550,6 +558,7 @@ registerChannel('telegram', (opts: ChannelOpts) => {
   const envVars = readEnvFile([
     'TELEGRAM_BOT_TOKEN',
     'DAYSTROM_PRIVATE_BOT_TOKEN',
+    'DAYSTROM_PRIVATE_ALLOWED_CHAT_ID',
   ]);
   const token =
     process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
@@ -561,5 +570,6 @@ registerChannel('telegram', (opts: ChannelOpts) => {
     process.env.DAYSTROM_PRIVATE_BOT_TOKEN ||
     envVars.DAYSTROM_PRIVATE_BOT_TOKEN ||
     null;
-  return new TelegramChannel(token, opts, privateToken);
+  const privateAllowedChatId = process.env.DAYSTROM_PRIVATE_ALLOWED_CHAT_ID || envVars.DAYSTROM_PRIVATE_ALLOWED_CHAT_ID || '';
+  return new TelegramChannel(token, opts, privateToken, privateAllowedChatId);
 });
