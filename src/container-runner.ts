@@ -358,6 +358,12 @@ export async function runContainerAgent(
   input: ContainerInput,
   onProcess: (proc: ChildProcess, containerName: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  // JT: Optional callback for SDK rate-limit events. Wired by index.ts to
+  // JT: surface "Anthropic rate-limited; backing off" alerts to the operator
+  // JT: BEFORE the watchdog mistakes the silent backoff for a stuck container.
+  // JT: Idempotent per container — caller-side suppression is unnecessary
+  // JT: because we only fire once per container's first observed event.
+  onRateLimitEvent?: (groupJid: string) => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
@@ -475,11 +481,26 @@ export async function runContainerAgent(
       }
     });
 
+    let rateLimitNotified = false;
     container.stderr.on('data', (data) => {
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
         if (line) logger.debug({ container: group.folder }, line);
+        // JT: Detect SDK rate_limit_event and surface to operator once per
+        // JT: container. agent-runner stderr format:
+        // JT:   [agent-runner] [msg #N] type=rate_limit_event
+        // JT: Idempotent — only fires the first time per container so a
+        // JT: sustained rate-limit storm produces one ping, not many.
+        if (
+          !rateLimitNotified &&
+          onRateLimitEvent &&
+          input.chatJid &&
+          /type=rate_limit_event\b/.test(line)
+        ) {
+          rateLimitNotified = true;
+          onRateLimitEvent(input.chatJid);
+        }
       }
       // Don't reset timeout on stderr — SDK writes debug logs continuously.
       // Timeout only resets on actual output (OUTPUT_MARKER in stdout).

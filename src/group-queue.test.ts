@@ -629,7 +629,7 @@ describe('GroupQueue', () => {
     warnSpy.mockRestore();
   });
 
-  it('single-chat retry-storm watchdog force-stops container with no output for 5 minutes when not idle', async () => {
+  it('single-chat retry-storm watchdog force-stops container with no output for 10 minutes when not idle', async () => {
     const { stopContainer } = await import('./container-runtime.js');
     const stopMock = vi.mocked(stopContainer);
     stopMock.mockClear();
@@ -651,8 +651,8 @@ describe('GroupQueue', () => {
       'daystrom',
     );
 
-    // Active container, no output, no idle — advance to 5 minutes
-    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    // Active container, no output, no idle — advance to 10 minutes
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
     expect(stopMock).toHaveBeenCalledWith('nanoclaw-daystrom-noutout');
     expect(stopMock).toHaveBeenCalledTimes(1);
 
@@ -684,7 +684,7 @@ describe('GroupQueue', () => {
 
     // Enter idle-wait — watchdog should NOT fire even after deadline elapses
     queue.notifyIdle('A@g.us');
-    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1000);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1000);
     expect(stopMock).not.toHaveBeenCalled();
 
     resolveProcess();
@@ -714,13 +714,13 @@ describe('GroupQueue', () => {
     );
 
     // Advance most of the deadline, then mark output → watchdog resets
-    await vi.advanceTimersByTimeAsync(4 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
     queue.markOutputReceived('A@g.us');
     // Advance past where original deadline would have fired — watchdog should not fire
     await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
     expect(stopMock).not.toHaveBeenCalled();
-    // Advance another 3 minutes (total 5min since reset) — now it should fire
-    await vi.advanceTimersByTimeAsync(3 * 60 * 1000);
+    // Advance another 8 minutes (total 10min since reset) — now it should fire
+    await vi.advanceTimersByTimeAsync(8 * 60 * 1000);
     expect(stopMock).toHaveBeenCalledWith('nanoclaw-daystrom-resettest');
 
     resolveProcess();

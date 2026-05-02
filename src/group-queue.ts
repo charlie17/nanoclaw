@@ -13,18 +13,18 @@ import { logger } from './logger.js';
  * query iterations. */
 const CLOSE_STDIN_DEADLINE_MS = 30_000;
 
-/** FU-Single-chat retry-storm watchdog: if the container has produced no SDK
- * output within this window AND is not in idle-wait state (i.e., it should
- * be processing), force docker stop. Catches single-chat scenarios where
- * FU-30's closeStdin path is never triggered (no other chat waiting), but
- * an Anthropic 5xx retry-storm has the SDK silently retrying for many
- * minutes with the container alive but unproductive. Reset on every output;
- * cleared when container goes idle (idle is the persistent-container UX
- * win — agent finished current turn, waiting for follow-up). 5 minutes is
- * long enough for normal queries (incl. multi-tool deep-research) under
- * load but short enough that a stuck retry-storm doesn't hold the chat
- * surface for an unbounded window. */
-const NO_OUTPUT_DEADLINE_MS = 5 * 60 * 1000;
+/** Single-chat no-output watchdog: if the container has produced no SDK
+ * result within this window AND is not in idle-wait state, force docker stop.
+ * Backstop only — the primary liveness signal is the agent emitting
+ * heartbeat status outputs every ~120s during long phases (per
+ * container/skills/wiki/SKILL.md §Progress pings). Each heartbeat resets
+ * this timer naturally. So the threshold needs to be a multiple of the
+ * heartbeat cadence to tolerate occasional skipped heartbeats (e.g., during
+ * the few seconds of rate-limit backoff). 10 min = ~5 missed heartbeats =
+ * definitive stuck signal. JT 2026-05-02 directive: long runtimes are fine
+ * as long as heartbeats prove progress; the watchdog should catch true-stuck
+ * cases, not rate-limit you out of long-but-honest work. */
+const NO_OUTPUT_DEADLINE_MS = 10 * 60 * 1000;
 
 interface QueuedTask {
   id: string;
@@ -48,6 +48,11 @@ interface GroupState {
   retryCount: number;
   closeStdinDeadline: NodeJS.Timeout | null;
   noOutputDeadline: NodeJS.Timeout | null;
+  // JT: Consecutive watchdog kills on this chat. Resets to 0 on any agent
+  // JT: output (success path). Used to distinguish "first hang" alert
+  // JT: wording from "second hang" / "third+ hang" — the difference between
+  // JT: a one-off retry-storm vs. a stuck task that needs operator action.
+  consecutiveHangs: number;
 }
 
 /** Per-folder mutex; getWaiterCount excludes the current holder. */
@@ -135,6 +140,7 @@ export class GroupQueue {
         retryCount: 0,
         closeStdinDeadline: null,
         noOutputDeadline: null,
+        consecutiveHangs: 0,
       };
       this.groups.set(groupJid, state);
     }
@@ -252,10 +258,12 @@ export class GroupQueue {
   }
 
   /** Called from the host's onOutput callback when the container emits an SDK
-   * result. Resets the no-output watchdog. */
+   * result. Resets the no-output watchdog AND clears the consecutive-hangs
+   * counter (success = the chat is no longer in a retry-storm streak). */
   markOutputReceived(groupJid: string): void {
     const state = this.getGroup(groupJid);
     if (!state.active) return;
+    state.consecutiveHangs = 0;
     this.armNoOutputWatchdog(state, groupJid);
   }
 
@@ -288,13 +296,20 @@ export class GroupQueue {
       // JT: Surface to operator immediately. Without this, the user just sees
       // JT: silence — container is dead, no retry happening, but they have no
       // JT: signal anything went wrong. See post-mortem 2026-05-02.
-      // JT: Phrasing is context-agnostic: works for both interactive chats
-      // JT: and scheduled-task hangs (operator may be JT either way).
+      // JT: Distinguish first-hang from consecutive-hang so the user can tell
+      // JT: a one-off retry-storm from a stuck-task pattern.
+      state.consecutiveHangs += 1;
       const minutes = Math.round(NO_OUTPUT_DEADLINE_MS / 60000);
-      this.notifyOperator(
-        groupJid,
-        `⚠️ Container hung (no SDK output for ${minutes} min). Killed by watchdog; auto-retrying with backoff. Only the in-flight reply is lost — conversation continues. If silence persists past ~30s, send a follow-up to nudge.`,
-      );
+      const n = state.consecutiveHangs;
+      let alert: string;
+      if (n === 1) {
+        alert = `⚠️ Container hung (no SDK output for ${minutes} min). Killed by watchdog; auto-retrying with backoff. Only the in-flight reply is lost — conversation continues.`;
+      } else if (n === 2) {
+        alert = `⚠️ Hang #${n} — same task, no progress yet. Watchdog killed and retrying again. If this persists, the agent may be stuck in a rate-limit retry-storm.`;
+      } else {
+        alert = `⚠️ Hang #${n} — repeated stuck-task pattern. Watchdog killed and retrying. Recommend session reset (or just wait — Anthropic rate-limit backoff usually clears within a few minutes).`;
+      }
+      this.notifyOperator(groupJid, alert);
     }, NO_OUTPUT_DEADLINE_MS);
   }
 

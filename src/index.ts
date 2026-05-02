@@ -393,6 +393,20 @@ async function runAgent(
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
+      // JT: Surface SDK rate_limit_event to the operator immediately so the
+      // JT: silent backoff window is informed waiting, not opaque silence.
+      (jid) => {
+        const channel = findChannel(channels, jid);
+        if (!channel) return;
+        channel
+          .sendMessage(
+            jid,
+            `⏳ Anthropic rate-limited the agent — SDK is in backoff retry. Container is alive and waiting it out; this is not a hang. Watchdog tolerance is 10 min from last activity.`,
+          )
+          .catch((err: unknown) =>
+            logger.warn({ jid, err }, 'Failed to send rate-limit alert'),
+          );
+      },
     );
 
     if (output.newSessionId) {

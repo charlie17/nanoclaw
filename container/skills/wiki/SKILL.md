@@ -262,6 +262,22 @@ For the vault-only path (D-80): substitute `vault-query` for `source-fetch` and 
 
 5. **`--quiet` opt-out.** Pass `--quiet` (e.g., `/wiki-ingest --quiet`) to suppress progress pings for a specific run. Useful during batch sessions when per-source pings become notification noise. Default is pings-on; `--quiet` is opt-out per-run.
 
+6. **Sub-phase heartbeats during long phases (mandatory).** Phase-boundary pings are not enough — concept-page work can legitimately take 8-15 min per page (footnote ripples + cross-link edits). During that time, JT sees silence and the host's no-output watchdog can mistake real work for a stuck container. **Every ~120 seconds during a multi-minute phase, emit a brief status string** describing what you're working on right now. Format examples:
+
+   - `… working on alzheimers-blood-tests.md (3/5 sections done)`
+   - `… still on alzheimers-disease.md, integrating Reddy footnotes`
+   - `… concept-page 4/5: cross-linking new claims into !index.md`
+
+   These are first-class agent outputs (same surface as phase pings) — they reset the no-output watchdog AND keep JT informed continuously. JT 2026-05-02 directive: long runtimes are fine as long as heartbeats prove progress; the pain is silence, not duration.
+
+7. **Resume announcement (mandatory on state-file pickup).** If `/wiki-ingest` invocation finds an existing `wiki/.in-progress.json` AND JT chose "resume," the FIRST output back to JT MUST be a single-line announcement before any phase work begins:
+
+   - `↪ Resuming from phase <current_phase> (<current_phase_progress>) — <N>/<M> phases complete from prior session.`
+
+   This sets context so JT knows what's about to happen rather than wondering why output looks like it's mid-stream.
+
+8. **Per-concept-page pings on the resume path.** When resuming mid-ripple, EACH remaining concept page still emits its own `[N/M] concept-page — <topic-slug>.md` ping at completion. Don't skip pings just because earlier phases happened in a prior container.
+
 ## In-progress state file (resume after interruption)
 
 Pings address silence-during-work but don't catch *agent forgets context mid-task*. A `wiki/.in-progress.json` ledger lets a fresh session resume cleanly when a prior session was interrupted, lost context, or stalled.
@@ -287,7 +303,7 @@ last_ping_at: <ISO8601 UTC>
 
 **Lifecycle:**
 
-- Created (or overwritten) at the **first phase boundary** of the run — i.e., immediately after Step 1 (source-fetch) completes. NOT after Step 4 — the state file must exist from very early because container watchdogs (5-min no-SDK-output) can fire during Steps 1-3 too. `phase_total` is left `null` until Step 4 sets it; `phases_completed: ["source-fetch"]` is recorded immediately.
+- Created (or overwritten) at the **first phase boundary** of the run — i.e., immediately after Step 1 (source-fetch) completes. NOT after Step 4 — the state file must exist from very early because container watchdogs (10-min no-SDK-output) can fire during Steps 1-3 too. `phase_total` is left `null` until Step 4 sets it; `phases_completed: ["source-fetch"]` is recorded immediately.
 - Updated at every subsequent phase boundary.
 - **Deleted** when Step 7 (`meta-files`) completes successfully — completion is the signal that the run finished cleanly.
 
@@ -297,7 +313,7 @@ last_ping_at: <ISO8601 UTC>
 
 JT picks the option; act accordingly. The in-progress file is then either updated (resume) or deleted (discard).
 
-**Watchdog (out of scope for this skill — deferred to runway):** A fully frozen agent doesn't emit pings AND doesn't update the state file. Catching that case requires an external host-side timer that pings JT if no progress-ping has fired in N minutes. That's an orchestrator-side concern, not a skill-side one — see `daystrom-design-v2/10-post-impl-runway.md` (R-8 if added).
+**Watchdog (shipped 2026-05-02 as R-8):** A fully frozen agent doesn't emit pings AND doesn't update the state file. The host-side timer at `daystrom-ops/scripts/stalled-ingest-watch.sh` runs every 5 min, reads this in-progress state file, and Telegram-alerts the operator if `last_ping_at` is older than 10 min. Independent of the skill — fires even if the agent is in a state where no skill-side mechanism could surface the stall.
 
 ## Vault-only path (D-80)
 
