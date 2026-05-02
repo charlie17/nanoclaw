@@ -176,6 +176,44 @@ Telegram-friendly summary per CLAUDE.md `## Telegram Output Format` — plain-te
 - Any contradictions flagged
 - Brief judgment-call notes worth JT review
 
+## Progress pings (interactive long-running runs only)
+
+Wiki-ingest is an 8–15 min synthesis run; phase-boundary pings to JT via Telegram keep the run observable without polling.
+
+**Phases (declarative — count auto-derives):**
+
+```yaml
+phases:
+  - { idx: 1,        label: source-fetch,   output: "raw/<doc-id>.md" }
+  - { idx: 2,        label: source-summary, output: "sources/<source-slug>.md" }
+  - { idx: 3..M-1,   label: concept-page,   output: "<topic-slug>.md" }   # one ping per concept page
+  - { idx: M,        label: meta-files,     output: "!index.md / log.md / _processed.json" }
+```
+
+`M = 3 + concept_page_count`. Compute once at the end of Step 4 (after scope and concept pages are pinned with JT) and use that `M` for every ping in the run.
+
+For the vault-only path (D-80): substitute `vault-query` for `source-fetch` and drop `source-summary`. `M = 2 + concept_page_count`.
+
+**Format:**
+
+- **Success:** `[N/M] <label> — <filename>`
+  - Examples: `[1/5] source-fetch — raw/01k83vyqf...md` · `[3/5] concept-page — retirement-tax-efficiency.md`
+- **Error:** `[N/M] <label> FAILED: <reason>` — emit BEFORE the error bubbles up.
+
+**Rules:**
+
+1. **Heartbeat-only content.** Pings contain phase label, output filename, counter, and (on error) reason. **NEVER quote source content** — no claims, no paragraphs, no excerpts. Pings live in the Telegram message log; that surface is not appropriate for source content (privacy + paywall-leak posture).
+
+2. **Fail-soft on Telegram outage.** Wrap each ping send in try/catch. On failure, log `telegram-ping-failed: <phase>` at trace level and continue the ingest. Observability failures **never** block synthesis.
+
+3. **Mandatory error pings.** When a phase fails, emit the `[N/M] FAILED: <reason>` ping BEFORE bubbling up the error. Without this, JT sees pings up to `N-1` then silence then a final error reply — the failure window is unobservable. With it, JT knows which phase died and why, immediately.
+
+4. **Scope: interactive long-running skills only.** Progress pings apply to `/wiki-ingest`. Scheduled and short-running skills stay silent — cron-fired skills emitting pings would surprise JT mid-night, and short skills don't need observability:
+   - **Silent (explicit list):** `/weekly-review`, `/security-audit` (Worf), `/pattern-recognition`, `/nightly-report`, `/wiki-lint`, `/moc-refresh`.
+   - **When in doubt:** human-triggered + multi-minute → ping. Cron-fired or sub-minute → silent.
+
+5. **`--quiet` opt-out.** Pass `--quiet` (e.g., `/wiki-ingest --quiet`) to suppress progress pings for a specific run. Useful during batch sessions when per-source pings become notification noise. Default is pings-on; `--quiet` is opt-out per-run.
+
 ## Vault-only path (D-80)
 
 If JT invokes naturally without a Readwise source — e.g. *"Create a wiki page on X"* — skip Steps 1, 2, 5 above. Instead:
