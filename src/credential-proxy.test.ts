@@ -535,4 +535,56 @@ describe('credential-proxy', () => {
     expect(res.statusCode).toBe(502);
     expect(res.body).toBe('Bad Gateway');
   });
+
+  // ---- codex V3-F2: oversized request body cap -------------------------------
+
+  it('codex V3-F2: rejects oversized request body with 413', async () => {
+    proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
+
+    // 5 MB body — exceeds the 4 MB MAX_BODY_BYTES cap.
+    const oversized = 'x'.repeat(5 * 1024 * 1024);
+
+    const res = await makeRequest(
+      proxyPort,
+      {
+        method: 'POST',
+        path: '/v1/messages',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': String(Buffer.byteLength(oversized)),
+        },
+      },
+      oversized,
+    );
+
+    expect(res.statusCode).toBe(413);
+    const parsed = JSON.parse(res.body) as { error: { type: string } };
+    expect(parsed.error.type).toBe('invalid_request_error');
+  });
+
+  // ---- codex V3-F3: non-object JSON body rejection ---------------------------
+
+  it.each([
+    ['null body', 'null'],
+    ['array body', '[]'],
+    ['number body', '42'],
+    ['string body', '"hello"'],
+  ])('codex V3-F3: rejects %s with 400 and does not crash inspector', async (_label, body) => {
+    proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
+
+    const res = await makeRequest(
+      proxyPort,
+      {
+        method: 'POST',
+        path: '/v1/messages',
+        headers: { 'content-type': 'application/json' },
+      },
+      body,
+    );
+
+    expect(res.statusCode).toBe(400);
+    const parsed = JSON.parse(res.body) as { error: { type: string; message: string } };
+    expect(parsed.error.type).toBe('invalid_request_error');
+    expect(parsed.error.message).toContain('JSON object');
+  });
 });

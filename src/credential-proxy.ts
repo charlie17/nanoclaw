@@ -24,6 +24,12 @@ const WEB_SEARCH_RE = /^web_search(_\w+)?$/;
 // JT: Case-insensitive path match; trailing slashes stripped before test (V-4).
 const MESSAGES_PATH_RE = /^\/v1\/messages(\/batches)?$/i;
 
+// JT: Hard upper bound on request bodies the proxy will buffer. Defense against a
+// JT: compromised/buggy container DoSing the host process by streaming an arbitrarily
+// JT: large request. Anthropic Messages API requests with large prompt histories are
+// JT: typically <1 MB; 4 MB is well above that and well below process-memory pressure.
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
+
 interface BodyRejection {
   status: number;
   body: {
@@ -148,7 +154,23 @@ export function inspectMessagesBody(
 
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(rawBody.toString('utf8')) as Record<string, unknown>;
+    const raw: unknown = JSON.parse(rawBody.toString('utf8'));
+    // JT: Reject non-object JSON (null, arrays, primitives) before casting.
+    // JT: A bare `as Record<string, unknown>` cast would let `parsed.tools` /
+    // JT: `parsed.requests` access throw inside the request handler, crashing
+    // JT: the host process. See codex V3-F3.
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      return {
+        status: 400,
+        body: {
+          error: {
+            type: 'invalid_request_error',
+            message: 'Messages API request body must be a JSON object',
+          },
+        },
+      };
+    }
+    parsed = raw as Record<string, unknown>;
   } catch {
     return {
       status: 400,
@@ -210,8 +232,38 @@ export function startCredentialProxy(
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       const chunks: Buffer[] = [];
-      req.on('data', (c) => chunks.push(c));
+      let bodyLen = 0;
+      let oversize = false;
+
+      req.on('data', (c: Buffer) => {
+        if (oversize) return; // discard further chunks once cap exceeded
+        bodyLen += c.length;
+        if (bodyLen > MAX_BODY_BYTES) {
+          // JT: Container is streaming more than the proxy will accept. Cap defense
+          // JT: against a compromised container DoSing the host process. See codex V3-F2.
+          // JT: We respond 413 immediately and stop buffering. Remaining inbound data
+          // JT: drains into oblivion (no chunks.push) — bounded memory, clean response.
+          // JT: Do NOT call req.destroy() here — that yields ECONNRESET on the client
+          // JT: before the 413 body is fully read.
+          oversize = true;
+          if (!res.headersSent) {
+            res.writeHead(413, { 'content-type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                error: {
+                  type: 'invalid_request_error',
+                  message: `Request body exceeds proxy limit of ${MAX_BODY_BYTES} bytes`,
+                },
+              }),
+            );
+          }
+          return;
+        }
+        chunks.push(c);
+      });
+
       req.on('end', () => {
+        if (oversize) return;
         const body = Buffer.concat(chunks);
 
         // JT: D-90 body-inspection rule (Batch 1.1c, Option 2 — SA §4.3).
