@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import {
   _initTestDatabase,
@@ -652,6 +652,80 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// R-6: folder collision warning (codex V1 finding 2026-05-02)
+describe('registered group R-6 folder collision', () => {
+  it('logs a warning when a folder is re-registered to a different jid', async () => {
+    // First registration: telegram jid for folder daystrom.
+    setRegisteredGroup('tg:1@s.whatsapp.net', {
+      name: 'Daystrom Telegram',
+      folder: 'daystrom',
+      trigger: '@Daystrom',
+      added_at: '2026-05-02T00:00:00.000Z',
+      isMain: true,
+    });
+
+    // Capture logger.warn calls during the colliding write.
+    const { logger } = await import('./logger.js');
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    // Second registration: different jid, same folder. INSERT OR REPLACE
+    // semantics mean the first row is silently evicted; the warning makes it
+    // observable.
+    setRegisteredGroup('local@web-s2', {
+      name: 'Daystrom Bridge',
+      folder: 'daystrom',
+      trigger: '@Daystrom',
+      added_at: '2026-05-02T00:00:01.000Z',
+      isMain: true,
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        folder: 'daystrom',
+        evictedJid: 'tg:1@s.whatsapp.net',
+        newJid: 'local@web-s2',
+      }),
+      expect.stringContaining('R-6'),
+    );
+
+    // Eviction still happens (matches upstream "re-registration overrides"
+    // intent — the warning is observability, not a policy change).
+    const groups = getAllRegisteredGroups();
+    expect(groups['tg:1@s.whatsapp.net']).toBeUndefined();
+    expect(groups['local@web-s2']).toBeDefined();
+
+    warnSpy.mockRestore();
+  });
+
+  it('does NOT warn when the same jid re-registers (idempotent update)', async () => {
+    setRegisteredGroup('tg:1@s.whatsapp.net', {
+      name: 'Daystrom',
+      folder: 'daystrom',
+      trigger: '@Daystrom',
+      added_at: '2026-05-02T00:00:00.000Z',
+      isMain: true,
+    });
+
+    const { logger } = await import('./logger.js');
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    // Same jid + same folder — normal idempotent update path, no eviction.
+    setRegisteredGroup('tg:1@s.whatsapp.net', {
+      name: 'Daystrom (renamed)',
+      folder: 'daystrom',
+      trigger: '@Daystrom',
+      added_at: '2026-05-02T00:00:00.000Z',
+      isMain: true,
+    });
+
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('R-6'),
+    );
+    warnSpy.mockRestore();
   });
 });
 

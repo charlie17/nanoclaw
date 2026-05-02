@@ -725,6 +725,28 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
+
+  // R-6 collision warning (codex V1 finding 2026-05-02): registered_groups has
+  // a UNIQUE constraint on `folder`, and we use INSERT OR REPLACE. If a
+  // different jid already owns this folder, that row will be silently evicted
+  // and the message-loop's registeredGroups Object.keys() poll will stop
+  // routing for that prior jid. Today this is latent (Telegram + Bridge use
+  // different folder strategies) but would silently break if a new channel
+  // ever targets a Daystrom folder. Detect + log; the eviction still happens
+  // (matches upstream NanoClaw "re-registration overrides" intent), but at
+  // least the silent path becomes observable.
+  const existing = db
+    .prepare(
+      'SELECT jid FROM registered_groups WHERE folder = ? AND jid != ?',
+    )
+    .get(group.folder, jid) as { jid: string } | undefined;
+  if (existing) {
+    logger.warn(
+      { folder: group.folder, evictedJid: existing.jid, newJid: jid },
+      'R-6: registered_groups folder collision — INSERT OR REPLACE evicting prior jid',
+    );
+  }
+
   db.prepare(
     `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, agent_model)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
