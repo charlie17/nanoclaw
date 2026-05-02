@@ -239,8 +239,8 @@ last_ping_at: <ISO8601 UTC>
 
 **Lifecycle:**
 
-- Created (or overwritten) on `/wiki-ingest` invocation, after Step 4 confirms scope and `M` is computed.
-- Updated at each phase boundary.
+- Created (or overwritten) at the **first phase boundary** of the run — i.e., immediately after Step 1 (source-fetch) completes. NOT after Step 4 — the state file must exist from very early because container watchdogs (5-min no-SDK-output) can fire during Steps 1-3 too. `phase_total` is left `null` until Step 4 sets it; `phases_completed: ["source-fetch"]` is recorded immediately.
+- Updated at every subsequent phase boundary.
 - **Deleted** when Step 7 (`meta-files`) completes successfully — completion is the signal that the run finished cleanly.
 
 **Resume protocol:** at the start of every `/wiki-ingest` invocation, check whether `wiki/.in-progress.json` exists. If yes, surface to JT BEFORE picking a new source:
