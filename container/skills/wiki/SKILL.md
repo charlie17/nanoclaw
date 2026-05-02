@@ -214,6 +214,43 @@ For the vault-only path (D-80): substitute `vault-query` for `source-fetch` and 
 
 5. **`--quiet` opt-out.** Pass `--quiet` (e.g., `/wiki-ingest --quiet`) to suppress progress pings for a specific run. Useful during batch sessions when per-source pings become notification noise. Default is pings-on; `--quiet` is opt-out per-run.
 
+## In-progress state file (resume after interruption)
+
+Pings address silence-during-work but don't catch *agent forgets context mid-task*. A `wiki/.in-progress.json` ledger lets a fresh session resume cleanly when a prior session was interrupted, lost context, or stalled.
+
+**Write timing:** at every phase boundary (immediately before emitting the success ping for the phase that just completed).
+
+**Schema:**
+
+```yaml
+---
+started_at: <ISO8601 UTC>
+doc_id: <readwise-doc-id>          # null for vault-only path
+source_slug: <source-slug>
+phase_total: <M>
+phases_completed: [source-fetch, source-summary, ...]
+current_phase: concept-page         # next phase to attempt
+current_phase_progress: "memory.md (2/3)"   # for concept-page; null otherwise
+last_ping_at: <ISO8601 UTC>
+---
+```
+
+**Atomic write:** temp file + rename (`os.replace`). Obsidian Sync compatible (per the host atomic-write rule).
+
+**Lifecycle:**
+
+- Created (or overwritten) on `/wiki-ingest` invocation, after Step 4 confirms scope and `M` is computed.
+- Updated at each phase boundary.
+- **Deleted** when Step 7 (`meta-files`) completes successfully — completion is the signal that the run finished cleanly.
+
+**Resume protocol:** at the start of every `/wiki-ingest` invocation, check whether `wiki/.in-progress.json` exists. If yes, surface to JT BEFORE picking a new source:
+
+> "I see an in-progress ingest of `<title>` started <X> ago, last activity <Y> ago, currently in phase `<current_phase>` (<phase_progress>). Three options: (a) resume from where it left off, (b) discard this state and start fresh on a new source, (c) discard and re-run the same source from scratch. Which?"
+
+JT picks the option; act accordingly. The in-progress file is then either updated (resume) or deleted (discard).
+
+**Watchdog (out of scope for this skill — deferred to runway):** A fully frozen agent doesn't emit pings AND doesn't update the state file. Catching that case requires an external host-side timer that pings JT if no progress-ping has fired in N minutes. That's an orchestrator-side concern, not a skill-side one — see `daystrom-design-v2/10-post-impl-runway.md` (R-8 if added).
+
 ## Vault-only path (D-80)
 
 If JT invokes naturally without a Readwise source — e.g. *"Create a wiki page on X"* — skip Steps 1, 2, 5 above. Instead:
