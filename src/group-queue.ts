@@ -293,7 +293,7 @@ export class GroupQueue {
       const minutes = Math.round(NO_OUTPUT_DEADLINE_MS / 60000);
       this.notifyOperator(
         groupJid,
-        `⚠️ Container hung — no SDK output for ${minutes} min, killed by retry-storm watchdog. Any in-flight work is lost.`,
+        `⚠️ Container hung (no SDK output for ${minutes} min). Killed by watchdog; auto-retrying with backoff. Only the in-flight reply is lost — conversation continues. If silence persists past ~30s, send a follow-up to nudge.`,
       );
     }, NO_OUTPUT_DEADLINE_MS);
   }
@@ -391,7 +391,7 @@ export class GroupQueue {
       // JT: principle as the no-output watchdog. Context-agnostic.
       this.notifyOperator(
         groupJid,
-        `⚠️ Container failed to exit gracefully after closeStdin — force-killed by FU-30 watchdog. Any in-flight work is lost.`,
+        `⚠️ Container failed to exit gracefully after closeStdin. Force-killed by FU-30 watchdog; auto-retrying. Only the in-flight reply is lost — conversation continues.`,
       );
     }, CLOSE_STDIN_DEADLINE_MS);
   }
