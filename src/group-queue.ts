@@ -86,6 +86,12 @@ export class GroupQueue {
   private waitingGroups: string[] = [];
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
     null;
+  // JT: Optional operator-notification callback. Wired by the orchestrator at
+  // JT: startup so that watchdog kills surface to the user immediately via the
+  // JT: same channel they're chatting on, instead of leaving them in silence.
+  private operatorNotify:
+    | ((groupJid: string, message: string) => Promise<void>)
+    | null = null;
   private shuttingDown = false;
 
   private async acquireForState(
@@ -137,6 +143,22 @@ export class GroupQueue {
 
   setProcessMessagesFn(fn: (groupJid: string) => Promise<boolean>): void {
     this.processMessagesFn = fn;
+  }
+
+  setOperatorNotifier(
+    fn: (groupJid: string, message: string) => Promise<void>,
+  ): void {
+    this.operatorNotify = fn;
+  }
+
+  // Fire-and-forget operator alert. Wraps in try/catch so a notify failure
+  // (Telegram down, channel gone, etc.) never bubbles up into the watchdog
+  // path that called it. The watchdog still does its real work either way.
+  private notifyOperator(groupJid: string, message: string): void {
+    if (!this.operatorNotify) return;
+    this.operatorNotify(groupJid, message).catch((err) => {
+      logger.warn({ groupJid, err }, 'operatorNotify failed (non-fatal)');
+    });
   }
 
   enqueueMessageCheck(groupJid: string, groupFolder?: string): void {
@@ -263,6 +285,16 @@ export class GroupQueue {
           'No-output watchdog: stopContainer threw',
         );
       }
+      // JT: Surface to operator immediately. Without this, the user just sees
+      // JT: silence — container is dead, no retry happening, but they have no
+      // JT: signal anything went wrong. See post-mortem 2026-05-02.
+      // JT: Phrasing is context-agnostic: works for both interactive chats
+      // JT: and scheduled-task hangs (operator may be JT either way).
+      const minutes = Math.round(NO_OUTPUT_DEADLINE_MS / 60000);
+      this.notifyOperator(
+        groupJid,
+        `⚠️ Container hung — no SDK output for ${minutes} min, killed by retry-storm watchdog. Any in-flight work is lost.`,
+      );
     }, NO_OUTPUT_DEADLINE_MS);
   }
 
@@ -354,6 +386,13 @@ export class GroupQueue {
           'FU-30 watchdog: stopContainer threw',
         );
       }
+      // JT: Surface to operator. FU-30 fires when the SDK is in an
+      // JT: ungraceful retry-storm state past closeStdin. Same UX
+      // JT: principle as the no-output watchdog. Context-agnostic.
+      this.notifyOperator(
+        groupJid,
+        `⚠️ Container failed to exit gracefully after closeStdin — force-killed by FU-30 watchdog. Any in-flight work is lost.`,
+      );
     }, CLOSE_STDIN_DEADLINE_MS);
   }
 

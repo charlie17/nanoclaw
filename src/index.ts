@@ -419,6 +419,24 @@ async function runAgent(
         );
         delete sessions[group.folder];
         deleteSession(group.folder);
+        // JT: Surface to operator. Without this, the next message starts a
+        // JT: brand-new session with no memory of in-progress work — exact
+        // JT: failure mode JT hit 2026-05-02 (Daystrom forgot mid-ingest).
+        // JT: Fire-and-forget; never block the error-handling path.
+        const alertChannel = findChannel(channels, chatJid);
+        if (alertChannel) {
+          alertChannel
+            .sendMessage(
+              chatJid,
+              `⚠️ Session was corrupt and has been cleared. Your next message starts fresh — context from before this point is lost. (Group: ${group.name})`,
+            )
+            .catch((err: unknown) =>
+              logger.warn(
+                { chatJid, err },
+                'Failed to send stale-session alert',
+              ),
+            );
+        }
       }
 
       logger.error(
@@ -804,6 +822,20 @@ async function main(): Promise<void> {
   });
   startSessionCleanup();
   queue.setProcessMessagesFn(processGroupMessages);
+  // JT: Wire watchdog→Telegram alerts. When GroupQueue's no-output watchdog
+  // JT: or FU-30 closeStdin watchdog fires, the operator gets a Telegram on
+  // JT: the same channel they're chatting on, instead of silent stuckness.
+  queue.setOperatorNotifier(async (groupJid, message) => {
+    const channel = findChannel(channels, groupJid);
+    if (!channel) {
+      logger.warn(
+        { groupJid },
+        'Watchdog alert dropped — no channel owns this JID',
+      );
+      return;
+    }
+    await channel.sendMessage(groupJid, message);
+  });
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
