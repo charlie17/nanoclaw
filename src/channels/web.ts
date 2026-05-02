@@ -746,13 +746,27 @@ async function loadHistory(){
 }
 
 function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+// JT: Restrict markdown link href to safe schemes. Bot output is HTML-escaped, but
+// JT: the href value comes from the raw URL the model produced — without an allowlist,
+// JT: a prompt-injected response could render <a href="javascript:..."> in the
+// JT: authenticated Bridge UI. See codex V3-F4. Allow http/https/mailto absolute URLs
+// JT: and relative paths/fragments; render any other scheme as plain text.
+function safeUrl(u){
+  if(/^(https?:|mailto:)/i.test(u))return u;
+  if(/^[a-z][a-z0-9+.-]*:/i.test(u))return null; // any other scheme = unsafe
+  return u; // relative path / fragment / etc.
+}
 function md(s){
   var h=escHtml(s);
   h=h.replace(/\`\`\`([\\s\\S]*?)\`\`\`/g,function(_,c){return '<pre><code>'+c+'</code></pre>';});
   h=h.replace(/\`([^\`\\n]+)\`/g,'<code>$1</code>');
   h=h.replace(/\\*\\*([^*\\n]+)\\*\\*/g,'<strong>$1</strong>');
   h=h.replace(/(^|[^*\\w])\\*([^*\\n]+)\\*(?!\\w)/g,'$1<em>$2</em>');
-  h=h.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  h=h.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g,function(_,t,u){
+    var safe=safeUrl(u);
+    if(safe===null)return t; // unsafe scheme — render as plain text, drop link
+    return '<a href="'+safe+'" target="_blank" rel="noopener noreferrer">'+t+'</a>';
+  });
   return h;
 }
 function setMtContent(t,text,role){if(role==='b')t.innerHTML=md(text);else t.textContent=text;}
