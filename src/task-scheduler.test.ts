@@ -132,6 +132,80 @@ describe('task scheduler', () => {
     expect(offset).toBe(0);
   });
 
+  describe('backfill missing next_run on startup', () => {
+    it('populates next_run for active cron tasks that have NULL next_run', async () => {
+      // Insert a cron task with NULL next_run (simulates a manual SQL INSERT
+      // path that bypassed the IPC handler's CronExpressionParser computation
+      // — exact pattern that left wiki-lint + moc-refresh dormant from
+      // 2026-04-30 deploy until 2026-05-03 diagnosis).
+      createTask({
+        id: 'broken-cron-task',
+        group_folder: 'daystrom',
+        chat_jid: 'tg:8669367924',
+        prompt: '/wiki-lint',
+        schedule_type: 'cron',
+        schedule_value: '0 6 * * *',
+        context_mode: 'isolated',
+        next_run: null as unknown as string, // simulating NULL in DB
+        status: 'active',
+        created_at: new Date().toISOString(),
+      });
+
+      // Sanity: row exists with null next_run.
+      const before = getTaskById('broken-cron-task');
+      expect(before?.next_run).toBeFalsy();
+
+      // Start the scheduler — backfill runs synchronously at startup.
+      const mockQueue = {
+        enqueueTask: vi.fn(),
+      } as unknown as Parameters<typeof startSchedulerLoop>[0]['queue'];
+      startSchedulerLoop({
+        registeredGroups: () => ({}),
+        getSessions: () => ({}),
+        queue: mockQueue,
+        onProcess: () => {},
+        sendMessage: async () => {},
+      });
+
+      // After backfill: next_run should be populated with a valid future
+      // ISO timestamp matching the cron expression's next occurrence.
+      const after = getTaskById('broken-cron-task');
+      expect(after?.next_run).toBeTruthy();
+      expect(new Date(after!.next_run!).getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('leaves once-tasks alone (only fills cron tasks)', async () => {
+      // Once-tasks with NULL next_run shouldn't be backfilled — computeNextRun
+      // returns null for once-tasks by design.
+      createTask({
+        id: 'once-no-nextrun',
+        group_folder: 'daystrom',
+        chat_jid: 'tg:8669367924',
+        prompt: 'test',
+        schedule_type: 'once',
+        schedule_value: '2026-12-31T00:00:00.000Z',
+        context_mode: 'isolated',
+        next_run: null as unknown as string,
+        status: 'active',
+        created_at: new Date().toISOString(),
+      });
+
+      const mockQueue = {
+        enqueueTask: vi.fn(),
+      } as unknown as Parameters<typeof startSchedulerLoop>[0]['queue'];
+      startSchedulerLoop({
+        registeredGroups: () => ({}),
+        getSessions: () => ({}),
+        queue: mockQueue,
+        onProcess: () => {},
+        sendMessage: async () => {},
+      });
+
+      const after = getTaskById('once-no-nextrun');
+      expect(after?.next_run).toBeFalsy();
+    });
+  });
+
   describe('system-task retry policy', () => {
     const makeSystemTask = (id = 'daystrom-test-task') => {
       createTask({

@@ -267,12 +267,58 @@ async function runTask(
 
 let schedulerRunning = false;
 
+/**
+ * Self-heal scheduler-state defect: rows with status='active' AND
+ * schedule_type='cron' AND next_run IS NULL are invisible to getDueTasks
+ * (which filters next_run IS NOT NULL). This can happen if a task was
+ * inserted via a path that bypassed next_run computation — e.g., manual
+ * SQL during a deploy, OR a future code path that forgets to call
+ * CronExpressionParser.parse(). Detect at scheduler startup and
+ * backfill via the existing computeNextRun helper. Fail-safe — if
+ * backfill itself fails (malformed cron expression), the task stays
+ * dormant but a logger.error surfaces it.
+ *
+ * Discovered 2026-05-03: daystrom-wiki-lint-v1 + daystrom-moc-refresh-v1
+ * had been silently dormant since 2026-04-30 because their INSERT
+ * (manual SQL during the wiki upgrade deploy) didn't compute next_run.
+ */
+function backfillMissingNextRun(): void {
+  const candidates = getAllTasks().filter(
+    (t) =>
+      t.status === 'active' &&
+      t.schedule_type === 'cron' &&
+      (!t.next_run || t.next_run.trim() === ''),
+  );
+  if (candidates.length === 0) return;
+  for (const task of candidates) {
+    try {
+      const nextRun = computeNextRun(task);
+      if (!nextRun) continue;
+      updateTask(task.id, { next_run: nextRun });
+      logger.warn(
+        {
+          taskId: task.id,
+          scheduleValue: task.schedule_value,
+          backfilledNextRun: nextRun,
+        },
+        'Backfilled missing next_run on cron task at scheduler startup (defect-recovery)',
+      );
+    } catch (err) {
+      logger.error(
+        { taskId: task.id, scheduleValue: task.schedule_value, err },
+        'Failed to backfill next_run; task will stay dormant until manually fixed',
+      );
+    }
+  }
+}
+
 export function startSchedulerLoop(deps: SchedulerDependencies): void {
   if (schedulerRunning) {
     logger.debug('Scheduler loop already running, skipping duplicate start');
     return;
   }
   schedulerRunning = true;
+  backfillMissingNextRun();
   logger.info('Scheduler loop started');
 
   const loop = async () => {
