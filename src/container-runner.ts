@@ -364,6 +364,14 @@ export async function runContainerAgent(
   // JT: Idempotent per container — caller-side suppression is unnecessary
   // JT: because we only fire once per container's first observed event.
   onRateLimitEvent?: (groupJid: string) => void,
+  // JT: Optional callback fired on EVERY SDK event the agent-runner emits to
+  // JT: stderr (assistant / user / result / system / etc). Wired by index.ts
+  // JT: to queue.markOutputReceived so the no-output watchdog resets on real
+  // JT: agent activity, not just user-facing result events. Without this,
+  // JT: routine work that does many tool calls without intermediate result
+  // JT: emissions (e.g., long Edit / Write / Read cascades) gets killed
+  // JT: spuriously by the 10-min watchdog. See post-mortem 2026-05-03.
+  onAgentActivity?: (groupJid: string) => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
@@ -482,11 +490,23 @@ export async function runContainerAgent(
     });
 
     let rateLimitNotified = false;
+    // JT: Match agent-runner stderr lines that carry an SDK event:
+    // JT:   [agent-runner] [msg #N] type=<assistant|user|result|system|...>
+    // JT: Single regex covers all event types. Used to reset the watchdog —
+    // JT: any SDK event proves the agent is alive (post-mortem 2026-05-03).
+    const SDK_EVENT_LINE_RE = /\[msg #\d+\]\s+type=/;
     container.stderr.on('data', (data) => {
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
         if (line) logger.debug({ container: group.folder }, line);
+        // JT: Reset watchdog on ANY SDK event from the agent (not just result
+        // JT: emissions which take the NANOCLAW_OUTPUT path). Catches the
+        // JT: routine-work case where the agent does many tool calls without
+        // JT: emitting a user-facing result for >10 min.
+        if (input.chatJid && onAgentActivity && SDK_EVENT_LINE_RE.test(line)) {
+          onAgentActivity(input.chatJid);
+        }
         // JT: Detect SDK rate_limit_event and surface to operator once per
         // JT: container. agent-runner stderr format:
         // JT:   [agent-runner] [msg #N] type=rate_limit_event

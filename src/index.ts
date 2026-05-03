@@ -407,6 +407,15 @@ async function runAgent(
             logger.warn({ jid, err }, 'Failed to send rate-limit alert'),
           );
       },
+      // JT: Reset watchdog on EVERY SDK event from the agent — assistant,
+      // JT: user, system, etc., not just result emissions. Tool calls
+      // JT: (Edit / Write / Read / Glob) emit assistant + user events on the
+      // JT: SDK stream. Pre-fix, those didn't reset the watchdog because
+      // JT: they don't take the NANOCLAW_OUTPUT path; only result events
+      // JT: did. Routine vault work that does many tool calls without an
+      // JT: intermediate user-facing result was getting watchdog-killed
+      // JT: spuriously. See post-mortem 2026-05-03.
+      (jid) => queue.markOutputReceived(jid),
     );
 
     if (output.newSessionId) {
