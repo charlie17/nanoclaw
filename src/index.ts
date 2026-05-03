@@ -803,6 +803,17 @@ async function main(): Promise<void> {
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      // JT: Reset the no-output watchdog on agent-side IPC tool sends.
+      // JT: Phase pings (and any other agent-emitted Telegram messages) flow
+      // JT: through this path, NOT the onOutput → markOutputReceived path.
+      // JT: Pre-fix, the watchdog was only reset by user-piped messages and
+      // JT: container-startup arms — phase pings did NOT reset, so the agent
+      // JT: could be cranking along emitting "[3/7] concept-page ..." every
+      // JT: minute and the watchdog would still fire 10 min after the last
+      // JT: USER message. Bug found 2026-05-02 from JT's 9:46 PM ET hang —
+      // JT: 4/7 ping at 01:46:02 UTC, watchdog fired at 01:46:30 UTC, exactly
+      // JT: 10 min after the prior IPC pipe-in at 01:36:30 UTC.
+      queue.markOutputReceived(jid);
       return channel.sendMessage(jid, text);
     },
     registeredGroups: () => registeredGroups,
