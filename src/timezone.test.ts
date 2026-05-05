@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  convertResetTimeToEt,
   formatLocalTime,
   isValidTimezone,
   resolveTimezone,
@@ -69,5 +70,50 @@ describe('resolveTimezone', () => {
   it('falls back to UTC for invalid timezone', () => {
     expect(resolveTimezone('IST-2')).toBe('UTC');
     expect(resolveTimezone('')).toBe('UTC');
+  });
+});
+
+// --- convertResetTimeToEt ---
+
+describe('convertResetTimeToEt', () => {
+  it('converts the SDK rate-limit message UTC time to ET', () => {
+    // 2026-05-05 21:36 UTC = 5:36pm ET (EDT, UTC-4). Reset 9:50pm UTC = 5:50pm ET.
+    const now = new Date('2026-05-05T21:36:00.000Z');
+    const input = "You've hit your limit · resets 9:50pm (UTC)";
+    expect(convertResetTimeToEt(input, now)).toBe(
+      "You've hit your limit · resets 5:50pm ET",
+    );
+  });
+
+  it('handles am times', () => {
+    // 2026-01-15 12:00 UTC. Reset 8:30am UTC tomorrow (already past today).
+    const now = new Date('2026-01-15T12:00:00.000Z');
+    // EST (UTC-5). 8:30am UTC = 3:30am ET (next day).
+    const input = 'limit reached · resets 8:30am (UTC)';
+    const result = convertResetTimeToEt(input, now);
+    expect(result).toContain('resets 3:30am ET');
+  });
+
+  it('rolls forward when the reset time has already passed today', () => {
+    // 2026-05-05 22:00 UTC. Reset 9:50pm UTC today is in the past → next day.
+    const now = new Date('2026-05-05T22:00:00.000Z');
+    const input = 'resets 9:50pm (UTC)';
+    // 9:50pm UTC next day = 5:50pm ET next day. Wall-clock formatting same.
+    expect(convertResetTimeToEt(input, now)).toBe('resets 5:50pm ET');
+  });
+
+  it('passes through unchanged when no match', () => {
+    expect(convertResetTimeToEt('no rate-limit alert here')).toBe(
+      'no rate-limit alert here',
+    );
+  });
+
+  it('handles multiple matches in one string', () => {
+    const now = new Date('2026-05-05T21:36:00.000Z');
+    const input = 'first resets 9:50pm (UTC) and also resets 10:50pm (UTC)';
+    const result = convertResetTimeToEt(input, now);
+    expect(result).toContain('resets 5:50pm ET');
+    expect(result).toContain('resets 6:50pm ET');
+    expect(result).not.toContain('UTC');
   });
 });
