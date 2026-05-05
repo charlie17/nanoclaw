@@ -10,11 +10,26 @@ The wiki has three layers under `wiki/` (host: `~/vault/general/wiki/`):
 2. **`wiki/sources/<source-slug>.md`** — Per-source summary pages. One per ingested source. **Filename is a human-readable kebab-case slug derived from the article title** (NOT the Readwise doc ID — that lives in frontmatter). Frontmatter carries `source-id` (doc ID), `provenance`, source attribution. See §"Source-summary slug rules" below.
 3. **`wiki/<topic-slug>.md`** — Concept/entity pages built across multiple sources. The Karpathy compounding layer. Topic-themed slug (e.g., `retirement-tax-efficiency.md`). Cite each source via Obsidian footnotes (see §"Citation pattern — footnotes" below).
 
-Plus three navigation/meta files:
+Plus five meta files:
 - **`wiki/!home.md`** — Human narrative entry point. Updated when the picture shifts.
 - **`wiki/!index.md`** — Agent catalog. Updated every ingest.
 - **`wiki/!log.md`** — Chronological op log. Append-only bullet format.
+- **`wiki/!style.md`** — Canonical page-style guide. **Read this before drafting or modifying any wiki page** (see §"Style canon" below).
 - **`wiki/_processed.json`** — Processed Readwise doc ID ledger.
+
+## Style canon — `wiki/!style.md`
+
+`wiki/!style.md` is the canonical reference for page style. **Read it once at the start of every `/wiki-ingest` run, before drafting any source-summary or concept page.** Apply its seven load-bearing rules to everything you write or modify:
+
+1. Italic teaser under H1 (concept pages, landing-page voice — `!style.md` §1 + §7).
+2. Pattern B top-of-page on concept pages — italic teaser + `[!info]` cluster hub + `[!tldr]-` synthesis (§1).
+3. Heading spacing — no blank line between `#`/`##`/`###` and body, with two carve-outs (§2).
+4. Frontmatter → H1 — no blank line between closing `---` and `# H1` (§2, §8).
+5. One emoji level per page — pick the level with the most navigational value (§4).
+6. Direct quotes — prose lead-in + plain `>` blockquote, never `[!quote]` (§5).
+7. Footnote anchors never inside `[!type]` callout blocks (§6 + §"Citation pattern" below).
+
+If a styling question is not covered by `!style.md`, follow the most recent redraft exemplar (May 2026 Stage-3 pages: `alzheimers-prevention-treatment.md`, `retirement-tax-efficiency.md`, `healthy-longevity.md`).
 
 ## Readwise path (default)
 
@@ -204,6 +219,15 @@ related-pages:
 ```
 
 **Number of pages touched per ingest is typically 3-10**, sometimes more for dense sources. If the source only touches 1 page, that's a signal — either you're under-propagating or the source is genuinely narrow. Justify in your reply to JT.
+
+### Step 6.5 — Self-check against `!style.md`
+
+Before finalizing, re-read every page you wrote or modified during this run against `wiki/!style.md`. For each page, walk the seven load-bearing rules:
+
+- Concept pages: italic teaser present? Pattern B complete (`[!info]` + `[!tldr]-`)?
+- All pages: heading spacing tight (no blank line before body, except the two carve-outs)? Frontmatter → H1 tight? `[!quote]` absent? Emoji on at most one heading level? `[^key]` anchors only outside callout blocks?
+
+Self-correct any violations in place. This catches drift at compose time so the nightly `/wiki-lint` run has nothing to flag from your work. Cheaper here than there.
 
 ### Step 7 — Update meta files
 
