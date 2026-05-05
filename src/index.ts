@@ -66,6 +66,7 @@ import {
 } from './sender-allowlist.js';
 import { startSessionCleanup } from './session-cleanup.js';
 import { startSlowSkillAck } from './slow-skill-ack.js';
+import { startTypingHeartbeat } from './typing-heartbeat.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -272,7 +273,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const lastMsg = missedMessages[missedMessages.length - 1].content;
   const stopAck = startSlowSkillAck(chatJid, channel, lastMsg);
-  await channel.setTyping?.(chatJid, true);
+  // R-12 Phase 1: refresh typing indicator every 4s through the full
+  // agent lifecycle; one-shot setTyping was dying after Telegram's ~5s
+  // indicator window. Independent of slow-skill-ack heartbeat (parallel
+  // refreshes are harmless — sendChatAction is idempotent server-side).
+  const stopTyping = startTypingHeartbeat(chatJid, channel);
   let hadError = false;
   let outputSentToUser = false;
 
@@ -311,6 +316,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   });
 
   stopAck();
+  stopTyping();
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
