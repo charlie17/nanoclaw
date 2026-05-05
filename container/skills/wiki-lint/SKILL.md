@@ -4,7 +4,7 @@ When JT invokes `/wiki-lint` (manually OR via the nightly @ 2am ET (cron `0 6 * 
 
 ## Audit dimensions (Karpathy line 66)
 
-Seven dimensions audited in order:
+Nine dimensions audited in order:
 
 1. **Orphan pages** — pages in `wiki/` with no inbound `[[wikilinks]]` from other wiki pages. **AUTO-FIX:** find 2-3 related concept pages (read `!index.md` + use qmd query for semantic neighbors), add `[[wikilinks]]` from those pages to the orphan, and add return links from the orphan.
 2. **Dead-end pages** — pages with no outbound `[[wikilinks]]`. **AUTO-FIX:** scan the page content; for every entity, concept, or source mentioned that has a corresponding wiki page, add `[[wikilink]]`.
@@ -14,6 +14,7 @@ Seven dimensions audited in order:
 6. **Contradictions** — claims on one page that conflict with claims on another. **REPORT** with `> [!contradiction]` callout inline AND in the JT report. Editorial judgment required; do NOT auto-correct.
 7. **Stale claims** — assertions where a newer source has superseded an older one. **REPORT** for JT review; do NOT auto-rewrite.
 8. **Important concepts lacking pages** — concepts mentioned 3+ times across multiple sources but with no dedicated concept page. **REPORT** with proposed slug; JT decides whether to author.
+9. **Footnote anchors inside callout blocks** — Obsidian renders `[^key]` anchors inside `> [!type]` callouts as literal attached text (e.g., `Mechanism #2[^gardner]` displays as `Mechanism #2gardner`), not as clickable footnote links. Walk every callout block (contiguous run of lines starting with `>`); flag any `[^...]` anchor inside. Skip fenced code blocks even when they appear inside a callout. **AUTO-FIX:** when the same `[^key]` appears at least once outside the callout on the same page, strip the anchor from inside the callout (citation chain stays intact via the body reference). Footnote definitions at the bottom of the page are preserved unchanged. **FLAG for JT:** when the callout contains the only reference to a footnote on the page — moving the first reference out into body prose is editorial judgment.
 
 ## Skip-when-quiet check (nightly mode)
 
@@ -38,6 +39,7 @@ If at least one finding (auto-fix or JT-report), produce a Telegram-friendly num
 3. Broken wikilink FLAGGED: [[old-page-slug]] referenced by [[financial-planning]] — does not exist. Fix or remove?
 4. Contradiction FLAGGED: [[asset-allocation]] claims X but [[retirement-tax-efficiency]] claims X-prime. JT review.
 5. Missing concept page proposed: "Roth conversions" mentioned in 4 sources but no dedicated page. Author?
+6. Footnote-in-callout fixed: [[retirement-tax-efficiency]] — stripped 3 [^gardner] anchors from [!tldr]- block (same key referenced in body).
 
 Auto-fixed: 4 items. Flagged for JT: 3 items.
 ```

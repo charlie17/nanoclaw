@@ -167,6 +167,7 @@ For each source cited on a concept page:
 - Do NOT use `([[sources/<slug>]])` parenthesized inline citations (the legacy Apr 29, 2026 pattern). All concept pages migrated to footnotes 2026-05-01.
 - Do NOT use plain numeric footnote keys (`[^1]`, `[^2]`) — they are not stable across edits (insertion of a new source between `[^1]` and `[^2]` forces renumbering). Always use named keys.
 - Do NOT duplicate the source in BOTH the footnote def AND a bullet list at the bottom — the footnote defs ARE the source catalog now.
+- Do NOT place footnote anchors (`[^key]`) inside Obsidian callout blocks (`> [!type]`). Obsidian renders the anchor as literal attached text inside callouts, not as a clickable footnote link (rendering bug; no version of this looks right). When citing inside a callout, either: (a) cite via the body sentence immediately preceding or following the callout, or (b) put the source name inline as plain text inside the callout. The footnote def at the bottom is unaffected — only the anchor is the problem inside callouts.
 
 
 ## Step 6 — Full-ripple propagation (MANDATORY EVERY RUN)
