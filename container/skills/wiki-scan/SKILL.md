@@ -31,7 +31,7 @@ Per CLAUDE.md `## Telegram Output Format` — plain-text numbered list, one item
 
 Keep inline metadata short (author, starred, saved-date is enough). Use em-dashes, middle dots, or labels to separate attributes — never pipes. No vault writes during a scan run.
 
-Optional `log.md` append (only if JT asks): `## [YYYY-MM-DD] scan | N backlog items, priority top-3: X, Y, Z`
+Optional `!log.md` append (only if JT asks): `## [YYYY-MM-DD] scan | N backlog items, priority top-3: X, Y, Z`
 
 ## What you MUST NOT do
 

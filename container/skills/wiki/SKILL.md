@@ -13,7 +13,7 @@ The wiki has three layers under `wiki/` (host: `~/vault/general/wiki/`):
 Plus three navigation/meta files:
 - **`wiki/!home.md`** — Human narrative entry point. Updated when the picture shifts.
 - **`wiki/!index.md`** — Agent catalog. Updated every ingest.
-- **`wiki/log.md`** — Chronological op log. Append-only bullet format.
+- **`wiki/!log.md`** — Chronological op log. Append-only bullet format.
 - **`wiki/_processed.json`** — Processed Readwise doc ID ledger.
 
 ## Readwise path (default)
@@ -209,7 +209,7 @@ related-pages:
 1. **`wiki/_processed.json`** — append/update entry: `"<doc-id>": { "ingested_at": "<ISO8601 UTC>", "slug": "<source-slug>", "source_summary": "sources/<source-slug>.md", "concept_pages": ["<topic1>.md", "<topic2>.md"], "raw_archive": "raw/<doc-id>.md" }`. Note: raw archive still uses doc-id naming (programmatic backstop, never browsed); only sources/ uses slug-naming.
 2. **`wiki/!index.md`** — agent catalog. Add new pages with one-line summary; update existing entries if their summary shifted. Group by category (concepts / sources / etc.).
 3. **`wiki/!home.md`** — narrative entry point. **Update only if this source materially shifts the wiki's big-picture narrative.** Don't update for incremental additions; do update when a new theme emerges or an existing theme changes shape.
-4. **`wiki/log.md`** — append a bullet entry per the format established 2026-04-29:
+4. **`wiki/!log.md`** — append a bullet entry per the format established 2026-04-29:
    ```
    - **<YYYY-MM-DD>** ingest: *<Article Title>* — <source attribution> → `sources/<source-slug>.md` + concept pages: `<topic1>.md`, `<topic2>.md`
    ```
@@ -235,7 +235,7 @@ phases:
   - { idx: 1,        label: source-fetch,   output: "raw/<doc-id>.md" }
   - { idx: 2,        label: source-summary, output: "sources/<source-slug>.md" }
   - { idx: 3..M-1,   label: concept-page,   output: "<topic-slug>.md" }   # one ping per concept page
-  - { idx: M,        label: meta-files,     output: "!index.md / log.md / _processed.json" }
+  - { idx: M,        label: meta-files,     output: "!index.md / !log.md / _processed.json" }
 ```
 
 `M = 3 + concept_page_count`. Compute once at the end of Step 4 (after scope and concept pages are pinned with JT) and use that `M` for every ping in the run.
@@ -322,7 +322,7 @@ If JT invokes naturally without a Readwise source — e.g. *"Create a wiki page 
 - Discuss scope with JT.
 - Skip raw archive + source-summary creation (no Readwise doc).
 - Proceed with Step 6 (concept page creation) — `provenance.source: vault`, `source-refs: []`, citations point at vault paths instead of source-summary slugs.
-- Update `!index.md` + `log.md` with a `vault-ingest` op type.
+- Update `!index.md` + `!log.md` with a `vault-ingest` op type.
 
 ## What you MUST NOT do
 
