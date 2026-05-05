@@ -736,9 +736,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   // (matches upstream NanoClaw "re-registration overrides" intent), but at
   // least the silent path becomes observable.
   const existing = db
-    .prepare(
-      'SELECT jid FROM registered_groups WHERE folder = ? AND jid != ?',
-    )
+    .prepare('SELECT jid FROM registered_groups WHERE folder = ? AND jid != ?')
     .get(group.folder, jid) as { jid: string } | undefined;
   if (existing) {
     logger.warn(

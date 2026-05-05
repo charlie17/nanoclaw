@@ -569,22 +569,27 @@ describe('credential-proxy', () => {
     ['array body', '[]'],
     ['number body', '42'],
     ['string body', '"hello"'],
-  ])('codex V3-F3: rejects %s with 400 and does not crash inspector', async (_label, body) => {
-    proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
+  ])(
+    'codex V3-F3: rejects %s with 400 and does not crash inspector',
+    async (_label, body) => {
+      proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
 
-    const res = await makeRequest(
-      proxyPort,
-      {
-        method: 'POST',
-        path: '/v1/messages',
-        headers: { 'content-type': 'application/json' },
-      },
-      body,
-    );
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: { 'content-type': 'application/json' },
+        },
+        body,
+      );
 
-    expect(res.statusCode).toBe(400);
-    const parsed = JSON.parse(res.body) as { error: { type: string; message: string } };
-    expect(parsed.error.type).toBe('invalid_request_error');
-    expect(parsed.error.message).toContain('JSON object');
-  });
+      expect(res.statusCode).toBe(400);
+      const parsed = JSON.parse(res.body) as {
+        error: { type: string; message: string };
+      };
+      expect(parsed.error.type).toBe('invalid_request_error');
+      expect(parsed.error.message).toContain('JSON object');
+    },
+  );
 });
