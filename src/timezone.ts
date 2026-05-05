@@ -53,7 +53,10 @@ export function formatLocalTime(utcIso: string, timezone: string): string {
  *
  * Returns the input unchanged if no match.
  */
-export function convertResetTimeToEt(text: string, now: Date = new Date()): string {
+export function convertResetTimeToEt(
+  text: string,
+  now: Date = new Date(),
+): string {
   return text.replace(
     /resets\s+(\d{1,2}):(\d{2})(am|pm)\s*\(UTC\)/gi,
     (_match, hh: string, mm: string, ampm: string) => {
@@ -82,7 +85,9 @@ export function convertResetTimeToEt(text: string, now: Date = new Date()): stri
       });
       // Intl renders "5:50 PM"; normalize to lowercase no-space "5:50pm" to
       // match the source format aesthetic.
-      const compact = formatted.replace(/\s+(AM|PM)$/, (_, p) => p.toLowerCase());
+      const compact = formatted.replace(/\s+(AM|PM)$/, (_, p) =>
+        p.toLowerCase(),
+      );
       return `resets ${compact} ET`;
     },
   );
