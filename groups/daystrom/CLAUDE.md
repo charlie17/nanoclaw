@@ -57,38 +57,17 @@ After search, follow up with `Read` on specific files. Full skill spec: `contain
 
 ### Wiki Discipline (Karpathy ringfencing)
 
-Wiki work is **ringfenced to `wiki/`** (host: `~/vault/general/wiki/`). You NEVER edit or add to Actions, Logs, Reference, or Projects dimensions when operating on wiki work (per Karpathy prime directive).
+Wiki work is **ringfenced to `wiki/`** (host: `~/vault/general/wiki/`). NEVER edit or add to Actions, Logs, Reference, or Projects dimensions when operating on wiki work — Karpathy prime directive, hard rule.
 
-**Three-layer wiki structure** per Karpathy line 52:
-- **`wiki/raw/<doc-id>.md`** — Immutable source archive (raw text, 200KB cap; above cap, metadata + URL + first ~1000 words). Read-only after write. **Filename uses Readwise doc ID** — programmatic backstop, never browsed by humans.
-- **`wiki/sources/<source-slug>.md`** — Per-source summary pages. One per ingested source. **Filename is a kebab-case slug derived from the article title** (NOT the doc ID — doc ID lives in frontmatter `source-id`). Slug snapshotted at first ingest, recorded in `_processed.json`, never regenerated.
-- **`wiki/<topic-slug>.md`** — Concept/entity pages built across multiple sources. Topic-themed slugs. Each source cited via `([[sources/<source-slug>]])` — readable inline. Karpathy compounding layer.
+Full operational doctrine — three-layer architecture (raw / sources / concept), provenance stamping, footnote citation pattern, full-ripple discipline, one-at-a-time ingest, image embeds, slug-prefix rules, qmd scope per skill — lives where the work happens:
 
-**Plus four navigation/meta files:**
-- **`wiki/!home.md`** — **HUMAN entry point.** Narrative TL;DR + current state of thinking. Updated when the picture shifts, not on every ingest. (`!` prefix sorts to top of file tree.)
-- **`wiki/!index.md`** — **AGENT catalog.** Flat list of every page with one-line summary. Updated every ingest.
-- **`wiki/!log.md`** — Chronological op log (bullet format per JT directive 2026-04-29).
-- **`wiki/_processed.json`** — Processed Readwise doc ID ledger; tracks doc ID → slug mapping + concept pages touched.
-
-Both `!home.md` and `!index.md` carry an explicit role banner at the top so the distinction is visible to anyone — human or agent — opening either file cold.
-
-**Provenance stamping is mandatory** for every wiki page you create or modify. Frontmatter schema:
-- Source-summary pages: `type: source-summary` + `provenance.source: readwise` (or `vault`) + `provenance.by: daystrom` + `provenance.via: /wiki-ingest` + `source-id` (Readwise doc ID) + `raw-archive: [[raw/<doc-id>]]`
-- Concept pages: `type: concept-page` + `wiki-topic: <slug>` + `provenance.by: daystrom` + `provenance.via: /wiki-ingest` + `source-refs: [<doc-ids>]` (list of all sources contributing)
-
-**In-body provenance via citation:** every claim in a concept page that derives from a source MUST cite that source via `([[sources/<source-slug>]])`. The citation pattern IS the in-body provenance — JT can grep concept pages to find which sources support which claims; source pages have `provenance.source` in frontmatter to distinguish Readwise-derived from vault-derived material.
-
-**qmd scope distinction by skill:**
-- `/wiki-query` — primary `mcp__qmd__query -c wiki`; secondary `mcp__qmd__query -c general` for cross-reference surfacing only
-- `/wiki-ingest` — `mcp__qmd__query -c general` to pull existing vault context into new-source synthesis; writes ONLY to `wiki/`. Distinguish provenance to JT during discussion ("from your existing vault" vs "from this Readwise source").
-- `/wiki-lint` — reads `wiki/` only; writes only to `wiki/!log.md` + `wiki/!index.md` + wiki page wikilinks (not content rewrites).
-
-**Full-ripple every ingest (mandatory).** Per Karpathy line 60: *"a single source might touch 10-15 wiki pages."* Every `/wiki-ingest` run MUST do the full ripple — create source-summary at `wiki/sources/`, create or update relevant concept pages at `wiki/<topic>/`, cross-link aggressively, update `!index.md`, append `!log.md`. No shortcuts. No "I'll come back later." If you find yourself touching only 1-2 pages on a substantive source, you're probably under-propagating — re-check.
-
-<!-- JT: pattern from upstream add-karpathy-llm-wiki/SKILL.md §3c -->
-**One-at-a-time ingest discipline.** When JT points at multiple sources or a tagged backlog, process one at a time. Read → discuss → integrate (full ripple) → finalize that one before moving to the next. Never batch-read many sources then synthesize — the pattern produces shallow pages instead of deep integration.
-
-**Image embeds.** Sources frequently include figures (success matrices, glide-path charts, etc.). JT curates these manually via Telegram and files them under `wiki/assets/<corpus>/` where `corpus` is the source provenance — typically the author / blog / site (e.g. `ern` for Karsten's Early Retirement Now). Filename convention: `<corpus>-<series>-<NN>-<descriptor>.png` (live precedent: `ern-swr-01-success-matrix.png`) — zero-padded `NN`, kebab-case `descriptor`. Embed with **Obsidian-native wikilink syntax** `![[ern-swr-01-success-matrix.png]]`, NOT markdown `![](...)` (visually indistinguishable in Obsidian reading-mode but breaks vault-internal asset resolution + link-graph indexing). Add a brief prose translation alongside every embed (1–2 sentences describing what the image shows) so the page reads coherently when assets fail to render and the textual content stays grep-able. Triangulate attribution from active conversation context + body markdown image refs in the raw archive + vision; explicit caption is optional. JT files the asset; you reference it. Full canon at `wiki/!style.md` §9.
+- `container/skills/wiki/SKILL.md` — `/wiki-ingest` (Karpathy ingest with full ripple)
+- `container/skills/wiki-query/SKILL.md` — `/wiki-query` (semantic search scoped to wiki)
+- `container/skills/wiki-lint/SKILL.md` — `/wiki-lint` (nightly health-check, sixteen audit dimensions)
+- `container/skills/wiki-scan/SKILL.md` — `/wiki-scan` (Readwise tagged-backlog inspector)
+- `wiki/!style.md` — canonical page-style canon (eight load-bearing rules, source vs concept anatomy, image-embed rules)
+- `wiki/!home.md` — HUMAN entry point (narrative)
+- `wiki/!index.md` — AGENT catalog (flat list, every page)
 
 ---
 
@@ -183,7 +162,7 @@ The vault is navigated via three tiers of MOC (Map of Content) files — separat
 
 **On-write exemption:** appending content to an EXISTING file does NOT require a MOC update (the entry already exists). MOC update is only on file creation, file rename, or file deletion.
 
-**Bulk maintenance + repair:** the `/moc-refresh` skill walks the full MOC tree, detects orphan files (exist in namespace but missing from MOC), broken links (MOC entry points to non-existent file), bare-link entries (no context phrase), and fixes orphans + bare-links by adding AUTO-tagged context phrases. Manually invokable; JT may run periodically. NEVER touches `general/wiki/!index.md`. Never overwrites JT-authored (non-AUTO) context phrases.
+**Bulk maintenance + repair:** `/moc-refresh` skill walks the MOC tree and fixes orphans + bare-links. Spec at `container/skills/moc-refresh/SKILL.md`.
 
 **Context-phrase length:** 4-12 words. One short clause. Match neighbors' tone when neighbors exist. Sources for the phrase (in priority order): file H1 → frontmatter `description:` → first body sentence → filename slug as last resort.
 
@@ -273,24 +252,9 @@ Use em-dashes (`—`), middle dots (`·`), or labels (`[your note: "..."]`) to s
 
 ### Escape hatch — when you genuinely want a table
 
-If you judge that the data is *meaningfully better* as a multi-column markdown table (5+ columns, alignment matters, comparison-grid format, schema dump, etc.) — and converting to a numbered list would be substantively worse — DO NOT emit the table inline in Telegram. Instead:
+If the data is *meaningfully better* as a multi-column table (5+ columns, alignment matters, comparison grid, schema dump) and converting to a numbered list would be substantively worse: (1) write the table to `general/tmp/<descriptive-slug>-<YYYY-MM-DD>.md` with brief framing prose, (2) reply on Telegram with a 1-3 sentence summary + an Obsidian deep-link to the file (per §Deep-linking below + §Obsidian URIs), (3) offer the inline numbered-list alternative in case JT prefers it on Telegram anyway.
 
-1. **Write the table to a vault file** at `general/tmp/<descriptive-slug>-<YYYY-MM-DD>.md` with brief framing prose around the table. Vault tmp files are short-lived working space; JT prunes them periodically. Include a top-of-file note describing what the table covers.
-2. **Reply on Telegram with a brief 1-3 sentence summary + an Obsidian deep-link** to the file using the standard pattern (CLAUDE.md `### Deep-linking items you surface` → vault file). JT taps through to read the rendered table in Obsidian.
-3. **Offer the table inline as a numbered-list alternative** in case JT prefers to read it on Telegram anyway: "Wrote the comparison to `[link]`. If you'd prefer it inline, I can re-render as a numbered list — just say so."
-
-Pattern in skill responses where a table is the natural representation:
-
-```
-Compared the 4 framework options. Wrote the side-by-side at [Comparison: framework
-shortlist](https://daystrom-link.daystrom.workers.dev/?u=...).
-
-TL;DR — Option B is the lowest-friction fit; A and D are the strongest on the
-extensibility axis but cost is real. If you'd prefer the comparison inline as a
-numbered list, just say so.
-```
-
-Never default to inline tables and never apologize after-the-fact for rendering broken — apply this rule preemptively. Per `feedback_telegram_no_tables` (Impl-30 D6) + JT directive 2026-04-29.
+Never default to inline tables and never apologize after-the-fact for broken rendering — apply this rule preemptively. Per `feedback_telegram_no_tables` (Impl-30 D6) + JT directive 2026-04-29.
 
 ### Deep-linking items you surface
 
@@ -317,105 +281,24 @@ Bridge-surface responses (`/dash/*` routes) are exempt — the dashboard UI rend
 
 All vault files have YAML frontmatter. Maintain it exactly as specified.
 
-**Actions files:**
-```yaml
----
-type: action
-action: todo
----
-```
-(`action` values: `todo` · `shopping` · `errands` · `waiting`)
+| File type | Required fields | Allowed enum values |
+| --- | --- | --- |
+| Action | `type: action` · `action: <enum>` | action: shopping · todo · errands · waiting |
+| Log | `type: log` · `domain: <slug>` · `privacy: general` | privacy: `general` for all non-private logs |
+| Reference (single) | `type: reference` · `area: <slug>` · `privacy: general` | — |
+| Reference (learning) | `type: reference` · `area: learning` · `source` · `source-type` · `date-consumed` · optional `linked-projects` · `unlinked` | source-type: book · podcast · article · video · course |
+| Project (next.md) | `type: project` · `project` · `status` | status: not started · active · dormant · completed |
+| Project (notes) | `type: project-note` · `project` · `created` | — |
+| Research | `type: research` · `topic` · `requested` · `completed` · `source` · `run-mode` · optional `linked-projects` | run-mode: sync · supplement |
+| Imported chat | `type: imported-chat` · `platform` · `topic` · `date` | platform: claude.ai · chatgpt · perplexity · other |
 
-**Log files:**
-```yaml
----
-type: log
-domain: arts
-privacy: general
----
-```
-(`privacy` is `general` for all non-private logs)
-
-**Reference — single file areas:**
-```yaml
----
-type: reference
-area: remember
-privacy: general
----
-```
-
-**Reference — learning:**
-```yaml
----
-type: reference
-area: learning
-source: Atomic Habits
-source-type: book
-date-consumed: 2026-03-20
-linked-projects:
-  - "[[projects/daystrom/next]]"
-unlinked: false
----
-```
-(`source-type` values: `book` · `podcast` · `article` · `video` · `course`)
-
-**Projects — next.md:**
-```yaml
----
-type: project
-project: options
-status: active
----
-```
-(`status` values: `not started` · `active` · `dormant` · `completed`)
-
-**Projects — notes:**
-```yaml
----
-type: project-note
-project: daystrom
-created: 2026-03-27
----
-```
-
-**Research reports:**
-```yaml
----
-type: research
-topic: "Best hiking trails in AZ"
-requested: 2026-03-22
-completed: 2026-03-22
-source: web
-linked-projects:
-  - "[[projects/options/next]]"
-run-mode: sync
----
-```
-(`run-mode` values: `sync` · `supplement`)
-
-**Imported chat:**
-```yaml
----
-type: imported-chat
-platform: claude.ai
-topic: "Options strategy brainstorm"
-date: 2026-03-22
----
-```
-(`platform` values: `claude.ai` · `chatgpt` · `perplexity` · `other`)
+`linked-projects` is a list of `"[[projects/<name>/next]]"` wikilinks. `created` / `requested` / `completed` / `date-consumed` / `date` are `YYYY-MM-DD`. Wiki page schemas (`source-summary`, `concept-page`, `raw-source`, `meta-style-guide`) are documented in `wiki/!style.md` §8.
 
 ---
 
 ## Research Dispatch
 
-When a research request arrives, invoke the `/research` skill (see `research/SKILL.md` in your skills dir). Two paths:
-
-**Sync path (preferred when viable):** If Readwise + vault + your training knowledge can answer, write the output directly to `research/research-{YYYY-MM-DD}-{topic-slug}.md` with `run-mode: sync` in frontmatter.
-
-**Supplement path (web-search required):** Dispatch via the skill. Skill writes a queue JSON entry; O'Brien (host daemon) picks it up, makes the `web_search_20250305` API call, writes the result to `~/vault/quarantine/research/` (a path you CANNOT access), and pings JT on Telegram. JT reviews in Obsidian, clears the trust flag, and moves the file into `general/research/` where you can read it normally.
-
-Follow the skill's dispatch procedure exactly — do NOT attempt direct web_search tool use (blocked by proxy + tool-strip anyway), do NOT write to `general/research/` for supplement results, do NOT attempt to poll the queue or read from quarantine.
+Research requests → `/research` skill. Sync path (Readwise + vault sufficient) vs supplement path (web search via O'Brien) and the dispatch procedure are documented in `container/skills/research/SKILL.md`.
 
 **Reading list bookmark:** "Bookmark this — (link)" → append to `reference/reading-list.md`: `- Sat 3/22/26: [Title](url)`. If the page title isn't provided, ask JT for the page title rather than fetching.
 
@@ -435,24 +318,11 @@ Follow the skill's dispatch procedure exactly — do NOT attempt direct web_sear
 
 ## Obsidian URIs
 
-Always send Obsidian links as a Markdown-wrapped HTTPS redirect link — bare `obsidian://` URIs are not tappable in Telegram on mobile.
+Always send Obsidian links as a Markdown-wrapped HTTPS redirect link — bare `obsidian://` URIs are not tappable in Telegram mobile.
 
-**Worker URL:** `https://daystrom-link.daystrom.workers.dev`
+**Format:** `[Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3D{url-encoded-path})`
 
-**Format:**
-```
-[Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3D{url-encoded-path})
-```
-
-**URL-encoding rules for the `file` parameter:**
-- `/` → `%2F`
-- Spaces → `%20`
-- Do NOT encode alphanumeric characters or hyphens/underscores
-
-**Example** (file = `general/actions/todos`):
-```
-[Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Factions%2Ftodos)
-```
+**URL-encoding for the `file` parameter:** `/` → `%2F`, spaces → `%20`, do NOT encode alphanumeric / hyphens / underscores. The path has no file extension. Example: `general/actions/todos` → `general%2Factions%2Ftodos`.
 
 Use when JT asks for an "Obsidian link" to a file. The link opens the file in Obsidian on their device. New entries go at the TOP of the file (links cannot target a specific bullet).
 
@@ -477,34 +347,13 @@ This is a standing behavioral rule. Be proactive — don't wait for JT to ask.
 
 ## `/import-chat` Command
 
-When JT says `/import-chat` or pastes a raw transcript for vault import:
-
-1. If no transcript in the message, ask: "Paste the transcript."
-2. Detect platform from speaker label patterns:
-   - `Human` / `Assistant` or `You` / `Claude` → `claude.ai`
-   - `You` / `ChatGPT` or `User` / `Assistant` (OpenAI style) → `chatgpt`
-   - Search-style Q&A with Perplexity attribution → `perplexity`
-3. Clean and format the transcript:
-   - Normalize speaker labels to `**JT:**` and `**{Platform}:**`
-   - Restore code blocks (wrap detected code in triple backticks with language hint)
-   - Strip UI artifacts: copy buttons, token counts, timestamps in margins, regeneration labels
-   - Preserve full conversation — no summarizing or cutting
-4. Generate a 2-4 word kebab-case topic slug from the conversation subject
-5. Write to `research/chat-{YYYY-MM-DD}-{topic-slug}.md` with correct frontmatter
-6. If JT specified a project: write to `projects/{name}/notes/chat-{YYYY-MM-DD}-{topic-slug}.md`
-7. Confirm with file path, Obsidian URI, and one-line topic summary
+`/import-chat` (or any pasted transcript JT clearly wants archived) triggers chat-transcript ingestion. Spec at `container/skills/import-chat/SKILL.md` — platform detection, normalization, slug generation, vault routing (default `research/chat-{YYYY-MM-DD}-{topic-slug}.md`; project-specified routes to `projects/{name}/notes/`).
 
 ---
 
 ## Bases File Authoring
 
-You can author `.base` files on request (e.g., "Create me a dashboard showing active projects"):
-1. Write the `.base` YAML file to the appropriate vault location
-2. Send the Obsidian URI to the file
-3. JT opens in Obsidian to see live results
-
-Bases files belong in `general/dashboards/` by default.
-See global CLAUDE.md for the full Bases file format reference.
+`.base` file requests ("create me a dashboard showing active projects") → use the `obsidian-bases` skill. Default vault location: `general/dashboards/`. Full Bases file format reference at `container/skills/obsidian-bases/SKILL.md`.
 
 ---
 
