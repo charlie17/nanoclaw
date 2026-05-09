@@ -177,6 +177,18 @@ For each source cited on a concept page:
 - Do NOT place footnote anchors (`[^key]`) inside Obsidian callout blocks (`> [!type]`). Obsidian renders the anchor as literal attached text inside callouts, not as a clickable footnote link (rendering bug; no version of this looks right). When citing inside a callout, either: (a) cite via the body sentence immediately preceding or following the callout, or (b) put the source name inline as plain text inside the callout. The footnote def at the bottom is unaffected — only the anchor is the problem inside callouts.
 
 
+## Image embeds
+
+Sources frequently include figures (success matrices, glide-path charts, decision trees). Full canon at `wiki/!style.md` §9 — read it before embedding the first image of any ingest. Operational summary:
+
+1. **JT files; you reference.** JT curates images via Telegram and lands them at `wiki/assets/<corpus>/<corpus>-<series>-<NN>-<descriptor>.png` BEFORE ingest. You do NOT fetch images from Readwise or the open web. If a needed asset is missing during synthesis, surface it during Step 4 discussion: *"Source references a chart at `<position-in-text>` — file under `wiki/assets/<corpus>/` and re-run, or ingest without?"* Don't fabricate ASCII charts as substitutes — embed the asset or omit the figure.
+2. **Recognize image refs in the raw archive.** `wiki/raw/<doc-id>.md` preserves the source body's markdown image references. Walk those refs at Step 5 / Step 6 — for each, identify which corresponding asset (if any) JT has filed under `wiki/assets/<corpus>/`. The mapping is nominal (matching `NN` + descriptor) plus context — use vision when the asset filename alone is ambiguous.
+3. **Embed with Obsidian-native wikilink syntax.** `![[ern-swr-01-success-matrix.png]]` — never markdown `![](...)`. Filename only — Obsidian resolves through the vault's asset index.
+4. **Brief prose translation alongside (mandatory, not optional).** 1–2 sentences describing what the image shows + how to read it. The translation is what makes the figure searchable through `mcp__qmd__query` and accessible when assets fail to render.
+5. **Attribution triangulation.** Combine: (a) active conversation context with JT during ingest, (b) markdown image refs in the raw archive, (c) vision when ambiguity persists. Explicit captions in the source are useful but optional.
+6. **Source-summary vs concept page.** Both can embed. Source-summary embeds the source's own figures verbatim (fidelity to what the source contains). Concept-page embeds figures that materially anchor a synthesized claim (the figure earns its inclusion by being load-bearing for the synthesis). Don't duplicate trivial figures across both.
+
+
 ## Step 6 — Full-ripple propagation (MANDATORY EVERY RUN)
 
 This is the load-bearing Karpathy operation. **Every `/wiki-ingest` must do the full ripple — no shortcuts, no "I'll come back later," no skipping.** Per Karpathy line 60: *"a single source might touch 10-15 wiki pages."*
@@ -214,10 +226,10 @@ related-pages:
 
 ### Step 6.5 — Self-check against `!style.md`
 
-Before finalizing, re-read every page you wrote or modified during this run against `wiki/!style.md`. For each page, walk the seven load-bearing rules:
+Before finalizing, re-read every page you wrote or modified during this run against `wiki/!style.md`. For each page, walk the eight load-bearing rules:
 
 - Concept pages: italic teaser present? Pattern B complete (`[!info]` + `[!tldr]-`)?
-- All pages: heading spacing tight (no blank line before body, except the two carve-outs)? Frontmatter → H1 tight? `[!quote]` absent? Emoji on at most one heading level? `[^key]` anchors only outside callout blocks?
+- All pages: heading spacing tight (no blank line before body, except the two carve-outs)? Frontmatter → H1 tight? `[!quote]` absent? Emoji on at most one heading level? `[^key]` anchors only outside callout blocks? Every image embed uses `![[...]]` (not `![](...)`), is filed under `wiki/assets/<corpus>/`, follows the `<corpus>-<series>-<NN>-<descriptor>` filename convention, and carries a 1–2 sentence prose translation alongside?
 
 Self-correct any violations in place. This catches drift at compose time so the nightly `/wiki-lint` run has nothing to flag from your work. Cheaper here than there.
 

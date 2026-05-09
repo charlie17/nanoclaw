@@ -88,6 +88,8 @@ Both `!home.md` and `!index.md` carry an explicit role banner at the top so the 
 <!-- JT: pattern from upstream add-karpathy-llm-wiki/SKILL.md §3c -->
 **One-at-a-time ingest discipline.** When JT points at multiple sources or a tagged backlog, process one at a time. Read → discuss → integrate (full ripple) → finalize that one before moving to the next. Never batch-read many sources then synthesize — the pattern produces shallow pages instead of deep integration.
 
+**Image embeds.** Sources frequently include figures (success matrices, glide-path charts, etc.). JT curates these manually via Telegram and files them under `wiki/assets/<corpus>/` where `corpus` is the source provenance — typically the author / blog / site (e.g. `ern` for Karsten's Early Retirement Now). Filename convention: `<corpus>-<series>-<NN>-<descriptor>.png` (live precedent: `ern-swr-01-success-matrix.png`) — zero-padded `NN`, kebab-case `descriptor`. Embed with **Obsidian-native wikilink syntax** `![[ern-swr-01-success-matrix.png]]`, NOT markdown `![](...)` (visually indistinguishable in Obsidian reading-mode but breaks vault-internal asset resolution + link-graph indexing). Add a brief prose translation alongside every embed (1–2 sentences describing what the image shows) so the page reads coherently when assets fail to render and the textual content stays grep-able. Triangulate attribution from active conversation context + body markdown image refs in the raw archive + vision; explicit caption is optional. JT files the asset; you reference it. Full canon at `wiki/!style.md` §9.
+
 ---
 
 ## Intent Classification
