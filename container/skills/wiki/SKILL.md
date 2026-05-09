@@ -98,7 +98,7 @@ Filename for the source-summary page is a kebab-case slug derived from the artic
    - If `_processed.json` does NOT contain this doc ID, but the filesystem has `sources/<slug>.md` already (rare, e.g. two different articles with the same title), append `-2`, `-3` to the slug to disambiguate. Record the chosen slug in `_processed.json`.
 3. **Slug snapshot is permanent.** Once recorded in `_processed.json`, never regenerate.
 
-Create `wiki/sources/<source-slug>.md`:
+Create `wiki/sources/<source-slug>.md`. **Tight spacing per `!style.md` §2** — no blank line between frontmatter `---` and `# H1`, no blank line between any heading and its body. Same discipline as concept pages.
 
 ```yaml
 ---
@@ -118,21 +118,13 @@ raw-archive: "[[raw/<doc-id>]]"
 related-pages:
   - "[[<topic-slug>]]"   # concept pages this source feeds
 ---
-
 # <Title> (source summary)
-
 <TL;DR — 1-2 sentences capturing the source's core argument or contribution>
-
 ## Key takeaways
-
 <3-7 bullets summarizing what this source delivers, opinionated voice, blog-post style>
-
 ## Notable claims
-
 <Claims worth citing into concept pages, each as a sentence or short paragraph>
-
 ## Related vault material
-
 <Vault content that surfaced via qmd, with provenance attribution>
 ```
 
