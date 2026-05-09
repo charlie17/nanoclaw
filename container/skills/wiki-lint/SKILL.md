@@ -4,7 +4,7 @@ When JT invokes `/wiki-lint` (manually OR via the nightly @ 2am ET (cron `0 6 * 
 
 ## Audit dimensions (Karpathy line 66)
 
-Fifteen dimensions audited in order:
+Sixteen dimensions audited in order:
 
 1. **Orphan pages** — pages in `wiki/` with no inbound `[[wikilinks]]` from other wiki pages. **AUTO-FIX:** find 2-3 related concept pages (read `!index.md` + use qmd query for semantic neighbors), add `[[wikilinks]]` from those pages to the orphan, and add return links from the orphan.
 2. **Dead-end pages** — pages with no outbound `[[wikilinks]]`. **AUTO-FIX:** scan the page content; for every entity, concept, or source mentioned that has a corresponding wiki page, add `[[wikilink]]`.
@@ -16,9 +16,9 @@ Fifteen dimensions audited in order:
 8. **Important concepts lacking pages** — concepts mentioned 3+ times across multiple sources but with no dedicated concept page. **REPORT** with proposed slug; JT decides whether to author.
 9. **Footnote anchors inside callout blocks** — Obsidian renders `[^key]` anchors inside `> [!type]` callouts as literal attached text (e.g., `Mechanism #2[^gardner]` displays as `Mechanism #2gardner`), not as clickable footnote links. Walk every callout block (contiguous run of lines starting with `>`); flag any `[^...]` anchor inside. Skip fenced code blocks even when they appear inside a callout. **AUTO-FIX:** when the same `[^key]` appears at least once outside the callout on the same page, strip the anchor from inside the callout (citation chain stays intact via the body reference). Footnote definitions at the bottom of the page are preserved unchanged. **FLAG for JT:** when the callout contains the only reference to a footnote on the page — moving the first reference out into body prose is editorial judgment.
 
-### Style-canon dimensions (10–15)
+### Style-canon dimensions (10–16)
 
-Dimensions 10–15 enforce `wiki/!style.md` (the canonical page-style guide). Scope notes inline. When `!style.md` itself is updated, its mtime change naturally triggers the next nightly lint via the existing skip-when-quiet check — the audit then re-evaluates every page against the new canon.
+Dimensions 10–16 enforce `wiki/!style.md` (the canonical page-style guide). Scope notes inline. When `!style.md` itself is updated, its mtime change naturally triggers the next nightly lint via the existing skip-when-quiet check — the audit then re-evaluates every page against the new canon.
 
 10. **Italic teaser missing under H1** (concept pages only — files at `wiki/<topic-slug>.md`, excluding `sources/`, `raw/`, and `!`-prefixed meta files). `!style.md` §1 + §7. **REPORT** — writing the teaser is creative work in landing-page voice; do NOT auto-generate.
 11. **Pattern B top-of-page incomplete** (concept pages only). `!style.md` §1 specifies three elements: italic teaser, `[!info]` cluster-hub framing, and `[!tldr]-` foldable synthesis of load-bearing claims. Dimension #10 already covers the teaser; dimension #11 fires when either the `[!info]` cluster hub OR the `[!tldr]-` synthesis is missing. **REPORT** — synthesis judgment required; do NOT auto-generate. Skip on very short pages or pure navigation hubs (per `!style.md` §1 carve-out).
@@ -26,6 +26,7 @@ Dimensions 10–15 enforce `wiki/!style.md` (the canonical page-style guide). Sc
 13. **Frontmatter → H1 blank line** (all wiki pages). `!style.md` §2 + §8. No blank line between the closing `---` of the frontmatter block and the `# H1` that follows. **AUTO-FIX (regex):** strip the blank line.
 14. **One-emoji-level-per-page violation** (concept pages typically; `!home` exempt — admonition badges and content-intrinsic emoji within bullets/quotes are also exempt per `!style.md` §4). Detect emoji on more than one heading level (`#` / `##` / `###` / `####`). **REPORT** — choosing which level qualifies is judgment about navigational value; do NOT auto-strip.
 15. **`[!quote]` admonition present** (all wiki pages). `!style.md` §5. Direct quotes use prose lead-in + plain `>` blockquote, never `[!quote]`. **REPORT** — refactor to prose lead-in is editorial; do NOT auto-rewrite.
+16. **Image embed syntax — markdown `![](path)` instead of Obsidian `![[asset]]`** (all wiki pages, raw/ excluded). `!style.md` §9. Walk every `.md` file in `wiki/` (excluding `raw/`); for each markdown image syntax `![alt](path)` found, attempt to resolve. **AUTO-FIX (cautious):** extract the basename of the path (last segment, e.g. `chart.png` from `assets/ern/chart.png` or just `chart.png`); if exactly one file with that basename exists anywhere under `wiki/assets/`, replace the markdown form with `![[<basename>]]` Obsidian wikilink syntax. **FLAG for JT:** when zero matches (asset missing — file under `wiki/assets/<corpus>/` and re-run, or remove the embed); when 2+ matches across different corpora (basename ambiguous — JT picks correct corpus). Skip fenced code blocks. Walk concept, source, and meta files alike — the rule is universal per `!style.md` §9. Filename-convention violations (assets that don't follow `<corpus>-<series>-<NN>-<descriptor>`) are NOT linted here — that's editorial; the syntax check is the safety net for wikilink-vs-markdown drift.
 
 ## Skip-when-quiet check (nightly mode)
 
