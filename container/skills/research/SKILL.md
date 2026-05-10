@@ -109,31 +109,35 @@ No `trust` field — absence is the trust signal (sync-path sources are JT-curat
 
 ### Telegram reply
 
-Reply format (draft — JT tweak-rights reserved):
+Per CLAUDE.md `## Reply Discipline (executive tone)` + `## Telegram Output Format`. Each cited source title is a markdown deep-link per CLAUDE.md `### Deep-linking items you surface` (Readwise: `https://read.readwise.io/{location}/read/{id}`; vault: Obsidian CF-worker URL).
 
-Per CLAUDE.md `## Telegram Output Format` — plain-text only, no `|` column syntax. Each cited source title is a markdown deep-link per CLAUDE.md `### Deep-linking items you surface` (Readwise: `https://read.readwise.io/{location}/read/{id}`; vault: Obsidian CF-worker URL). Example for `/research spaced repetition`:
+**Shape:**
+1. **Synthesis preview line** — 1-2 sentences in plain English answering the question JT actually asked. The synthesis itself, not a "research complete" confirmation. Surface the load-bearing finding; if there's a high-confidence nuance worth flagging on the phone (e.g., "but most studies are short-window"), one extra sentence is fine.
+2. **Obsidian deep-link** — for the newly written research report.
+3. **Blank line, then `Top sources:` header.**
+4. **3-5 numbered source items**, blank line between items, one source per line. Title as markdown deep-link, then ` — ` separator, then concise metadata (highlight count or "starred" or "your note: \"...\"" — pick the most signal-rich attribute).
+
+**Worked example for `/research spaced repetition`:**
 
 ```
-Research complete: spaced repetition
+Anki + retrieval practice is the highest-leverage learning technique for durable recall — ~30 min/day across 2 months builds long-term retention. Caveat: it only works if the habit sticks.
 
 [Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fresearch%2Fresearch-2026-04-20-spaced-repetition)
 
 Top sources:
-1. ["Make It Stick"](https://read.readwise.io/archive/read/01kpdqd374qhavgs79cbp9vr8q) — 12 highlights on retrieval practice [your note: "key for Anki redesign"]
+
+1. ["Make It Stick"](https://read.readwise.io/archive/read/01kpdqd374qhavgs79cbp9vr8q) — your note: "key for Anki redesign"
+
 2. [Foer article](https://read.readwise.io/archive/read/01kpabc123xyz) — your note: "Anki only works if you build the habit"
-3. ["Learning How to Learn" (Oakley)](https://read.readwise.io/later/read/01kpdef456uvw) — spaced vs massed practice, 4 highlights
+
+3. ["Learning How to Learn" (Oakley)](https://read.readwise.io/later/read/01kpdef456uvw) — spaced vs massed practice
+
 4. [Spaced repetition vault note](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fresearch%2Fresearch-2026-02-14-spaced-repetition) — prior research report
-5. ["The Science of Self-Learning"](https://read.readwise.io/archive/read/01kpghi789rst) (starred) — 3 highlights on interval scheduling
+
+5. ["The Science of Self-Learning"](https://read.readwise.io/archive/read/01kpghi789rst) (starred) — interval scheduling
 ```
 
-Shape rules:
-- Line 1: topic confirmation one-liner
-- Line 2: Obsidian deep-link for the newly written research report (CF worker URL wrapping `obsidian://open?vault=ObsidianDaystromVault&file=general/research/{filename-without-extension}`)
-- Blank line
-- "Top sources:" plain-text header
-- 3–5 numbered source items, one per line, **titles wrapped as markdown deep-links** per CLAUDE.md rule
-- JT's own notes quoted inline with `[your note: "..."]` when present
-- Never use `|` / `-+-` / table syntax
+The synthesis preview line gives JT enough to act from the phone alone (or to decide opening Obsidian is worth it). The numbered list is loose (blank line between items). No trailing "research complete" recap — the preview + link + sources IS the close-out.
 
 ## Supplement decision
 

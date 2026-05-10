@@ -14,7 +14,7 @@ Announce model at start: "Running `/wiki-scan` with Haiku — diagnostic report 
 
 ## Output shape
 
-Per CLAUDE.md `## Telegram Output Format` — plain-text numbered list, one item per line. Telegram does NOT render `|` table syntax; pipes and dashes show as literal characters. Each item's title is a markdown deep-link to its Readwise Reader URL per CLAUDE.md `### Deep-linking items you surface` — the `reader_list_documents` response contains `id` + `location` for every item; use them to construct `https://read.readwise.io/{location}/read/{id}` for each backlog entry.
+Per CLAUDE.md `## Reply Discipline (executive tone)` + `## Telegram Output Format`. Loose numbered list (blank line between items), each item's title a markdown deep-link to its Readwise Reader URL per CLAUDE.md `### Deep-linking items you surface` — the `reader_list_documents` response contains `id` + `location` for every item; use them to construct `https://read.readwise.io/{location}/read/{id}` for each backlog entry. Lead with a brief framing line (backlog count) before the list.
 
 **WRONG:**
 ```
@@ -25,11 +25,16 @@ Per CLAUDE.md `## Telegram Output Format` — plain-text numbered list, one item
 
 **RIGHT:**
 ```
+3 untagged items in the daystrom-wiki backlog:
+
 1. [Make It Stick](https://read.readwise.io/archive/read/01kpdqd374qhavgs79cbp9vr8q) — Brown ⭐ Saved Apr 12
+
 2. [Spacing Effect Explained](https://read.readwise.io/archive/read/01kpabc123xyz) — Oakley · Saved Apr 09
+
+3. [Foer article](https://read.readwise.io/later/read/01kpdef456uvw) — your highlights: 4 · Saved Apr 05
 ```
 
-Keep inline metadata short (author, starred, saved-date is enough). Use em-dashes, middle dots, or labels to separate attributes — never pipes. No vault writes during a scan run.
+Keep inline metadata short (author, starred, saved-date is enough). Use em-dashes, middle dots, or labels to separate attributes — never pipes. If backlog is empty, the entire reply is one line: `Backlog clear — no untagged daystrom-wiki items.` No vault writes during a scan run.
 
 Optional `!log.md` append (only if JT asks): `## [YYYY-MM-DD] scan | N backlog items, priority top-3: X, Y, Z`
 

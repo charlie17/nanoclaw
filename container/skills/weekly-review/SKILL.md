@@ -227,22 +227,42 @@ Emit this exact text, always in v1 — no paraphrase:
 
 ## Telegram output shape
 
-**Minimal — 3 lines only.** JT reads the full review in Obsidian; Telegram is the "it's done, here's the link" surface. No component content, no bullets, no Big 5 summary, no stub list. Just task-complete + window + link.
+Per CLAUDE.md `## Reply Discipline (executive tone)`. The full review lives in the vault file; Telegram surfaces a **1-2 sentence synthesis preview** so JT can decide from his phone alone whether opening Obsidian today is worth it.
+
+**Shape:**
 
 ```
-/weekly-review complete — Review #N · [Window: Apr 14 → Apr 21]
+/weekly-review #N — Apr 14-21 — ready
+
+<1-2 sentence synthesis preview pulled from Components 5 + 11 — what's top of mind this week>
 
 [Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Flogs%2Fdaystrom-reviews%2Fweekly-YYYYMMDD)
 ```
 
-Rules:
-- **Exactly 3 lines** — header line, blank line, Obsidian deep-link line. Nothing else.
-- **Never** emit review content in Telegram — no per-component bullets, no Big 5 scores, no observations, no priorities. All of that lives in the vault file.
-- **`N`** = `data.review_count + 1` (same value written to the state file in Step 4).
-- **Window dates** = format `data.window_start` and `data.window_end` as compact `MMM DD` (e.g. `Apr 14 → Apr 21`).
-- If `data.first_run` is true, append ` · first run` to the header line after the window bracket.
-- **Always** include the CF-worker deep-link with the actual YYYYMMDD of the report.
-- **Never** use `|---|` tables — Telegram renders them as literal pipes.
+**Header line:** `/weekly-review #N — <Mon DD>-<DD> — ready`
+- `N` = `data.review_count + 1`
+- Window: compact, no brackets, no "Window:" label. `Apr 14-21` if same month; `Apr 28-May 5` across month boundary
+- If `data.first_run` is true, append ` · first run` after `ready`
+
+**Synthesis preview line — composed at synth time:**
+
+After Components 5 (Pattern Recognition) + 11 (Structured Planning) are written to the vault file, compose 1-2 sentences in plain English answering: *what should JT pay attention to this week?* Pull from the highest-signal Pattern Recognition flag and the most pressing Structured Planning priority. Examples:
+
+- **Active week with action items:** `Top of mind: 3 stale todos in the options track, overcommitment pattern ticked up vs last week. Detail in Obsidian.`
+- **Active week with positive signal:** `Strong follow-through on Daystrom + IPS work this week. Component 5 flagged momentum on the wiki ingest cadence. Detail in Obsidian.`
+- **Quiet week:** `Quiet week. 0 new pattern flags, no priority shifts. Open the review when convenient.`
+- **Empty / first-run week:** `First weekly review — 7-day lookback covered an early-adoption window. Open Obsidian when convenient to tune the cadence.`
+
+If Component 5 returned `[stub — convention not adopted]` for component 1 or 4 OR Pattern Recognition sub-agent failed, fall back to: `Mostly quiet — see Obsidian for the components that did surface.` Don't fabricate a preview from sparse signal.
+
+**Rules:**
+- Exactly 3 content blocks — header / preview / Obsidian link. Blank lines between blocks.
+- Preview is plain English, no per-component bullets, no `§5.x` references, no jargon, no stub-component callouts. Translate findings to outcomes JT can act on.
+- The link always includes the CF-worker deep-link with the actual YYYYMMDD of the report.
+- Never use `|---|` tables — Telegram renders them as literal pipes.
+- **One-message rule:** the preview + link IS the close-out. No trailing recap.
+
+**What does NOT change:** the vault file itself stays the canonical 11-component report + Big 5. This change affects only the Telegram surface — it now serves as a triage pointer with a phone-readable preview, not a pure handoff.
 
 ## Orchestrator coordination
 

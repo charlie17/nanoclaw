@@ -60,8 +60,10 @@ For each in-scope mirror, all queries use `git log --all` (full form: `git --git
 
 ## Output forms
 
-- **Prose paragraph** (default) — flowing summary per repo; mention commit count, branches, notable patterns.
-- **Bullet list** — if JT asks for a list.
+Per CLAUDE.md `## Reply Discipline (executive tone)`. Outcomes-first prose, plain English, no commit-hash recitations unless JT asks for them. One-message close-out.
+
+- **Prose paragraph** (default) — flowing summary per repo. Lead with what got built or shipped (executive framing), then mention commit count and branches as supporting context. Notable patterns or themes (e.g., "lots of refactoring this week", "new feature work concentrated in `jt-daystrom`") get one closing sentence.
+- **Bullet list** — if JT asks for a list. Loose (blank line between items), each item ≤ 2 lines, plain-English description of what each commit/branch achieved.
 - **Save to vault** (on explicit JT request only): write `general/research/coding-recap-<YYYY-MM-DD>-<scope>.md` with frontmatter:
   ```
   trust: trusted

@@ -126,23 +126,28 @@ For `general/!index.md` (the hub), use a sectioned shape:
 
 ## Output to JT
 
-Per CLAUDE.md `## Telegram Output Format` — plain-text numbered list, NEVER tables. Report:
+Per CLAUDE.md `## Reply Discipline (executive tone)` + `## Telegram Output Format`. Loose numbered list (blank line between items). Only surface MOCs with actual changes — silence on `clean. No changes.` MOCs is the signal. Closing 1-2 sentence summary if there's a JT-action item.
+
+**Worked example:**
 
 ```
-1. general/!index.md — created (was missing). 4 orphan domains added with AUTO tags.
-2. logs/!index.md — 3 orphans added (coding.md, dogs.md, gifts.md). All AUTO-tagged.
-3. reference/!index.md — 1 broken link flagged (reference/old-thing.md → file does not exist). 2 bare links upgraded with AUTO context phrases.
-4. projects/options/!index.md — clean. No changes.
-5. projects/daystrom/!index.md — created (was missing). 3 orphans added.
+1. general/!index.md — created (was missing). Added 4 orphan domains.
 
-Total: 2 MOCs created · 9 entries added · 2 entries upgraded · 1 broken link flagged for JT review.
+2. logs/!index.md — added 3 newly-discovered domains (coding, dogs, gifts).
 
-Suggested next actions:
-- Review AUTO-tagged entries (grep `<!-- AUTO -->` across general/) and rewrite phrases that don't match your voice
-- Fix the broken link at reference/!index.md (search "old-thing")
+3. reference/!index.md — flagged 1 broken link (`reference/old-thing.md` no longer exists); upgraded 2 bare-link entries with auto-phrased context.
+
+4. projects/daystrom/!index.md — created (was missing). Added 3 entries.
+
+Worth a quick pass: AUTO-tagged entries are placeholders for your voice — search the vault for `<!-- AUTO -->` when you're ready to refine them. The broken link at reference/!index.md needs your decision (rename target or remove entry).
 ```
 
-If grep would help JT find AUTO entries: include the exact command at the end of the report.
+**Rules:**
+- Skip MOCs with no findings — don't list "projects/options/!index.md — clean" as an item.
+- Translate operational terms to plain English: "Added 3 newly-discovered domains" not "3 orphans added".
+- If zero MOCs had findings: one-line reply `MOC tree clean — no orphans, broken links, or bare entries.`
+- No grep commands or instruction-shell snippets in the reply. The action items go in plain English.
+- One-message close-out — no trailing recap.
 
 ## What you MUST NOT do
 

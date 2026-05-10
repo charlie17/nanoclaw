@@ -41,7 +41,11 @@ When JT says `/import-chat` or pastes a raw transcript for vault import. Announc
      ```
    - Body: cleaned + normalized transcript, full and verbatim.
 
-6. **Confirm to JT** with the file path, an Obsidian deep-link (per CLAUDE.md §Obsidian URIs), and a one-line topic summary.
+6. **Confirm to JT** per CLAUDE.md `## Reply Discipline (executive tone)`. One-line summary of the topic + Obsidian deep-link. Worked example:
+   ```
+   Imported chat on options-backtesting (~80 turns) → [chat-2026-03-22-options-backtesting](obsidian-link)
+   ```
+   Plain English topic description, no platform-detection recap, no `type: imported-chat` frontmatter mention. The deep-link IS the close-out — no trailing summary.
 
 ## What you MUST NOT do
 

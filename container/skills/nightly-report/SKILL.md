@@ -29,31 +29,63 @@ Reply with plain-text Telegram summary only (see §Telegram output shape). **No 
 
 ## Telegram output shape
 
-Two or three lines. No tables. No deep-links.
-
-```
-/nightly-report — Mon 4/21/26
-
-Updates: actions/errands.md, logs/mpm/!log.md, logs/food/!log.md
-Attention: 1 task error · Disk: 30% used, 103G free
-```
+Per CLAUDE.md `## Reply Discipline (executive tone)`. Two or three lines. No tables. No deep-links. No `Updates:` / `Attention:` devops headers — write to JT in plain English.
 
 **Header line:** `/nightly-report — DOW M/D/YY`
 - DOW = Mon/Tue/Wed/Thu/Fri/Sat/Sun
-- M/D/YY = numeric with no leading zeros (e.g. `4/21/26`, not `04/21/2026`)
+- M/D/YY = numeric with no leading zeros (e.g. `4/21/26`)
 - Derive from `data.report_date` (already in ET per prefetch)
 
-**Updates line:** `Updates: <path1>, <path2>, ...`
-- List each path from `data.vault_changes` comma-separated, relative to `general/`
-- If empty: `Updates: none`
+**Body — two states:**
 
-**Attention line** — include ONLY if there is something to flag:
-- Task-error chunk: `<N> task error` (N == 1) or `<N> task errors` (N > 1). Omit if N == 0.
-- Disk chunk: `Disk: <pct> used, <free>`. Omit if disk percentage < 50% (nothing to flag).
-- Join present chunks with ` · `. Prefix with `Attention: `.
-- If BOTH chunks are suppressed, omit the entire Attention line.
+**Quiet state (no errors, disk healthy):** one line summarizing what got touched in the last 24h, in plain English. Translate paths to human labels:
+- `logs/<domain>/!log.md` → `<domain> log`
+- `logs/<domain>/<file>.md` → `<domain> notes`
+- `actions/errands.md` → `errands list`; `todos.md` → `todos`; `shopping.md` → `shopping list`
+- `reference/<area>.md` → `<area> reference`
+- `projects/<name>/log.md` → `<name> project log`
 
-**Task error relabeling:** if any entry in `data.task_errors` contains "exit code 137", "exit status 137", or "exited 137", render that entry as "Container exited with code 137 (intermittent — not OOM)" in any count or summary. Do NOT use the label "OOM kill" — root cause confirmed NOT an OOM (no docker memory limit set; kernel logs clean).
+If `data.vault_changes` is empty, the body line is just `Quiet last 24h.`
+
+**Attention state (any task errors, disk ≥ 50% used, or other flag-worthy event):** the vault-touches summary line, then a `Heads up: <plain-English description>` line for what JT should know. Drop `Heads up:` if there's nothing to flag — silence on attention items IS the signal.
+
+**Worked examples:**
+
+Quiet day:
+```
+/nightly-report — Mon 4/21/26
+
+3 vault touches: errands list, MPM log, food log.
+```
+
+Truly quiet (zero touches):
+```
+/nightly-report — Mon 4/21/26
+
+Quiet last 24h.
+```
+
+Day with attention:
+```
+/nightly-report — Mon 4/21/26
+
+3 vault touches: errands list, MPM log, food log.
+Heads up: 1 scheduled task errored overnight — see Worf log.
+```
+
+Disk filling:
+```
+/nightly-report — Mon 4/21/26
+
+Quiet last 24h.
+Heads up: disk at 78% (38G free) — worth a sweep soon.
+```
+
+**Disk threshold:** mention disk only when ≥ 50% used. Below 50%, stay silent — disk health doesn't need a daily ack.
+
+**Task error wording:** if any entry in `data.task_errors` contains "exit code 137", "exit status 137", or "exited 137", phrase the heads-up as `Heads up: 1 container exit-137 overnight (intermittent, not OOM) — see Worf log.` Do NOT use the label "OOM kill" — root cause confirmed NOT an OOM (no docker memory limit set; kernel logs clean).
+
+**One-message rule:** the report IS the close-out. No trailing summary follows.
 
 ## Fallback data collection (manual invocation only)
 

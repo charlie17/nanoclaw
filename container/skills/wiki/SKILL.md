@@ -245,13 +245,39 @@ Self-correct any violations in place. This catches drift at compose time so the 
 
 ### Step 8 — Report to JT
 
-Telegram-friendly summary per CLAUDE.md `## Telegram Output Format` — plain-text numbered list, NEVER tables. Include:
-- Source ingested (with deep-link)
-- Source-summary page created (path)
-- Concept pages created or updated (paths)
-- Existing pages cross-linked (paths)
-- Any contradictions flagged
-- Brief judgment-call notes worth JT review
+Per CLAUDE.md `## Reply Discipline (executive tone)` + `## Telegram Output Format`. Loose numbered list (blank line between items), plain English, NEVER tables. The list IS the final message — no trailing summary follows.
+
+**Item template:**
+
+1. `Ingested [<Title>](<source-url>) by <Author> → [source-summary](<obsidian-link>)` — combine source-ingested + source-summary into one item
+2. `NEW concept page: [<page-slug>](<obsidian-link>) — <plain-English 1-sentence summary of what this page is about for a human reader>` — one item per new concept page
+3. `UPDATED concept page: [<page-slug>](<obsidian-link>) — <what specifically was added/changed, in plain English>` — one item per updated concept page
+
+After the numbered list, add a 1-2 sentence closing paragraph IF there's substantive integration worth naming (e.g., new pages connect to an existing cluster via shared premises). Standalone prose, not numbered. Skip the closing paragraph entirely if no such integration.
+
+**What NOT to include:**
+- Section references like `§3 carries three named frameworks: 3.1 Delta-asymmetry, 3.2 Regime-conditional behavior...` — translate to plain English ("anchored on the Delta-asymmetry framework for measuring true equity exposure").
+- Directive letters/numbers from the brief like "per directive (d)" or "per directive (b)" — invisible to JT, drop.
+- Slug-handling decisions like "Slug stayed outside swr- namespace per your directive" or "footnote key [^ern-wheel] disambiguates from existing [^ern-swr-01]" — ops-internal, drop.
+- Empty-state findings like "No contradictions logged" — silent. Only mention contradictions when they exist (use `> [!contradiction]` callout in the affected page; surface in the reply only if action is needed).
+- "Stub-future-pages anticipated" lists — that's planning state, not what JT just got.
+- The trailing recap/summary message — the numbered list is the close-out. Stop there.
+
+**Worked example (canonical exec shape — JT-ratified 2026-05-10):**
+
+```
+1. Ingested [Why the Wheel Strategy Doesn't Work](source-url) by Karsten Jeske → [source-summary](obsidian-link)
+
+2. NEW concept page: [options-for-retirement-income](obsidian-link) — how options strategies fit into a retirement-income portfolio, anchored on the Delta-asymmetry framework for measuring how much of your portfolio is really long equity in disguise
+
+3. NEW concept page: [wheel-strategy](obsidian-link) — Karsten's six-pillar critique of the wheel, plus the CSP-only-with-cash-collateral variant that addresses most of his concerns
+
+4. UPDATED concept page: [swr-trinity-critique](obsidian-link) — added a section connecting CAPE entry-points to sequence-risk regimes, bridging the new options content with the existing SWR cluster
+
+The new options pages and the SWR cluster share load-bearing premises around sequence-risk and CAPE-regime correlation. Substantive integration, not an isolated graft.
+```
+
+If there are many concept pages (>4), group new and updated into compact lines: e.g., `2. NEW concept pages: [page-a](link), [page-b](link), [page-c](link) — [shared 1-sentence summary or per-page sub-bullets]` — judgment call to keep the list scannable.
 
 ## Progress pings (interactive long-running runs only)
 
