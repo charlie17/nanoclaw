@@ -305,6 +305,18 @@ Research requests → `/research` skill. Sync path (Readwise + vault sufficient)
 
 ---
 
+## Project compendia
+
+Some project folders contain a self-contained, JT-curated **compendium** of in-vault reference material — frontmatter-tagged `compendium: <name>` so the corpus is discoverable as a coherent unit, not just a folder of files. When JT asks a question whose subject matches a compendium, prefer pulling from that compendium first.
+
+Active compendia:
+
+- `projects/options/notes/options-strategies/` — `compendium: options-strategies`. 44 strategy pages + `!index.md` (qualitative triage table, Lens 1) + `!principles.md` (primitives lens, Lens 2) + `options-strategies.base` (filterable structural view: market-view / vol-view / risk / capital). Strategy pages have `type: strategy-page` frontmatter with structural attributes. When JT asks options-strategy questions, start with `!index.md` for triage, then drill into the matching strategy file. Per-strategy attributes are queryable via the `.base` view or via qmd against the frontmatter.
+
+Compendia live inside their owning project; they are NOT wiki corpora and are NOT reachable via `/wiki-query`. Use `mcp__qmd__query` (general namespace) or direct `Read` of the index file.
+
+---
+
 ## Context-Aware Surfacing Rules
 
 **Travel windows:** If JT is in a travel window (stored in agent memory), recognize travel context automatically even without explicit prefix. Offer to add relevant entries to the corresponding travel note.
