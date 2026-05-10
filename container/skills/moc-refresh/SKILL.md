@@ -11,9 +11,9 @@ Per pre-pass A11 + scope plan §6 + BA §F12. Three explicit tiers + one extensi
 | MOC | Scope | Links to |
 |---|---|---|
 | `general/!index.md` (hub) | Top-level entry point | All domain MOCs (`logs/!index.md`, `reference/!index.md`, `projects/{name}/!index.md` for each project) |
-| `logs/!index.md` | Log-domain MOC | Each `logs/<domain>.md` file (arts, pops, mpm, dogs, family, gifts, slaters, sawyer, poker, coding) |
-| `reference/!index.md` | Reference-area MOC | Single-file areas (coding, quotes, facts-stats, remember, org-approach, family-watchlist, reading-list, food) + folder areas (learning/, travel/, house/) |
-| `projects/{name}/!index.md` | Per-project MOC | Files inside that project's folder (next.md, notes/, etc.) |
+| `logs/!index.md` | Log-domain MOC | Each `logs/<domain>/` folder (arts, pops, mpm, dogs, family, gifts, slaters, sawyer, poker, coding, food, greece, house, travel). Entry shape: `[[logs/<domain>/!log\|<domain>]]`. For domains with sibling notes files (coding, food, greece, house, travel), the entry inlines the sibling links so notes don't register as orphans. |
+| `reference/!index.md` | Reference-area MOC | Single-file areas (quotes, facts-stats, remember, org-approach, family-watchlist, reading-list) + `learning/` folder area |
+| `projects/{name}/!index.md` | Per-project MOC | Files inside that project's folder (next.md, log.md, notes/, etc.) |
 
 **OUT OF SCOPE for `/moc-refresh`:**
 - `general/wiki/!index.md` — Karpathy wiki's own catalog. Owned by `/wiki-lint` + `/wiki-ingest`. Do NOT touch.
@@ -62,16 +62,17 @@ When generating a context phrase for a new or upgraded entry:
 
 ## MOC entry shape
 
-Standard format for one entry, with context phrase:
+Standard format for one entry in `reference/!index.md`, with context phrase:
 
 ```
-- [[reference/coding]] — Evergreen coding precepts, tool tips, stack notes, and API reference. <!-- AUTO -->
+- [[reference/quotes]] — Curated quotes worth remembering, append-only. <!-- AUTO -->
 ```
 
-For folder-pattern areas (which contain multiple files), point to the folder + give a one-line scope:
+For `logs/!index.md` entries — each `logs/<domain>/` folder gets one line. Entry points to the `!log.md` with a display alias of the domain name. For domains with sibling notes files, inline them so notes don't register as orphans:
 
 ```
-- [[reference/house/]] — House topics: renovations, paint colors, vendor contacts, HVAC, etc. <!-- AUTO -->
+- [[logs/coding/!log|coding]] — coding-discovery log. Sibling notes: [[logs/coding/precepts|precepts]], [[logs/coding/frameworks-and-stack|frameworks-and-stack]], [[logs/coding/tools|tools]], [[logs/coding/explore-and-one-offs|explore-and-one-offs]]. <!-- AUTO -->
+- [[logs/arts/!log|arts]] — arts log (movies, shows, concerts). <!-- AUTO -->
 ```
 
 For per-project MOC entries inside `general/!index.md`, link to the project's own MOC, not directly to project files:
@@ -110,8 +111,8 @@ For `general/!index.md` (the hub), use a sectioned shape:
 
 ## Domains
 
-- [[logs/!index]] — Log domains (arts, pops, family, etc.). Append-only chronological streams. <!-- AUTO -->
-- [[reference/!index]] — Evergreen reference (coding, food, house, learning notes, travel guides). <!-- AUTO -->
+- [[logs/!index]] — Log domains (arts, pops, family, coding, food, greece, house, travel, etc.). Each domain is a folder with `!log.md` and optional sibling notes files. <!-- AUTO -->
+- [[reference/!index]] — Evergreen reference (quotes, facts-stats, learning notes, etc.). <!-- AUTO -->
 
 ## Projects
 

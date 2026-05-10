@@ -15,11 +15,11 @@ You CANNOT browse the web — use the `/research` skill for all live web researc
 
 **Container mount path:** `/workspace/extra/vault/` is the absolute container path. **This path IS the host's `~/vault/general/` folder.** The mount maps host `~/vault/general/` → container `/workspace/extra/vault/`.
 
-**MUST NOT prepend `general/` to any vault path.** If you write to `/workspace/extra/vault/general/reference/food.md`, the file lands on the host at `~/vault/general/general/reference/food.md` — a broken double-nested directory. This bug has been observed in practice. Every routing path in this CLAUDE.md is already container-relative under `/workspace/extra/vault/`.
+**MUST NOT prepend `general/` to any vault path.** If you write to `/workspace/extra/vault/general/logs/arts/!log.md`, the file lands on the host at `~/vault/general/general/logs/arts/!log.md` — a broken double-nested directory. This bug has been observed in practice. Every routing path in this CLAUDE.md is already container-relative under `/workspace/extra/vault/`.
 
 **Path resolution rules:**
-- When this CLAUDE.md says `logs/arts.md`, the container path is `/workspace/extra/vault/logs/arts.md` → host `~/vault/general/logs/arts.md`. ✓
-- When this CLAUDE.md says `reference/food.md`, the container path is `/workspace/extra/vault/reference/food.md` → host `~/vault/general/reference/food.md`. ✓
+- When this CLAUDE.md says `logs/arts/!log.md`, the container path is `/workspace/extra/vault/logs/arts/!log.md` → host `~/vault/general/logs/arts/!log.md`. ✓
+- When this CLAUDE.md says `reference/quotes.md`, the container path is `/workspace/extra/vault/reference/quotes.md` → host `~/vault/general/reference/quotes.md`. ✓
 - NEVER `/workspace/extra/vault/general/<...>`. ✗ (creates `~/vault/general/general/<...>` on host)
 
 If unsure, use the absolute container path form (`/workspace/extra/vault/<rel>`) explicitly rather than a relative path.
@@ -29,13 +29,13 @@ If unsure, use the absolute container path form (`/workspace/extra/vault/<rel>`)
 You MUST NOT create new directories within the vault without explicit JT approval. The vault directory structure is JT-curated; new top-level folders, new sub-folders, and new project/learning/etc. subdirectories all require JT to greenlight first.
 
 **What you MAY do without asking:**
-- Append to existing files (e.g., add an entry to `logs/arts.md`).
+- Append to existing files (e.g., add an entry to `logs/arts/!log.md`).
 - Create a NEW file inside an EXISTING directory (e.g., create `research/research-2026-04-25-X.md` inside the existing `research/` folder).
 - Edit existing files in place.
 
 **What you MUST ask JT first:**
 - Creating a new top-level folder under the vault (e.g., a new `inbox/`, `inbox-temp/`, or any folder not currently in the JT-defined structure below).
-- Creating a new sub-folder inside an existing top-level folder where the routing rules don't already declare such a sub-folder (e.g., a new `reference/cooking/` sub-folder when only `reference/learning/` and `reference/travel/` are declared).
+- Creating a new sub-folder inside an existing top-level folder where the routing rules don't already declare such a sub-folder (e.g., a new `reference/cooking/` sub-folder when only `reference/learning/` is declared).
 
 If you find yourself constructing a path that would create a directory that does not already exist, stop. Confirm the parent dir exists; if not, ask JT before proceeding. The routing rules in this CLAUDE.md (§Vault Schema below) are the authoritative source of truth for which directories are allowed.
 
@@ -78,10 +78,11 @@ When a message arrives, classify before acting:
 | Intent | Action |
 |---|---|
 | Todo / errand / shopping / waiting | Write to appropriate `actions/` file |
-| Log entry (event, update, note about a person/domain) | Write to appropriate `logs/` file |
+| Log entry (event, update, note about a person/domain) | Write to appropriate `logs/<domain>/!log.md` (or sibling notes file when content is reference-shaped, e.g. `logs/food/notes.md`) |
 | Research request ("research X", "find out Y") | Invoke `/research` skill (see §Research Dispatch). Sync path: answer from Readwise + vault if sufficient. Supplement path: skill dispatches to quarantine queue — O'Brien notifies on Telegram when result ready. |
 | Reference / fact / quote / remember | Write to appropriate `reference/` file |
 | Project task | Write to appropriate `projects/{name}/next.md` |
+| Project completion / learning | Write to appropriate `projects/{name}/log.md` |
 | Vault query ("what did I write about X?") | Read relevant file(s) and synthesize |
 | Conversation / brainstorm / question | Respond directly |
 | Scheduling / reminder | Create NanoClaw scheduled task |
@@ -126,25 +127,23 @@ The `user_timezone` agent memory (Archie + Daystrom) is the durable binding; thi
 - `actions/errands.md` — places to go
 - `actions/waiting.md` — waiting for others
 
-**Logs:** `logs/{domain}.md` — one file per domain
-Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker`
+**Logs:** `logs/{domain}/` — one folder per domain. Each contains a `!log.md` (dated event-stream — the canonical log), and optional sibling notes files (kebab-case slug, no date prefix, flat — no `notes/` subfolder).
+Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker` · `coding` · `food` · `greece` · `house` · `travel`.
+
+Sibling notes files by domain (where present):
+- `logs/coding/` — `precepts.md`, `frameworks-and-stack.md`, `tools.md`, `explore-and-one-offs.md`. Future "figured out how to X" / dated coding-discovery entries land in `logs/coding/!log.md`. Existing `(Day M/D/YY)`-suffixed entries that pre-date the dimension collapse stay embedded in their topic file.
+- `logs/food/` — `notes.md` (restaurants to try, orders worth remembering, dietary protocols). Meal entries with photos go to `!log.md`.
+- `logs/greece/` — `notes.md` (land/property facts, family ownership, caretaker setup, selling process, contacts).
+- `logs/house/` — `bike-trek-fx-sport5.md`, `cars-audi-e-tron-2021.md`, `cars-ford-mach-e-2023.md`, `insurance.md`. Kebab-case topic slugs; no date prefix.
+- `logs/travel/` — `travel-{destination}.md` filename prefix (e.g., `travel-dc.md`, `travel-florida.md`, `travel-az.md`). The `travel-` prefix disambiguates from project-Greece, generic-Florida, etc. Future trip events ("booked trip to Atlanta") go to `!log.md`; per-destination accumulation (restaurants, hotel notes) goes to the destination's `travel-<destination>.md` file.
+
+For coding-related content not yet covered by an existing topic file: project-specific coding work routes to `projects/{name}/` unchanged. Deep external sources worth synthesizing route to `/wiki-ingest`, not coding files.
 
 **Reference single files:** `reference/{area}.md`
-Areas: `coding` · `quotes` · `facts-stats` · `remember` · `org-approach` · `family-watchlist` · `reading-list` · `food` · `greece`
-
-**`reference/coding.md`** is the canonical home for all coding-related content — evergreen precepts (Claude Code / Cursor / etc.), tool tips, stack knowledge (Nuxt/Vue/Supabase setups), conceptual frameworks (LeanSpec, Kiro), API/key references, VS Code prefs, AND dated discoveries / exploration notes / "interesting framework I came across" entries. Coding is one file, not split across logs + reference. Triggers (any of): *"add to my coding precepts"*, *"tip:"*, *"figured out how to X"*, *"saw Y"*, *"curious about Z"*, *"interesting framework I came across"*.
-
-- **Project-specific coding work** (options, daystrom, podvast, leanspec, etc.) routes to that project's `projects/{name}/` folder unchanged — never to `reference/coding.md`.
-- **Deep external sources** worth synthesizing (a dense engineering essay, a serious piece on agent-failure interception) → `/wiki-ingest`, not `reference/coding.md`.
-
-**`reference/greece.md`** is JT-curated reference about Greece (places, recipes, cultural notes, etc.). Migrated 2026-04-29 from `logs/greece.md` (was incorrectly classified as a log domain initially — content shape was reference, not chronological log).
-
-`reference/food.md` is hybrid — primary content is curated reference (restaurants, preferences, recipes, etc.), but it ALSO accepts append-style meal entries with photos at the bottom. When JT says "add this meal to food" / "save this image to food log" / similar, append to a `## Meal log` section at the bottom of `reference/food.md`. Preserve the curated reference content above untouched. If `## Meal log` does not yet exist, create it once at the bottom of the file and append to it from then on.
+Areas: `quotes` · `facts-stats` · `remember` · `org-approach` · `family-watchlist` · `reading-list`
 
 **Reference folders:**
-- `reference/learning/{source-name}-{YYYY-MM}.md` — e.g., `atomic-habits-2026-03.md`
-- `reference/travel/Travel - {Destination}.md` — e.g., `Travel - AZ.md`
-- `reference/house/{topic-slug}.md` — e.g., `kitchen-renovation.md`, `hvac.md`, `paint-colors.md`. Kebab-case topic slugs; no date prefix (house notes are evergreen reference). Promoted from single-file to folder 2026-04-29 per JT directive — legacy `reference/house.md` content will migrate into per-topic files at JT's discretion.
+- `reference/learning/{source-name}-{YYYY-MM}.md` — e.g., `atomic-habits-2026-03.md`. Per-source consumed-content notebook (book/podcast/article/video/course).
 
 ### MOC maintenance (Maps of Content)
 
@@ -152,9 +151,9 @@ The vault is navigated via three tiers of MOC (Map of Content) files — separat
 
 **MOC tree:**
 - `general/!index.md` — hub. Links to each domain MOC + each per-project MOC.
-- `logs/!index.md` — links to every `logs/<domain>.md` file with a one-sentence scope phrase.
-- `reference/!index.md` — links to every `reference/{area}.md` single-file AND every `reference/{folder}/` folder area.
-- `projects/{name}/!index.md` — per-project MOC; one per project folder.
+- `logs/!index.md` — links to every `logs/<domain>/` folder with a one-sentence scope phrase. Entry shape: `[[logs/<domain>/!log|<domain>]]` (display alias = domain name). For domains with sibling notes files, the entry inlines the sibling links so notes don't register as orphans.
+- `reference/!index.md` — links to every `reference/{area}.md` single-file AND `reference/learning/`.
+- `projects/{name}/!index.md` — per-project MOC; one per project folder. Includes `next.md` and `log.md` (accomplishments + learnings).
 
 **Excluded (not MOC-managed):** `general/wiki/!index.md` (Karpathy wiki — owned by `/wiki-lint` + `/wiki-ingest`, separate system). `actions/`, `research/`, `general/tmp/`, `quarantine/`, `private/` — no MOCs.
 
@@ -172,12 +171,13 @@ The vault is navigated via three tiers of MOC (Map of Content) files — separat
 
 ### Single file vs folder — promotion path
 
-Single-file vs folder is not permanent. Some areas start as `reference/{area}.md` and graduate to `reference/{area}/` when content volume grows or topic count multiplies (precedent: `learning/` and `travel/` are folders by design from the start; `house/` graduated 2026-04-29). When you observe a single-file area becoming unwieldy (~50+ entries, ~10+ distinct subtopics, recurring grep difficulty, JT mentions "this file is getting too big"), **propose the split to JT explicitly** — name the area, the proposed sub-file naming convention, and the migration plan. Do NOT promote unilaterally — promoting creates a new directory, which violates the write-discipline rule above. JT approves; Archie ratifies the schema in this CLAUDE.md; then Daystrom executes the migration following Archie's authoritative routing entry.
+Single-file vs folder is not permanent. Some areas start as `reference/{area}.md` and graduate to a per-domain folder when content volume grows or topic count multiplies (precedent: `learning/` is a folder by design; the 14 log domains were promoted wholesale 2026-05-10 in the vault dimension collapse — `arts`, `pops`, `mpm`, `dogs`, `family`, `gifts`, `slaters`, `sawyer`, `poker`, `coding`, `food`, `greece`, `house`, `travel` all moved from flat `logs/{domain}.md` (or `reference/{area}.md` / `reference/{area}/` for coding/food/greece/house/travel) into the unified `logs/<domain>/` shape). When you observe a single-file area becoming unwieldy (~50+ entries, ~10+ distinct subtopics, recurring grep difficulty, JT mentions "this file is getting too big"), **propose the split to JT explicitly** — name the area, the proposed sub-file naming convention, and the migration plan. Do NOT promote unilaterally — promoting creates a new directory, which violates the write-discipline rule above. JT approves; Archie ratifies the schema in this CLAUDE.md; then Daystrom executes the migration following Archie's authoritative routing entry.
 
 **Projects:**
 - `projects/priorities.md` — runway list
 - `projects/{name}/next.md` — project todos (default)
 - `projects/{name}/next-{discriminator}.md` — additional `next-*` files for projects that benefit from splitting their todo stream by axis. Recognized example: `projects/options/next-coding.md` (coding-task track for the options project, sibling to `projects/options/next.md` which holds the strategy/research/ops track). Discriminator is kebab-case, descriptive of the axis. Project authors decide whether to split — most projects use the default single `next.md`.
+- `projects/{name}/log.md` — project accomplishments + learnings (dated entries). Triggers: *"finished {project} task X"*, *"learned the following on {project}: …"*. Also receives smart-todo-lifecycle moves: when JT references completion of an item in `next.md`, Daystrom asks for one-line confirmation, then removes from `next.md` and appends to `log.md` with today's date.
 - `projects/{name}/notes/{projectname}-{YYYY-MM-DD}-{topic}.md` — free-form notes
 
 **Research:** `research/research-{YYYY-MM-DD}-{topic}.md` — e.g., `research-2026-03-22-hiking-trails-az.md`
@@ -288,6 +288,7 @@ All vault files have YAML frontmatter. Maintain it exactly as specified.
 | Reference (single) | `type: reference` · `area: <slug>` · `privacy: general` | — |
 | Reference (learning) | `type: reference` · `area: learning` · `source` · `source-type` · `date-consumed` · optional `linked-projects` · `unlinked` | source-type: book · podcast · article · video · course |
 | Project (next.md) | `type: project` · `project` · `status` | status: not started · active · dormant · completed |
+| Project (log.md) | `type: project-log` · `project` | — |
 | Project (notes) | `type: project-note` · `project` · `created` | — |
 | Research | `type: research` · `topic` · `requested` · `completed` · `source` · `run-mode` · optional `linked-projects` | run-mode: sync · supplement |
 | Imported chat | `type: imported-chat` · `platform` · `topic` · `date` | platform: claude.ai · chatgpt · perplexity · other |
@@ -379,21 +380,29 @@ This is a standing behavioral rule. Be proactive — don't wait for JT to ask.
 | "Call Dean" | → `actions/todos.md` |
 | "Go to Costco" | → `actions/errands.md` |
 | "Buy milk at Costco" | → Confirm Before Splitting → both shopping + errands |
-| "Pops meds update: xyz" | → `logs/pops.md` verbatim |
-| "Saw Tweedy concert…" | → `logs/arts.md` |
-| "Jen saw these shoes — (link)" | → `logs/gifts.md` with formatted link |
-| "We watched Sinners…" | → `logs/arts.md` → offer to remove from family-watchlist |
+| "Pops meds update: xyz" | → `logs/pops/!log.md` verbatim |
+| "Saw Tweedy concert…" | → `logs/arts/!log.md` |
+| "Jen saw these shoes — (link)" | → `logs/gifts/!log.md` with formatted link |
+| "We watched Sinners…" | → `logs/arts/!log.md` → offer to remove from family-watchlist |
 | "Light from Jupiter is ~45 min old" | → `reference/facts-stats.md` |
 | 'Morgan Housel: "Don't follow your passion…"' | → `reference/quotes.md` |
 | "We like X brand salad dressing" | → `reference/remember.md` + agent memory |
 | "Add to reading list — (link)" | → ask JT for the page title rather than fetching → `reference/reading-list.md` |
 | "Jim Kwik podcast notes" | → `reference/learning/jim-kwik-podcast-{YYYY-MM}.md` |
+| "Add to my coding precepts: …" | → `logs/coding/precepts.md` |
+| "Figured out how to X" / "Tip:" / "Saw Y" | → `logs/coding/!log.md` |
 | "Add a closed trades chart" | → `projects/options/next.md` |
+| "options todo: X" | → `projects/options/next.md` |
+| "finished options task X" | → `projects/options/log.md`. If matching open item in `projects/options/next.md`, ask one-line confirmation and move-on-confirm. |
+| "learned the following on options: …" | → `projects/options/log.md` |
 | "Research X" | → invoke `/research` skill (sync or supplement path per message content) |
 | "Remind me on 4/21 to do X" | → Create NanoClaw scheduled task |
 | "Remember I am in AZ March 16-20" | → Agent memory only (temporal, expires 3/21) |
-| "Save this image to food / dinner log" | → Save image attachment, append entry to the `## Meal log` section at the bottom of `reference/food.md` (create the section once if missing). Curated reference content above is preserved. |
-| "AZ travel — Teaspoon was great…" | → `reference/travel/Travel - AZ.md` |
+| "Save this image to food / dinner log" | → Save image attachment, append entry to `logs/food/!log.md`. |
+| "Add to food notes: …" | → `logs/food/notes.md` |
+| "Booked trip to Atlanta" / "Flying to ATL Wed 5/12" | → `logs/travel/!log.md` |
+| "AZ travel — Teaspoon was great…" | → `logs/travel/travel-az.md` (create file if absent — single existing-folder write, allowed under write discipline) |
+| "Add to {domain} log: …" | → `logs/{domain}/!log.md` |
 
 ---
 

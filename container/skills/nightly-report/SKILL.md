@@ -15,7 +15,7 @@ Automated via NanoClaw task scheduler (cron `0 5 * * *`). Manual invocation: `/n
 [SCHEDULED TASK]
 
 Script output:
-{"report_date": "2026-04-21 05:00 ET", "vault_changes": ["general/logs/arts.md"], "task_errors": [], "disk": "42% used, 58G free"}
+{"report_date": "2026-04-21 05:00 ET", "vault_changes": ["general/logs/arts/!log.md"], "task_errors": [], "disk": "42% used, 58G free"}
 
 Instructions:
 /nightly-report
@@ -34,7 +34,7 @@ Two or three lines. No tables. No deep-links.
 ```
 /nightly-report — Mon 4/21/26
 
-Updates: actions/errands.md, logs/mpm.md, reference/food.md
+Updates: actions/errands.md, logs/mpm/!log.md, logs/food/!log.md
 Attention: 1 task error · Disk: 30% used, 103G free
 ```
 

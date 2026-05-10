@@ -50,11 +50,20 @@ def walk_md(base, skip_subdirs=frozenset()):
                 fp = os.path.join(root, fn)
                 yield os.path.relpath(fp, base), fp, os.path.getmtime(fp)
 
-# ── Component 1: done.md detection (scoped to projects/ for symmetry with
-#   Component 4; done.md is project-local by convention: projects/{name}/done.md)
-done_paths = [rel for rel, _, _ in walk_md(os.path.join(VAULT_ROOT, 'projects'))
-              if os.path.basename(rel) == 'done.md']
-comp1 = {'done_md_paths': done_paths, 'convention_not_adopted': len(done_paths) == 0}
+# ── Component 1: project log.md detection (scoped to projects/ for symmetry with
+#   Component 4; log.md is project-local by convention: projects/{name}/log.md).
+#   Replaces the pre-2026-05-10 done.md detection — done.md never landed; the
+#   vault dimension collapse seeded log.md across all projects as the canonical
+#   accomplishments + learnings stream per project.
+project_log_paths = [rel for rel, fp, mt in walk_md(os.path.join(VAULT_ROOT, 'projects'))
+                     if os.path.basename(rel) == 'log.md']
+project_log_in_window = [rel for rel, fp, mt in walk_md(os.path.join(VAULT_ROOT, 'projects'))
+                         if os.path.basename(rel) == 'log.md' and mt > window_epoch]
+comp1 = {
+    'project_log_paths': project_log_paths,
+    'project_log_in_window': project_log_in_window,
+    'convention_not_adopted': len(project_log_paths) == 0,
+}
 
 # ── Component 2: actions files ────────────────────────────────────────────────
 comp2 = {'actions_files': [

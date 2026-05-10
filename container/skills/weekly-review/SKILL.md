@@ -15,7 +15,7 @@ Automated via NanoClaw task scheduler (cron `30 3 * * 5` — Friday 3:30 AM loca
 [SCHEDULED TASK]
 
 Script output:
-{"wakeAgent": true, "data": {"window_start": "2026-04-14T03:30:00Z", "window_end": "2026-04-21T03:30:00Z", "first_run": false, "review_count": 3, "components": {"1": {"done_md_paths": [], "convention_not_adopted": true}, "2": {"actions_files": [...]}, "3": {"log_files_in_window": ["logs/arts.md"]}, "4": {"next_md_paths": [], "convention_not_adopted": true}, "6": {"learning_files": [], "dir_missing": true}, "7": {"vault_size_bytes": 5000000, "disk": "16% used, 122G free", "orphans": [], "orphan_count": 0, "missing_frontmatter": [], "missing_frontmatter_count": 0, "wiki_lint_log": null, "wiki_lint_missing": true}, "10": {"messages": [...], "message_count": 45}}}}
+{"wakeAgent": true, "data": {"window_start": "2026-04-14T03:30:00Z", "window_end": "2026-04-21T03:30:00Z", "first_run": false, "review_count": 3, "components": {"1": {"project_log_paths": ["options/log.md", "daystrom/log.md"], "project_log_in_window": ["options/log.md"], "convention_not_adopted": false}, "2": {"actions_files": [...]}, "3": {"log_files_in_window": ["arts/!log.md", "coding/precepts.md"]}, "4": {"next_md_paths": [], "convention_not_adopted": true}, "6": {"learning_files": [], "dir_missing": true}, "7": {"vault_size_bytes": 5000000, "disk": "16% used, 122G free", "orphans": [], "orphan_count": 0, "missing_frontmatter": [], "missing_frontmatter_count": 0, "wiki_lint_log": null, "wiki_lint_missing": true}, "10": {"messages": [...], "message_count": 45}}}}
 
 Instructions:
 /weekly-review
@@ -72,10 +72,15 @@ Per BA §11.2: "Direct and analytical. Never sycophantic or overly agreeable. Su
 
 ### 1. Accomplishments
 
-If `data.components['1'].convention_not_adopted` is true — emit this exact text, no paraphrase:
-> "No accomplishments since last review (done.md convention not yet adopted in vault)."
+Source: `projects/<name>/log.md` files (project log = accomplishments + learnings stream, seeded vault-wide 2026-05-10 in the vault dimension collapse).
 
-If done.md paths present: Read each at `/workspace/extra/vault/<path>`, extract items completed in the window. If no in-window items: "No accomplishments recorded in done.md files since last review."
+If `data.components['1'].convention_not_adopted` is true — emit this exact text, no paraphrase:
+> "No project log.md files in vault — convention not yet adopted."
+
+If `data.components['1'].project_log_in_window` is empty (logs exist but none modified in window):
+> "No project accomplishments since last review (no log.md files modified in window)."
+
+Otherwise: Read each path in `project_log_in_window` at `/workspace/extra/vault/projects/<path>`, extract dated entries inside the review window. Surface as bullet list grouped by project. Format: `**<project>**` then dated bullets verbatim.
 
 ### 2. Actions Review
 
@@ -87,12 +92,13 @@ Empty-state (no action files): "No action files found in vault."
 
 ### 3. Logs Highlights
 
-Read `data.components['3'].log_files_in_window`. For each path, Read `/workspace/extra/vault/<path>`. One bullet per log file. Format: **`<path>`** — <≤8-word recap of WHAT was touched, NOT a content restatement>.
+Read `data.components['3'].log_files_in_window`. Each entry is a path relative to `logs/` (e.g. `arts/!log.md`, `coding/precepts.md`). For each path, Read `/workspace/extra/vault/logs/<path>`. One bullet per file. Format: **`<path>`** — <≤8-word recap of WHAT was touched, NOT a content restatement>.
 
 Examples:
-- **`mpm.md`** — care meeting notes + cognition score change.
-- **`pops.md`** — MC transition coordinator call.
-- **`arts.md`** — Hacks finale + Succession start + hockey.
+- **`mpm/!log.md`** — care meeting notes + cognition score change.
+- **`pops/!log.md`** — MC transition coordinator call.
+- **`arts/!log.md`** — Hacks finale + Succession start + hockey.
+- **`coding/precepts.md`** — added testing precept.
 
 Do NOT restate the contents of entries. Names, scores, specific details belong in the source file — the weekly review surfaces *what was touched*, not *what was said*.
 
