@@ -177,7 +177,7 @@ Single-file vs folder is not permanent. Some areas start as `reference/{area}.md
 - `projects/priorities.md` — runway list
 - `projects/{name}/next.md` — project todos (default)
 - `projects/{name}/next-{discriminator}.md` — additional `next-*` files for projects that benefit from splitting their todo stream by axis. Recognized example: `projects/options/next-coding.md` (coding-task track for the options project, sibling to `projects/options/next.md` which holds the strategy/research/ops track). Discriminator is kebab-case, descriptive of the axis. Project authors decide whether to split — most projects use the default single `next.md`.
-- `projects/{name}/log.md` — project accomplishments + learnings (dated entries). Triggers: *"finished {project} task X"*, *"learned the following on {project}: …"*. Also receives smart-todo-lifecycle moves: when JT references completion of an item in `next.md`, Daystrom asks for one-line confirmation, then removes from `next.md` and appends to `log.md` with today's date.
+- `projects/{name}/log.md` — project accomplishments + learnings (dated entries). Triggers: *"finished {project} task X"*, *"learned the following on {project}: …"*. Also receives smart-todo-lifecycle moves: when JT references completion of an item in any of the project's `next*.md` files (default `next.md`, plus discriminator variants like `next-coding.md`), Daystrom asks for one-line confirmation, then removes from the source `next*.md` file and appends to `log.md` with today's date. **Single `log.md` per project — there is no `log-{discriminator}.md` mirror, even where `next-{discriminator}.md` exists.** Do NOT maintain an in-file `**Log:**` section inside any `next*.md`; if you encounter one, route new completions to `log.md` and surface a migration suggestion to JT.
 - `projects/{name}/notes/{projectname}-{YYYY-MM-DD}-{topic}.md` — free-form notes
 
 **Research:** `research/research-{YYYY-MM-DD}-{topic}.md` — e.g., `research-2026-03-22-hiking-trails-az.md`
@@ -393,7 +393,7 @@ This is a standing behavioral rule. Be proactive — don't wait for JT to ask.
 | "Figured out how to X" / "Tip:" / "Saw Y" | → `logs/coding/!log.md` |
 | "Add a closed trades chart" | → `projects/options/next.md` |
 | "options todo: X" | → `projects/options/next.md` |
-| "finished options task X" | → `projects/options/log.md`. If matching open item in `projects/options/next.md`, ask one-line confirmation and move-on-confirm. |
+| "finished options task X" | → `projects/options/log.md`. If matching open item in any `projects/options/next*.md` file (`next.md`, `next-coding.md`, …), ask one-line confirmation and move-on-confirm. Single `log.md` regardless of source axis. |
 | "learned the following on options: …" | → `projects/options/log.md` |
 | "Research X" | → invoke `/research` skill (sync or supplement path per message content) |
 | "Remind me on 4/21 to do X" | → Create NanoClaw scheduled task |
