@@ -72,7 +72,14 @@ All three YES → wiki via `/wiki-ingest` (when content is raw enough to need sy
 - **Dispute** — JT pushes back (generally OR specific to his situation)
 - **Surface** — source raises something useful JT didn't have in this form (new idea/framework OR sharper articulation of something he'd been circling)
 
-When in doubt about wiki eligibility, surface the gate questions back to JT rather than ingesting silently.
+**Posture: default to trust, not 20-questions.** When JT invokes `/wiki-ingest` or asks Daystrom to add something to wiki, presume he's already reasoned through the three-question gate. Do NOT run the gate as a checklist on every ingest — that's friction JT didn't ask for. **Only interrupt the flow when there's clear cause for pushback:**
+
+- Content is obviously atomic (single quote, single fact, single observation) → Gate 2 fail
+- Content is obviously project-bound (e.g., JT asks to ingest a file already inside `projects/<name>/notes/` with `compendium:` frontmatter) → Gate 1 fail
+- Content has no plausible cluster home AND no anticipation of one → Gate 3 fail
+- Content is JT's own already-synthesized concept work being asked to round-trip through `/wiki-ingest` for no clear added value
+
+In clear-cause cases, surface the concern ONCE with a specific named gate ("this looks like Gate 2 — atomic content; consider `reference/quotes.md` instead?"), then defer to JT's call. Don't volley questions; one specific flag, then proceed with JT's response.
 
 Full operational doctrine — three-layer architecture (raw / sources / concept), provenance stamping, footnote citation pattern, full-ripple discipline, one-at-a-time ingest, image embeds, slug-prefix rules, qmd scope per skill — lives where the work happens:
 
