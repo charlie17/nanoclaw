@@ -128,6 +128,16 @@ related-pages:
 <Vault content that surfaced via qmd, with provenance attribution>
 ```
 
+#### Highlight stance — 3-bucket reading lens
+
+When working JT's highlights into the source-summary, tag each load-bearing highlight with one of three stances. Canonical definitions live in `wiki/!home.md` (collapsible callout at top). Brief form:
+
+- **Agree** — source confirms JT's existing thinking
+- **Dispute** — JT pushes back (generally OR specific to his situation)
+- **Surface** — source raises something useful JT didn't have in this form (new idea/framework OR sharper articulation of something he'd been circling)
+
+A single source-summary may carry highlights across all three buckets — they're not exclusive. Use the bucket tag inline in `## Notable claims` or in a dedicated `## JT stance` section if the layered reading is the main value the source-summary captures.
+
 ## Citation pattern — footnotes
 
 **Concept pages cite sources via Obsidian footnotes, NOT via repeated inline `[[sources/<slug>]]` links.** The repeated inline pattern was used in early ingests (Apr 29, 2026) and produced visual clutter — a single source could be cited 7+ times on one page. Migrated to footnotes 2026-05-01 per JT directive.

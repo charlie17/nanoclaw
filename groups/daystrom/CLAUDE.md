@@ -59,6 +59,21 @@ After search, follow up with `Read` on specific files. Full skill spec: `contain
 
 Wiki work is **ringfenced to `wiki/`** (host: `~/vault/general/wiki/`). NEVER edit or add to Actions, Logs, Reference, or Projects dimensions when operating on wiki work — Karpathy prime directive, hard rule.
 
+**Wiki gate — apply BEFORE invoking `/wiki-ingest` or proposing wiki promotion.** Before ingesting any content into wiki/, check three questions. Any "no" = skip wiki, route elsewhere:
+
+1. **Beyond-project value** — does this content serve JT beyond a single project (across multiple projects, contexts, or years)? Project-internal content goes to `projects/<name>/notes/` with `compendium:` frontmatter if multi-file. NO → not wiki.
+2. **Synthesis or layering value** — will wiki processing add value over just storing as-is? Either by distilling raw material into framework form, OR by capturing JT's interpretive overlay (highlights, situational context, 3-bucket stance). Atomic content (single quote, single fact, single observation) has neither. NO → not wiki.
+3. **Connection value** — will this join a wiki cluster (existing or anticipated) and enrich the broader wiki via cross-links? Orphan content (no cluster home) shouldn't ingest. NO → not wiki.
+
+All three YES → wiki via `/wiki-ingest` (when content is raw enough to need synthesis) or direct authoring as a concept page (when content is already-structured but cluster-worthy and gets JT's layering). Canonical statement of the gate lives in `wiki/!home.md` (collapsible callout at top) — that's the JT-authored reference form.
+
+**3-bucket stance** — per-highlight reading lens applied during source-summary work. See `wiki/!home.md` for canonical definitions; brief form:
+- **Agree** — source confirms thinking JT already holds
+- **Dispute** — JT pushes back (generally OR specific to his situation)
+- **Surface** — source raises something useful JT didn't have in this form (new idea/framework OR sharper articulation of something he'd been circling)
+
+When in doubt about wiki eligibility, surface the gate questions back to JT rather than ingesting silently.
+
 Full operational doctrine — three-layer architecture (raw / sources / concept), provenance stamping, footnote citation pattern, full-ripple discipline, one-at-a-time ingest, image embeds, slug-prefix rules, qmd scope per skill — lives where the work happens:
 
 - `container/skills/wiki/SKILL.md` — `/wiki-ingest` (Karpathy ingest with full ripple)
