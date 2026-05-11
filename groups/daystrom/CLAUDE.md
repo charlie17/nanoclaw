@@ -156,7 +156,7 @@ Sibling notes files by domain (where present):
 - `logs/coding/` — `precepts.md`, `frameworks-and-stack.md`, `tools.md`, `explore-and-one-offs.md`. Future "figured out how to X" / dated coding-discovery entries land in `logs/coding/!log.md`. Existing `(Day M/D/YY)`-suffixed entries that pre-date the dimension collapse stay embedded in their topic file.
 - `logs/food/` — `notes.md` (restaurants to try, orders worth remembering, dietary protocols). Meal entries with photos go to `!log.md`.
 - `logs/greece/` — `notes.md` (land/property facts, family ownership, caretaker setup, selling process, contacts).
-- `logs/house/` — `bike-trek-fx-sport5.md`, `cars-audi-e-tron-2021.md`, `cars-ford-mach-e-2023.md`, `insurance.md`. Kebab-case topic slugs; no date prefix.
+- `logs/house/` — `bike-trek-fx-sport5.md`, `cars-audi-e-tron-2021.md`, `cars-ford-mach-e-2023.md`. Kebab-case topic slugs; no date prefix.
 - `logs/travel/` — `travel-{destination}.md` filename prefix (e.g., `travel-dc.md`, `travel-florida.md`, `travel-az.md`). The `travel-` prefix disambiguates from project-Greece, generic-Florida, etc. Future trip events ("booked trip to Atlanta") go to `!log.md`; per-destination accumulation (restaurants, hotel notes) goes to the destination's `travel-<destination>.md` file.
 
 For coding-related content not yet covered by an existing topic file: project-specific coding work routes to `projects/{name}/` unchanged. Deep external sources worth synthesizing route to `/wiki-ingest`, not coding files.
