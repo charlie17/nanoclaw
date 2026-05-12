@@ -10,6 +10,7 @@ import {
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
   POLL_INTERVAL,
+  RATE_LIMIT_ALERT_DELAY_MS,
   TIMEZONE,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
@@ -67,6 +68,10 @@ import {
 import { startSessionCleanup } from './session-cleanup.js';
 import { startSlowSkillAck } from './slow-skill-ack.js';
 import { startTypingHeartbeat } from './typing-heartbeat.js';
+import {
+  cancelPendingAlert as cancelPendingRateLimitAlert,
+  schedulePendingAlert as scheduleRateLimitAlert,
+} from './rate-limit-alert.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -403,19 +408,15 @@ async function runAgent(
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
-      // JT: Surface SDK rate_limit_event to the operator immediately so the
-      // JT: silent backoff window is informed waiting, not opaque silence.
+      // JT: Surface SDK rate_limit_event to the operator — but debounce by
+      // JT: RATE_LIMIT_ALERT_DELAY_MS (default 5s) so we don't spam the
+      // JT: alert when the rate-limit resolves in 1-5s and a response is
+      // JT: actually forthcoming. The observed-SDK-event signal (handled
+      // JT: in the agent-activity callback below) is the cancel trigger.
       (jid) => {
         const channel = findChannel(channels, jid);
         if (!channel) return;
-        channel
-          .sendMessage(
-            jid,
-            `⏳ Anthropic rate-limited the agent — SDK is in backoff retry. Container is alive and waiting it out; this is not a hang. Watchdog tolerance is 10 min from last activity.`,
-          )
-          .catch((err: unknown) =>
-            logger.warn({ jid, err }, 'Failed to send rate-limit alert'),
-          );
+        scheduleRateLimitAlert(jid, channel, RATE_LIMIT_ALERT_DELAY_MS);
       },
       // JT: Reset watchdog on EVERY SDK event from the agent — assistant,
       // JT: user, system, etc., not just result emissions. Tool calls
@@ -425,7 +426,15 @@ async function runAgent(
       // JT: did. Routine vault work that does many tool calls without an
       // JT: intermediate user-facing result was getting watchdog-killed
       // JT: spuriously. See post-mortem 2026-05-03.
-      (jid) => queue.markOutputReceived(jid),
+      //
+      // JT 2026-05-11: Also cancel any pending rate-limit alert — observed
+      // JT: SDK activity IS the "response is forthcoming" signal that lets
+      // JT: us suppress the alert in the false-positive case (brief 1-5s
+      // JT: backoff that resolves on its own).
+      (jid) => {
+        cancelPendingRateLimitAlert(jid);
+        queue.markOutputReceived(jid);
+      },
     );
 
     if (output.newSessionId) {

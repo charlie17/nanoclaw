@@ -210,7 +210,8 @@ Single-file vs folder is not permanent. Some areas start as `reference/{area}.md
 - Actions: latest entries at **top**
 - Logs: latest entries at **top**
 - Reference (dated): latest entries at **top**
-- Reference (evergreen — quotes, facts-stats): append order, no dates
+- Reference (evergreen — quotes, facts-stats, remember, org-approach): append order, no dates
+- Reference (queue-shaped — family-watchlist, reading-list): latest at **top**, no dates. These accumulate items added over time and items get consumed/removed; the most recent addition is the most relevant.
 
 ### Entry formats (see global CLAUDE.md for full spec)
 - Actions: `- [ ] Item (Sat 3/22/26)` with tab-indented sub-bullets

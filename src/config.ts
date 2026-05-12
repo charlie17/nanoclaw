@@ -15,6 +15,7 @@ const envConfig = readEnvFile([
   'NANOCLAW_WEB_HOST',
   'NANOCLAW_TOKEN',
   'NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH',
+  'RATE_LIMIT_ALERT_DELAY_MS',
 ]);
 
 export const ASSISTANT_NAME =
@@ -24,6 +25,19 @@ export const ASSISTANT_HAS_OWN_NUMBER =
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
+
+// Rate-limit alert debounce window. On SDK rate_limit_event, defer sending
+// the operator alert by this many ms; if any subsequent SDK activity arrives
+// from the agent within the window, cancel the alert (the agent is making
+// progress, no need to spam). If the window elapses with no activity, fire
+// the alert — the rate-limit is real. Default 5000ms per JT directive
+// 2026-05-11. Override via RATE_LIMIT_ALERT_DELAY_MS in .env.
+export const RATE_LIMIT_ALERT_DELAY_MS = parseInt(
+  process.env.RATE_LIMIT_ALERT_DELAY_MS ||
+    envConfig.RATE_LIMIT_ALERT_DELAY_MS ||
+    '5000',
+  10,
+);
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();
