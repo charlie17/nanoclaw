@@ -218,7 +218,7 @@ Single-file vs folder is not permanent. Some areas start as `reference/{area}.md
 - Logs: `- Sat 3/22/26: Content verbatim` with tab-indented sub-bullets
 - Reference (dated): `- Sat 3/22/26: Content`
 - Reference (evergreen): `- Content`
-- Project todos: `- [ ] Item (Sat 3/22/26)`
+- Project todos: `1. Item (Sat 3/22/26)`
 
 **Date is always today's date** — use the date the message was received, never the inferred event date. "Last night", "yesterday", etc. stay verbatim in the content and do NOT shift the date prefix backward.
 > "Went to museum last night" (received Thu 4/2/26) → `- Thu 4/2/26: Went to museum last night`
@@ -389,13 +389,26 @@ Compendia live inside their owning project; they are NOT wiki corpora and are NO
 
 ## Obsidian URIs
 
-Always send Obsidian links as a Markdown-wrapped HTTPS redirect link — bare `obsidian://` URIs are not tappable in Telegram mobile.
+**Default behavior — always include on vault touch.** Every reply confirming a vault write or edit includes an Obsidian deep-link to the touched file. This is the default, not opt-in. Do not wait for JT to ask.
 
-**Format:** `[Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3D{url-encoded-path})`
+**Scope:** Any reply confirming a vault touch, regardless of trigger — `/wiki-ingest`, `/research`, ad-hoc edits, action/log/reference appends, or any other route.
 
-**URL-encoding for the `file` parameter:** `/` → `%2F`, spaces → `%20`, do NOT encode alphanumeric / hyphens / underscores. The path has no file extension. Example: `general/actions/todos` → `general%2Factions%2Ftodos`.
+**Format — always Markdown-wrapped HTTPS redirect, never bare `obsidian://`.** Bare `obsidian://` URIs are not tappable in Telegram mobile; the Cloudflare Worker redirect at `daystrom-link.daystrom.workers.dev` exists to make them tappable.
 
-Use when JT asks for an "Obsidian link" to a file. The link opens the file in Obsidian on their device. New entries go at the TOP of the file (links cannot target a specific bullet).
+`[Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3D{url-encoded-path})`
+
+**URL-encoding for the `file` parameter:** `/` → `%2F`, spaces → `%20`, do NOT encode alphanumeric / hyphens / underscores. The path has no file extension.
+
+**Path rule — always include the group prefix.** Paths are vault-relative (from the vault root). The group-level prefix (`general/`, or whatever group the file lives under) is part of the path and must be present. Omitting it opens the vault but fails to resolve the file.
+
+| Wrong (the drift case) | Correct |
+|---|---|
+| `file=reference%2Forg-approach` | `file=general%2Freference%2Forg-approach` |
+
+A confirming reply looks like:
+
+> Added "Roth conversion ladder basics" to `general/reference/investing/roth-conversion.md`.
+> [Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Freference%2Finvesting%2Froth-conversion)
 
 ---
 
@@ -413,6 +426,12 @@ Use when JT asks for an "Obsidian link" to a file. The link opens the file in Ob
 This is a standing behavioral rule. Be proactive — don't wait for JT to ask.
 
 **API mode awareness:** In API mode, longer sessions cost more (every message re-sends accumulated context as input tokens). Be more proactive about suggesting topic resets and session saves.
+
+**Turn-depth heuristic (Telegram / spawn-per-turn interim).** Native `/usage` and `/clear` are unavailable from Telegram on the current architecture — they require Path Z. As a proxy: when the conversation thread visible in context reaches 40 or more turns, append this notice once per session (not every reply):
+
+> *This thread is getting long (~N turns). For best context quality, consider starting a new Telegram message for unrelated topics.*
+
+Replace N with the actual observed turn count. Emit once — do not repeat on subsequent turns in the same thread.
 
 ---
 
