@@ -1,0 +1,17 @@
+# Repo deploys to Linux VPS — normalize all text files to LF.
+# Overrides any local core.autocrlf=true so Windows clones stop reporting
+# spurious LF→CRLF "modifications" on checkout.
+* text=auto eol=lf
+
+# Binary blobs: never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.woff binary
+*.woff2 binary
