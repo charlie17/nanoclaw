@@ -272,6 +272,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         { group: group.name },
         'Idle timeout, closing container stdin',
       );
+      setGroupAgentModel(group.folder, null);
       queue.closeStdin(chatJid);
     }, IDLE_TIMEOUT);
   };

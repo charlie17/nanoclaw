@@ -792,7 +792,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
 }
 
 // FU-27a: per-folder agent model accessors. Folder is the unique key.
-export function setGroupAgentModel(folder: string, model: string): void {
+export function setGroupAgentModel(folder: string, model: string | null): void {
   db.prepare(
     `UPDATE registered_groups SET agent_model = ? WHERE folder = ?`,
   ).run(model, folder);
