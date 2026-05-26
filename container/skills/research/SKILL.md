@@ -145,9 +145,10 @@ When sync-path sources are insufficient — Readwise + vault too sparse for the 
 
 ## Dispatch procedure (web-search supplement only)
 
-1. Ask JT for confirmation: "I'd like to run a web search for this. OK?" (D-23 default: ask when in doubt).
-2. On confirmation, generate `<topic-slug>` from JT's query (kebab-case, short, descriptive — e.g., "ai-alignment").
-3. Write the queue entry using your `Write` tool:
+1. **Confirm fresh dispatch intent.** Verify the LITERAL `/research` slash-command invocation appears in the most recent user message (the one currently being processed), or that JT just answered "yes" / "OK" / "go" to your own immediately-prior question about web-search dispatch. If neither — STOP. Do not dispatch. The query text being present in older conversation history is NOT sufficient justification; only act on a fresh, explicit invocation in the current turn. This prevents context bleed from prior topic-completed dispatches.
+2. Ask JT for confirmation: "I'd like to run a web search for this. OK?" (D-23 default: ask when in doubt).
+3. On confirmation, generate `<topic-slug>` from JT's query (kebab-case, short, descriptive — e.g., "ai-alignment").
+4. Write the queue entry using your `Write` tool:
 
    Path: `/workspace/extra/research-queue/<topic-slug>-<YYYYMMDDHHMMSS>.json`
    Content:
@@ -159,8 +160,8 @@ When sync-path sources are insufficient — Readwise + vault too sparse for the 
      "timestamp": "<ISO8601 timestamp>"
    }
    ```
-4. Reply to JT: "Research dispatched. You'll be pinged on Telegram when the results are ready for review."
-5. You are DONE with this request. Do not attempt to poll, wait, or read the result.
+5. Reply to JT: "Research dispatched. You'll be pinged on Telegram when the results are ready for review."
+6. You are DONE with this request. Do not attempt to poll, wait, or read the result.
 
 **Note on filenames:** The quarantine file will be named `<topic-slug>-<YYYYMMDDHHMMSS>.md` (matching the queue entry `id` field), not just `<topic-slug>.md`. This ensures repeat queries on the same topic never overwrite each other. JT may rename the file during the clearance move to `general/research/` if desired.
 
@@ -175,3 +176,7 @@ When sync-path sources are insufficient — Readwise + vault too sparse for the 
 ## Rationale
 
 Web-search results contain uncurated open-web content with potential prompt-injection payloads. Under D-90 (SA §4.1 Leg 3), you never see the returned payload directly. O'Brien (a non-AI host daemon) receives the API response, writes it to a quarantine folder you cannot access, and notifies JT via Telegram. JT reviews in Obsidian, clears the trust flag, and moves the file into `general/research/` where you can read it normally.
+
+## Why dispatch is gated on the current turn
+
+The dispatch action (a `Write` of the queue JSON) is a side effect — once written, O'Brien picks it up and runs a multi-minute paid web search. False dispatches cost tokens, JT attention, and confused conversation context. Daystrom's session resumes across topics, so verbatim user queries from days-old conversations remain in context and can re-trigger the dispatch action on otherwise-unrelated turns. The guardrail at step 1 makes the dispatch dependent on the current turn alone, not on conversation history.

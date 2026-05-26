@@ -287,6 +287,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  const overnightResetMarker =
+    '/home/ubuntu/daystrom-ops/state/last-overnight-reset.timestamp';
+  if (!sessions[group.folder] && fs.existsSync(overnightResetMarker)) {
+    const markerMtime = fs.statSync(overnightResetMarker).mtimeMs;
+    if (Date.now() - markerMtime < 24 * 3600 * 1000) {
+      await channel.sendMessage(
+        chatJid,
+        `Fresh session — overnight reset ran clean. Anything in flight from before will need to be re-shared.`,
+      );
+    }
+    fs.unlinkSync(overnightResetMarker);
+  }
+
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
@@ -471,7 +484,7 @@ async function runAgent(
           alertChannel
             .sendMessage(
               chatJid,
-              `⚠️ Session was corrupt and has been cleared. Your next message starts fresh — context from before this point is lost. (Group: ${group.name})`,
+              `ℹ️ Session needed a fresh start (recovered from inconsistent state). Your next message starts clean — context from this conversation is preserved in the archive but no longer in active memory. (Group: ${group.name})`,
             )
             .catch((err: unknown) =>
               logger.warn(
