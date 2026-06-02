@@ -1,6 +1,6 @@
 ---
 name: /weekly-review
-description: Friday weekly digest — 11 components per BA §11.2. Writes vault report + Telegram summary + updates review state.
+description: Friday weekly digest — 12 components per BA §11.2. Writes vault report + Telegram summary + updates review state.
 ---
 
 ## Invocation
@@ -48,7 +48,7 @@ review_window_end: <data.window_end>
 ---
 ```
 
-Body: H1 + one H2 per component in order 1–11 + Big 5 closing.
+Body: H1 + one H2 per component in order 1–12 + Big 5 closing.
 
 ```
 # Weekly Review — Fri M/D/YY
@@ -59,7 +59,7 @@ Body: H1 + one H2 per component in order 1–11 + Big 5 closing.
 ## 2. Actions Review
 ...
 
-(continue through ## 11. Structured Planning, then ## Big 5 Personality Diagnostic)
+(continue through ## 12. Coding Activity, then ## Big 5 Personality Diagnostic)
 ```
 
 If `data.first_run` is true, add a note under the H1: "First weekly review — window defaulted to 7-day lookback."
@@ -197,6 +197,44 @@ Based on the review above:
 
 Challenge priorities that conflict with the data (e.g., do not propose a goal with no corresponding open action).
 
+### 12. Coding Activity
+
+Source: local bare git mirrors at container path `/workspace/extra/github-mirrors/<name>.git`. Enumerate all available mirrors at runtime — do NOT hardcode the repo list:
+
+```
+ls /workspace/extra/github-mirrors/*.git
+```
+
+**Window:** scope every git query to the review window using `--since=<data.window_start>`.
+
+**Per mirror, execute in order:**
+
+1. Count commits:
+   ```
+   git --git-dir=<path> log --all --oneline --since=<data.window_start> | wc -l
+   ```
+2. Fetch activity:
+   ```
+   git --git-dir=<path> log --all --shortstat --since=<data.window_start>
+   ```
+3. Collect commit subjects (first-line only) within the window for prose synthesis.
+
+**`--all` is mandatory on every git call.** Bare-repo HEAD points only at the default branch; naked `git log` silently drops feature/working-branch commits (coding-recap hard rule D-R4, confirmed Impl-41 D7 — 135 commits invisible without it). No exceptions.
+
+**No diffs.** Never `git log -p` / `--patch` — counts + shortstat + subjects only. Diffs are ~10× token cost per commit and automation has no JT to confirm a diff pull.
+
+**Non-interactive volume cap.** If a repo's window commit count is >150: render that repo as counts + shortstat totals only, append "— high volume, per-commit detail omitted" and move on. Never block, never prompt.
+
+**Render:** prose, executive tone, per CLAUDE.md `## Reply Discipline (executive tone)`. Group by repo. Lead each repo with what got built or shipped; commit count and branch names are supporting context, not the headline. No commit-hash recitation. No markdown tables.
+
+**Empty-state** (zero commits across all mirrors in window):
+> "No coding activity in the review window."
+
+**Error-state** (mirror dir missing or unreadable, or git unavailable):
+> "Coding activity unavailable — github-mirrors not reachable this run."
+
+Then continue — Component 12 must never block the rest of the review (same resilience contract as Component 5's sub-agent-failure path).
+
 ### Big 5 Personality Diagnostic (closing section)
 
 H2: `## Big 5 Personality Diagnostic (Daystrom self-assessment)`
@@ -262,7 +300,7 @@ If Component 5 returned `[stub — convention not adopted]` for component 1 or 4
 - Never use `|---|` tables — Telegram renders them as literal pipes.
 - **One-message rule:** the preview + link IS the close-out. No trailing recap.
 
-**What does NOT change:** the vault file itself stays the canonical 11-component report + Big 5. This change affects only the Telegram surface — it now serves as a triage pointer with a phone-readable preview, not a pure handoff.
+**What does NOT change:** the vault file itself stays the canonical 12-component report + Big 5. This change affects only the Telegram surface — it now serves as a triage pointer with a phone-readable preview, not a pure handoff.
 
 ## Orchestrator coordination
 
@@ -279,4 +317,4 @@ The host `weekly-review-orchestrator` will append its host-only sections (Compon
 - Read ONLY `/workspace/extra/vault/` (= `general/`). Never `private/`, never `worf-scope/`.
 - Write ONLY to `/workspace/extra/vault/logs/daystrom-reviews/` (vault file) and `/workspace/group/last-review.json` (state). Never elsewhere in the vault.
 - No web tools. MCP calls in v1: qmd-only for Component 5 Lens B narrowing (Batch 4.2c); readwise deferred to future batches. Otherwise deterministic data only.
-- Vault file: full narrative for all 11 sections + Big 5. Telegram summary ≤25 lines.
+- Vault file: full narrative for all 12 sections + Big 5. Telegram summary ≤25 lines.
