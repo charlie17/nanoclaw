@@ -167,6 +167,12 @@ Areas: `quotes` · `facts-stats` · `remember` · `org-approach` · `family-watc
 **Reference folders:**
 - `reference/learning/{source-name}-{YYYY-MM}.md` — e.g., `atomic-habits-2026-03.md`. Per-source consumed-content notebook (book/podcast/article/video/course).
 
+**Images:**
+- General-purpose images and attachments (screenshots, photos, etc.) → `research/images/binaries/`.
+- Wiki-specific images → `wiki/assets/{source-slug}/`.
+- NEVER place images in project notes folders (`projects/{name}/notes/`).
+- Obsidian resolves `![[filename.jpg]]` embeds vault-wide by filename, so co-location with the referencing note is not required.
+
 ### MOC maintenance (Maps of Content)
 
 The vault is navigated via three tiers of MOC (Map of Content) files — separate from qmd vector search. MOCs are *navigation* (humans browse); qmd is *search* (you query). Per pre-pass A11 + scope plan §6 + BA §F12.
