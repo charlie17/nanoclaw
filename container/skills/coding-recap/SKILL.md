@@ -13,13 +13,13 @@ Explicit `/coding-recap` or natural language: "recap my coding work", "what did 
 
 ## Inputs
 
-- **Repo** (optional): named repo filters to one mirror; omit to recap all 7 grouped by repo.
+- **Repo** (optional): named repo filters to one mirror; omit to recap all 8 grouped by repo.
 - **Time range** (optional): "last week" (default), "last N days", "last month", "last year", "since YYYY-MM-DD", "all time". Translate to `--since=` flags. If omitted, default to **last 7 days** and state this explicitly in the recap output.
 
 ## Available mirrors
 
 Path: `/workspace/extra/github-mirrors/<name>.git`  
-Repos: `coactive`, `jt-ai-counsel`, `jt-daystrom`, `jt-leanspec`, `jt-options-backtesting`, `jt-options-data-2026`, `nanoclaw`
+Repos: `coactive`, `jt-ai-counsel`, `jt-daystrom`, `jt-leanspec`, `jt-options-backtesting`, `jt-options-data-2026`, `jt-podvast`, `nanoclaw`
 
 ## Discovery flow
 
