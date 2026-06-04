@@ -150,7 +150,9 @@ The `user_timezone` agent memory (Archie + Daystrom) is the durable binding; thi
 - `actions/waiting.md` — waiting for others
 
 **Logs:** `logs/{domain}/` — one folder per domain. Each contains a `!log.md` (dated event-stream — the canonical log), and optional sibling notes files (kebab-case slug, no date prefix, flat — no `notes/` subfolder).
-Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker` · `coding` · `food` · `greece` · `house` · `travel`.
+Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker` · `coding` · `food` · `greece` · `house` · `travel` · `finance`.
+
+`logs/finance/` holds **general-nature finance only** — non-sensitive events, observations, decisions. Sensitive finance content belongs in the private vault (host `~/vault/private/`), which is structurally outside your container (D-2.5.5); never record it in `logs/finance/`.
 
 Sibling notes files by domain (where present):
 - `logs/coding/` — `precepts.md`, `frameworks-and-stack.md`, `tools.md`, `explore-and-one-offs.md`. Future "figured out how to X" / dated coding-discovery entries land in `logs/coding/!log.md`. Existing `(Day M/D/YY)`-suffixed entries that pre-date the dimension collapse stay embedded in their topic file.
