@@ -22,7 +22,7 @@ Parse JT's natural-language input into `schedule_type` + `schedule_value`. Use C
 If the schedule is ambiguous (e.g., "tomorrow" with no time), ask ONE clarifying question before proceeding. Do not guess.
 
 Call `mcp__nanoclaw__schedule_task` with:
-- `prompt`: `"Send the following reminder to JT via Telegram. Output the reminder text as a single plain-text message prefixed with ⏰ Reminder:. No elaboration, no tables, no embellishment. The reminder text is: <literal JT-specified reminder text>"`
+- `prompt`: `"Send the following reminder to JT via Telegram. Output the reminder text as a single plain-text message formatted as: 🟡 [one contextually-suitable emoji for the reminder topic] <reminder text>. Choose the second emoji based on the reminder's subject (e.g. 🦷 for dental, 💊 for health, 📞 for calls, 💰 for finance). No elaboration, no tables, no extra lines. The reminder text is: <literal JT-specified reminder text>"`
 - `schedule_type`: parsed type
 - `schedule_value`: parsed value
 - `context_mode`: `isolated` (always — reminder fire needs no chat history)

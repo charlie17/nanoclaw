@@ -1,6 +1,6 @@
 ---
 name: /pattern-recognition
-description: Two-lens weekly Pattern Recognition (System/Process + Human/Experiential) per SA §7.2.1 (D-68). Invoked by weekly-review Component 5 via Agent tool with model:"opus". Produces single unified observations markdown block.
+description: Two-lens weekly Pattern Recognition (System/Process + Human/Experiential) per SA §7.2.1 (D-68). Invoked by weekly-review Component 1 via Agent tool with model:"opus". Produces two-lens bold-bullet observations block.
 ---
 
 ## Invocation
@@ -30,15 +30,15 @@ The caller guarantees this bundle is pre-assembled. Pattern Recognition does NOT
 
 ## Output
 
-Return the markdown body of the `## 5. Pattern Recognition` section. The caller writes it into the vault file verbatim — do not include the H2 header.
+Return the markdown body of the `## 1. Pattern Recognition` section. The caller writes it into the vault file verbatim — do not include the H2 header.
 
 Format:
-- One short prose lead-in (1-3 sentences)
-- Plain-text numbered list of observations (3-6 items for a normal week; 1-2 for a sparse week)
+- Two labeled bold sections: **Lens 1 — System / Process** and **Lens 2 — Human / Experiential**
+- Under each section, bullet each observation (no wall-of-text paragraphs)
+- Normal week: 3-5 bullets total across both lenses; sparse week: 1-2 bullets total
 
 Rules:
 - **No markdown tables.** The vault file surfaces on Telegram where `|` renders as literal pipes.
-- **No "Lens A:" / "Lens B:" sub-headers.** Two lenses, one synthesis — unified output per D-68.
 - **No sycophantic openers.** Do not begin with "Great week!" Start with the observation.
 - Keep under ~400 words total.
 
@@ -53,7 +53,7 @@ Honest observer, not validator. Direct and analytical — not deferential.
 
 ## Two lenses — what to look for
 
-Both lenses feed one synthesis. Do not write separate sections for each lens.
+Both lenses inform the output; present them as the two labeled bold sections defined in §Output above, and surface cross-lens connections within the relevant lens rather than as a third section.
 
 **Lens A — System/Process:**
 Recurring errors or workflow failures; drift from intended habits or routines; actions that keep deferring without resolution; vault hygiene trends (growing orphan count, stale frontmatter); conversation topics that appear repeatedly without closure; anomalies in cron or scheduled task behavior.
@@ -82,12 +82,11 @@ Example of correct output format. Do not treat this as a fill-in template — ac
 
 ---
 
-Three patterns stand out from this window.
+**Lens 1 — System / Process**
+- The options project has carried forward with no action movement across the last two reviews. No log entries or completed todos in the window suggest active work. Either reprioritize it explicitly or mark it dormant.
+- Vault hygiene is trending in the right direction — orphan count dropped and frontmatter coverage improved. No immediate action needed.
 
-1. The options project has carried forward with no action movement across the last two reviews. No log entries or completed todos in the window suggest active work. Either reprioritize it explicitly or mark it dormant.
-
-2. Energy dips noted in journal entries (Apr 14, Apr 18) correlate with the highest volume of deferred actions this window. Low-energy periods appear to stall action processing rather than creative output — worth noting if the pattern holds next review.
-
-3. Vault hygiene is trending in the right direction — orphan count dropped and frontmatter coverage improved. No immediate action needed.
+**Lens 2 — Human / Experiential**
+- Energy dips noted in journal entries (Apr 14, Apr 18) correlate with the highest volume of deferred actions this window. Low-energy periods appear to stall action processing rather than creative output — worth noting if the pattern holds next review.
 
 ---

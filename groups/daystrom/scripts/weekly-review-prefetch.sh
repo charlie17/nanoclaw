@@ -113,14 +113,26 @@ all_vault_md = list(walk_md(VAULT_ROOT))
 wikilink_re = re.compile(r'\[\[([^\]|#\n]+?)(?:[|#][^\]]*?)?\]\]')
 referenced  = set()
 missing_fm  = []
+
+# System/machine-generated files excluded from frontmatter count — only count
+# schema-bearing non-system files that could feed an Obsidian Base later.
+FM_EXCLUDE_PREFIXES = (
+    'logs/daystrom-reports/',
+    'logs/daystrom-reviews/',
+    'tmp/',
+    'logs/worf-audit.md',
+)
+
 for rel, fp, _ in all_vault_md:
+    rel_fwd = rel.replace(os.sep, '/')
     try:
         content = open(fp, encoding='utf-8', errors='ignore').read()
         for m in wikilink_re.finditer(content):
             t = m.group(1).strip().lower()
             referenced.add(t)
             referenced.add(os.path.basename(t))
-        if not content.lstrip().startswith('---'):
+        if (not content.lstrip().startswith('---')
+                and not any(rel_fwd.startswith(p) for p in FM_EXCLUDE_PREFIXES)):
             missing_fm.append(rel)
     except Exception:
         pass
@@ -130,6 +142,7 @@ ORPHAN_EXCLUDE_PREFIXES = (
     'logs/daystrom-reports/',
     'logs/daystrom-reviews/',
     'tmp/',
+    'projects/options/notes/options-strategies/',
 )
 
 orphans = [
