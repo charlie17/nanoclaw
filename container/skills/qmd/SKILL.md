@@ -4,19 +4,29 @@ When you need to find vault content (past decisions, incidents, people, projects
 
 ## Search modes (pick one per query)
 
-1. **`mcp__qmd__query "..."`** — Best quality. Hybrid BM25 + vector + LLM reranking. Use for complex or conceptual queries.
-2. **`mcp__qmd__search "..."`** — Fast BM25 keyword. Use for exact terms, names, ticket numbers, dates.
-3. **`mcp__qmd__vsearch "..."`** — Semantic only. Use for exploratory queries where you don't know the exact words.
+<!-- DEFAULT VERB POLICY (Impl-72 / 2026-06-15): vsearch is the default for all automated and interactive vault lookups.
+     search (BM25) is the secondary for exact-term/proper-noun/ticker lookups.
+     query (hybrid) is RESERVED for explicit deep-retrieval requests only — never a silent default.
+     Rationale: on this CPU (GPU: none, 4 math cores), hybrid query runs the embedding model + Qwen3 reranker +
+     1.7B query-expansion model in series and has measured latency of 47s–474s cold. vsearch (embed only) runs
+     in ~12s. BM25 search runs in <1s. The FORK-BASELINE.md:215 note already documented this tradeoff as
+     "not production hot-path." The weekly-review timed out because hybrid was wired into an automated path.
+     DO NOT re-default any automated or interactive path to hybrid query without explicit JT authorization. -->
+
+1. **`mcp__qmd__vsearch "..."`** — **DEFAULT. Semantic (vector) search.** Use for conceptual queries, past decisions, incidents, topic exploration. Completes in ~12s on this hardware.
+2. **`mcp__qmd__search "..."`** — **Fast BM25 keyword.** Use for exact terms, proper nouns, names, ticker symbols, ticket numbers, dates — any query where the exact word matters more than meaning.
+3. **`mcp__qmd__query "..."`** — **RESERVED. Hybrid BM25 + vector + LLM reranking.** CPU-bound on this box (~47s–474s cold, all 4 cores pinned). Invoke ONLY when JT explicitly asks for deep or thorough retrieval and accepts the wait ("dig deep", "I'll wait", "thorough search"). NEVER invoke on any automated path (scheduled tasks, prefetch scripts) or as a silent interactive default.
 
 After search, follow up with `Read` on the specific files surfaced — qmd returns paths + snippets, not full contents.
 
 ## When to search
 
-- User mentions a past decision, incident, person, project → `mcp__qmd__query`
-- User asks "what did we decide about X" → `mcp__qmd__query`
+- User mentions a past decision, incident, person, project → `mcp__qmd__vsearch`
+- User asks "what did we decide about X" → `mcp__qmd__vsearch`
 - User mentions a person by name → `mcp__qmd__search "<name>"`
 - Before creating a new vault note → `mcp__qmd__vsearch "<topic>"` to check for existing content
 - After creating a vault note → `mcp__qmd__vsearch "<note title>"` to find notes that should link to it
+- JT explicitly requests deep/thorough retrieval ("dig deep", "I'll wait") → `mcp__qmd__query`
 
 ## What you MUST NOT do
 

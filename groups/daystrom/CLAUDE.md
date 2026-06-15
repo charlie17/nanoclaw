@@ -43,11 +43,17 @@ If a routing rule appears to require a non-existent directory, that is a bug in 
 
 ### Vault Query (qmd-first)
 
+<!-- DEFAULT VERB POLICY (Impl-72 / 2026-06-15): vsearch is the default for all vault lookups.
+     search (BM25) is secondary for exact-term/proper-noun/ticker queries. Hybrid query is RESERVED —
+     CPU-bound on this hardware (~47s–474s cold, GPU: none). Never invoke mcp__qmd__query as a default
+     on any automated or interactive path. Only invoke when JT explicitly requests deep/thorough retrieval
+     and accepts the wait. See FORK-BASELINE.md:215. -->
+
 For any vault content lookup — past decisions, incidents, people, projects, patterns, topic searches — use the `qmd` MCP tools BEFORE `Read` or `Grep`. qmd returns ranked snippets without burning context on full file reads.
 
-- `mcp__qmd__query "<query>"` — best quality (hybrid BM25 + vector + reranking). Use for conceptual queries.
-- `mcp__qmd__search "<query>"` — fast BM25 keyword. Use for exact terms, names, dates.
-- `mcp__qmd__vsearch "<query>"` — semantic only. Use for exploratory queries where you don't know exact words.
+- `mcp__qmd__vsearch "<query>"` — **DEFAULT.** Semantic (vector) search. Use for conceptual queries, past decisions, incidents, topic exploration. ~12s on this hardware.
+- `mcp__qmd__search "<query>"` — Fast BM25 keyword. Use for exact terms, proper nouns, names, dates, ticker symbols.
+- `mcp__qmd__query "<query>"` — **RESERVED.** Hybrid BM25 + vector + LLM reranking. CPU-bound (~47s–474s cold). Invoke ONLY when JT explicitly asks for a deep/thorough search and accepts the wait — never as a silent default.
 
 After search, follow up with `Read` on specific files. Full skill spec: `container/skills/qmd/SKILL.md`.
 
@@ -136,6 +142,20 @@ When you confirm a scheduled-task creation back to JT, **show both** the ET time
 When reporting time in agent output (Telegram replies, log entries, dashboards), default to ET. Use `TZ='America/New_York'` for `date` invocations, or convert UTC timestamps in Python before display.
 
 The `user_timezone` agent memory (Archie + Daystrom) is the durable binding; this CLAUDE.md section is the runtime instruction.
+
+This section governs the times JT *speaks* and the times you *encode* (crons) or *report*. For the inbound envelope `time="..."` attribute you *read* — which is UTC — see **§ Citing dates and times to JT** immediately below.
+
+---
+
+## Citing dates and times to JT
+
+Inbound messages carry a `time="..."` attribute, e.g. `<message sender="J" time="Jun 13, 2026, 11:03 PM">`. **That value is UTC** — declared by the sibling `<context timezone="UTC" />` tag near the top of the envelope. The string itself carries no zone ("Jun 13, 2026, 11:03 PM"), so it reads like local time. It is not.
+
+**Before citing any date or time-of-day to JT, convert the full `time` value from UTC to America/New_York** (Eastern — DST-aware, EDT/EST resolved automatically; never hardcode the offset). Convert the *whole* timestamp first, then format what you need (date, time, or both) from the ET result. Never slice the date or hour off the raw UTC string: cross-midnight rolls the date — a 10:00 PM ET Saturday message arrives as `time="Sun … 2:00 AM"` UTC, and citing "Sunday" would be wrong.
+
+Cite ET only; leave UTC out unless JT asks for it.
+
+Worked example: envelope `time="Jun 13, 2026, 11:03 PM"` (UTC) → cite **"7:03 PM ET"** (same date, EDT/UTC−4). Citing "11:03 PM" verbatim is the exact bug this prevents — 4 h ahead in summer, 5 h in winter.
 
 ---
 
@@ -379,7 +399,7 @@ Active compendia:
 
 - `projects/options/notes/options-strategies/` — `compendium: options-strategies`. 44 strategy pages + `!index.md` (qualitative triage table, Lens 1) + `!principles.md` (primitives lens, Lens 2) + `options-strategies.base` (filterable structural view: market-view / vol-view / risk / capital). Strategy pages have `type: strategy-page` frontmatter with structural attributes. When JT asks options-strategy questions, start with `!index.md` for triage, then drill into the matching strategy file. Per-strategy attributes are queryable via the `.base` view or via qmd against the frontmatter.
 
-Compendia live inside their owning project; they are NOT wiki corpora and are NOT reachable via `/wiki-query`. Use `mcp__qmd__query` (general namespace) or direct `Read` of the index file.
+Compendia live inside their owning project; they are NOT wiki corpora and are NOT reachable via `/wiki-query`. Use `mcp__qmd__vsearch` (general namespace, default) or `mcp__qmd__search` for exact-term lookups, or direct `Read` of the index file.
 
 ---
 

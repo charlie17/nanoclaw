@@ -104,9 +104,14 @@ Run Pattern Recognition via opus-pinned sub-agent:
 Compact summaries of `data.components['2']` (actions), `['3']` (logs), `['7']` (hygiene), `['10']` (messages) + Component 1 prefetch summary: `project_log_in_window` list (write "[stub — convention not adopted]" if `convention_not_adopted`) + Component 4 prefetch summary: `next_md_paths` list (same stub if `convention_not_adopted`). Include `data.window_start`, `data.window_end`, and `data.review_count + 1`.
 
 **Step 2 — Assemble Lens B bundle via qmd.**
+<!-- DEFAULT VERB POLICY (Impl-72 / 2026-06-15): these vault-mood queries MUST use vsearch, not query.
+     The weekly-review runs unattended at 05:30 UTC Saturday. Hybrid query (mcp__qmd__query) is CPU-bound
+     on this hardware (measured: 277s, 260s on these exact query strings — caused the 2026-06-13 timeout).
+     vsearch completes in ~12s. DO NOT change these back to mcp__qmd__query without explicit JT authorization
+     and a hardware/GPU change. See FORK-BASELINE.md:215. -->
 Run both queries; include file path + ~200-char excerpt per hit. The qmd tool takes a single-string parameter (no `limit` arg); trim to the top-N most-relevant hits yourself:
-- `mcp__qmd__query "reflection thoughts energy mood project feeling"` — keep up to ~20 top-relevance hits
-- `mcp__qmd__query "project stuck blocked abandoned paused dropped"` — keep up to ~15 top-relevance hits
+- `mcp__qmd__vsearch "reflection thoughts energy mood project feeling"` — keep up to ~20 top-relevance hits
+- `mcp__qmd__vsearch "project stuck blocked abandoned paused dropped"` — keep up to ~15 top-relevance hits
 
 If either query returns zero hits, include `[empty]` for that entry.
 

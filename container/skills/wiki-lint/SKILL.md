@@ -2,11 +2,13 @@
 
 When JT invokes `/wiki-lint` (manually OR via the nightly @ 2am ET (cron `0 6 * * *` UTC during EDT) scheduled run), audit the wiki for health issues. **Fix what can be fixed; report what requires judgment.** Announce model: "Running `/wiki-lint` with Sonnet — wiki audit."
 
+<!-- DEFAULT VERB POLICY (Impl-72 / 2026-06-15): /wiki-lint runs unattended on the nightly cron (`0 6 * * *` UTC) — an automated path. Use `mcp__qmd__vsearch` (semantic, ~12s) for any vault/wiki lookup; `mcp__qmd__search` for exact-term lookups. Hybrid `mcp__qmd__query` is CPU-bound on this hardware (~47s–474s cold, GPU: none) and must NEVER be used on this automated path. See FORK-BASELINE.md:215. -->
+
 ## Audit dimensions (Karpathy line 66)
 
 Sixteen dimensions audited in order:
 
-1. **Orphan pages** — pages in `wiki/` with no inbound `[[wikilinks]]` from other wiki pages. **AUTO-FIX:** find 2-3 related concept pages (read `!index.md` + use qmd query for semantic neighbors), add `[[wikilinks]]` from those pages to the orphan, and add return links from the orphan.
+1. **Orphan pages** — pages in `wiki/` with no inbound `[[wikilinks]]` from other wiki pages. **AUTO-FIX:** find 2-3 related concept pages (read `!index.md` + use `mcp__qmd__vsearch` for semantic neighbors), add `[[wikilinks]]` from those pages to the orphan, and add return links from the orphan.
 2. **Dead-end pages** — pages with no outbound `[[wikilinks]]`. **AUTO-FIX:** scan the page content; for every entity, concept, or source mentioned that has a corresponding wiki page, add `[[wikilink]]`.
 3. **Bare-link entries in `!index.md`** — index entries with no context phrase. **AUTO-FIX:** generate a 4-12 word context phrase from the target page's H1 + first paragraph; tag with `<!-- AUTO -->` for JT review.
 4. **Broken wikilinks** — `[[link]]` pointing to a page that doesn't exist (renamed, deleted, never created). **AUTO-FIX (cautious):** if the target slug has a clear typo (Levenshtein distance 1-2 from an existing page), correct it. Otherwise FLAG for JT — file may have been intentionally deleted or the link is anticipating a future page.
