@@ -109,7 +109,7 @@ When a message arrives, classify before acting:
 | Log entry (event, update, note about a person/domain) | Write to appropriate `logs/<domain>/!log.md` (or sibling notes file when content is reference-shaped, e.g. `logs/food/notes.md`) |
 | Research request ("research X", "find out Y") | Invoke `/research` skill (see §Research Dispatch). Sync path: answer from Readwise + vault if sufficient. Supplement path: skill dispatches to quarantine queue — O'Brien notifies on Telegram when result ready. |
 | Reference / fact / quote / remember | Write to appropriate `reference/` file |
-| Project task | Write to appropriate `projects/{name}/next.md` |
+| Project task | Write to appropriate `projects/{name}/next.md` as a numbered activity (1., 2., …) — never a checkbox; sub-tasks as plain `-` bullets |
 | Project completion / learning | Write to appropriate `projects/{name}/log.md` |
 | Vault query ("what did I write about X?") | Read relevant file(s) and synthesize |
 | Conversation / brainstorm / question | Respond directly |
