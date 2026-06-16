@@ -51,12 +51,15 @@ export function startSlowSkillAck(
   if (!match) return () => {};
 
   const cmdName = match[1];
-  const rawTopic = lastMessage
-    .replace(/^\s*\/\S+\s*/, '')
-    .trim()
-    .slice(0, TOPIC_MAX_LEN);
-  const topic = rawTopic || `your ${cmdName} request`;
-  const ack = `Got it — working on ${topic} now. I'll ping back when it's ready.`;
+  const rawTopic = lastMessage.replace(/^\s*\/\S+\s*/, '').trim();
+  // Echo a SHORT topic ("…working on a tip calculator now"); for a long ask, don't
+  // slice it mid-phrase into an ugly truncated repeat — drop to the generic ack
+  // ("…working on it now"). Bare command (no topic) → "your <cmd> request". (FU-2 polish)
+  const ack = !rawTopic
+    ? `Got it — working on your ${cmdName} request now. I'll ping back when it's ready.`
+    : rawTopic.length <= TOPIC_MAX_LEN
+      ? `Got it — working on ${rawTopic} now. I'll ping back when it's ready.`
+      : `Got it — working on it now. I'll ping back when it's ready.`;
 
   // Clear any prior heartbeat for this jid before starting a new one. The warm
   // pipe path (index.ts) calls this fire-and-forget on every piped message, so

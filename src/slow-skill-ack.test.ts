@@ -132,13 +132,12 @@ describe('slow-skill-ack', () => {
       'working on your research request now',
     );
 
+    // A long ask is NOT truncated mid-phrase — it drops to the generic ack.
     const ch3 = makeTelegramChannel();
     startSlowSkillAck('jid:3', ch3, `/research ${'a'.repeat(60)}`);
-    const body: string = ch3.sendMessage.mock.calls[0][1];
-    const extracted = body
-      .replace('Got it — working on ', '')
-      .replace(" now. I'll ping back when it's ready.", '');
-    expect(extracted.length).toBeLessThanOrEqual(50);
+    expect(ch3.sendMessage.mock.calls[0][1]).toBe(
+      "Got it — working on it now. I'll ping back when it's ready.",
+    );
   });
 
   it('stop() clears heartbeat', async () => {

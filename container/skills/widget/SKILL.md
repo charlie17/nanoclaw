@@ -264,6 +264,8 @@ prompt: |
 
 `url` is deterministic (it's `…/<id>/`), so it's correct to write before the deploy finishes. Do **not** add a deploy-status field — you ack async and the host's Telegram notify is the deploy outcome, not the stub.
 
+**On a tweak / regeneration of an existing `<id>`: OVERWRITE the stub (HARD).** Writing the stub is step 4 **every time** — never skip it because the file already exists. Refresh the `# Widget — <description>` line and the body sentence(s) to describe the **new** behavior, and update `prompt:` to JT's latest ask. Keep `created:` as the original birth date. A stub that still describes the old version after you've redeployed a changed widget is a bug — JT reads these, and the deep-link footer points here.
+
 ## Drop the bundle into the queue (atomic)
 
 The host worker watches `/workspace/extra/widget-queue/` for a **single self-contained** trigger `<id>.bundle.json` = `{ id, title, kind, html }`, where `html` is the **entire** widget HTML as a JSON string. `kind` is `"ad-hoc"` for everything this skill makes.
