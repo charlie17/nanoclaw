@@ -102,12 +102,19 @@ describe('slow-skill-ack', () => {
     stop();
   });
 
-  it('/widget does NOT host-ack (the skill self-acks in both warm + cold paths)', () => {
+  it('/widget IS a slow-skill — host-acks on both warm + cold paths (FU-2 D2)', () => {
     const channel = makeTelegramChannel();
-    const stop = startSlowSkillAck('jid:1', channel, '/widget a tip calculator');
+    const stop = startSlowSkillAck(
+      'jid:1',
+      channel,
+      '/widget a tip calculator',
+    );
 
-    expect(channel.sendMessage).not.toHaveBeenCalled();
-    expect(channel.setTyping).not.toHaveBeenCalled();
+    expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage.mock.calls[0][1]).toContain(
+      'working on a tip calculator now',
+    );
+    expect(channel.setTyping).toHaveBeenCalledTimes(1);
 
     stop();
   });

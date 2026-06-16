@@ -1,19 +1,40 @@
 import { Channel } from './types.js';
 import { logger } from './logger.js';
 
-// NOTE: `/widget` is intentionally NOT here. This host ack only fires on the
-// cold-start (spawn) path; warm sessions pipe messages straight into the live
-// container (index.ts) and bypass it — so a host ack on `/widget` is unreliable
-// (fires only when the session happens to be cold). The widget skill instead
-// emits its own "🛠️ Building…" ack unconditionally, which runs in BOTH paths.
-// Adding `widget` back here would double-ack on a cold `/widget`. (Impl-73 Step-3 FU.)
+// `/widget` is host-acked on BOTH message paths (FU-2 D2/D3): the cold-start
+// (spawn) path here, AND the warm pipe path in index.ts which now also calls
+// startSlowSkillAck. The ack is deterministic host-side — the widget skill no
+// longer emits its own building line (FU-2 D1: guarantee in code, not prose).
 const SLOW_SKILL_RE =
-  /^\s*\/(research|wiki-ingest|wiki-lint|wiki-query|wiki-scan|moc-refresh|nightly-report|weekly-review)\b/;
+  /^\s*\/(research|widget|wiki-ingest|wiki-lint|wiki-query|wiki-scan|moc-refresh|nightly-report|weekly-review)\b/;
 const HEARTBEAT_INTERVAL_MS = 4000;
 const TOPIC_MAX_LEN = 50;
 const HARD_TIMEOUT_MS = 5 * 60 * 1000;
 
-const _heartbeats = new Map<string, ReturnType<typeof setInterval>>();
+type Heartbeat = {
+  timer: ReturnType<typeof setInterval>;
+  hardTimeout: ReturnType<typeof setTimeout>;
+};
+
+const _heartbeats = new Map<string, Heartbeat>();
+
+/**
+ * Clear a jid's heartbeat (interval + hard-timeout) and drop it from the map.
+ * Pass `only` to make it identity-scoped: a stale `stop()` closure from a call
+ * that was already superseded becomes a safe no-op (it won't clear the newer
+ * heartbeat). Without `only`, clears whatever heartbeat the jid currently holds
+ * (used for clear-on-next-call). Tracking the hard-timeout here — not just in a
+ * closure — is what stops the warm pipe path (fire-and-forget, no stop() call)
+ * from leaking orphaned timeouts in _heartbeats. (FU-2 D3.)
+ */
+function clearHeartbeat(jid: string, only?: Heartbeat): void {
+  const existing = _heartbeats.get(jid);
+  if (existing === undefined) return;
+  if (only !== undefined && existing !== only) return;
+  clearInterval(existing.timer);
+  clearTimeout(existing.hardTimeout);
+  _heartbeats.delete(jid);
+}
 
 /**
  * Slow-skill acknowledgement + heartbeat for Daystrom Telegram inbound.
@@ -37,11 +58,10 @@ export function startSlowSkillAck(
   const topic = rawTopic || `your ${cmdName} request`;
   const ack = `Got it — working on ${topic} now. I'll ping back when it's ready.`;
 
-  const existing = _heartbeats.get(jid);
-  if (existing !== undefined) {
-    clearInterval(existing);
-    _heartbeats.delete(jid);
-  }
+  // Clear any prior heartbeat for this jid before starting a new one. The warm
+  // pipe path (index.ts) calls this fire-and-forget on every piped message, so
+  // a stale heartbeat must never accumulate. (FU-2 D3.)
+  clearHeartbeat(jid);
 
   if (channel.name === 'telegram') {
     void channel
@@ -55,24 +75,21 @@ export function startSlowSkillAck(
     channel.setTyping?.(jid, true);
   }, HEARTBEAT_INTERVAL_MS);
 
-  _heartbeats.set(jid, timer);
+  const entry = { timer } as Heartbeat;
+  entry.hardTimeout = setTimeout(
+    () => clearHeartbeat(jid, entry),
+    HARD_TIMEOUT_MS,
+  );
+  _heartbeats.set(jid, entry);
 
-  const hardTimeout = setTimeout(() => {
-    clearInterval(timer);
-    _heartbeats.delete(jid);
-  }, HARD_TIMEOUT_MS);
-
-  return () => {
-    clearTimeout(hardTimeout);
-    clearInterval(timer);
-    _heartbeats.delete(jid);
-  };
+  return () => clearHeartbeat(jid, entry);
 }
 
 /** @internal — test tear-down only */
 export function _clearAllHeartbeats(): void {
-  for (const timer of _heartbeats.values()) {
+  for (const { timer, hardTimeout } of _heartbeats.values()) {
     clearInterval(timer);
+    clearTimeout(hardTimeout);
   }
   _heartbeats.clear();
 }

@@ -17,14 +17,14 @@ Canonical system explainer (read only if you need the why): `general/` is the va
 
 This skill builds **ad-hoc** widgets only — generated fresh, treated as throwaway (the URL stays live forever, but you don't maintain it; you regenerate). Standing widgets (the Projects Board) are hand-authored and pinned by the Three Man Team, not generated here.
 
-## The flow (async — you ack once, the host ships the link)
+## The flow (async — the host acks + ships; you stay silent)
 
 1. **Parse intent** — what is JT manipulating? Identify the state variables and the actions (the buttons / inputs / drag the widget needs).
 2. **Choose the `<id>`** (slug rule below).
 3. **Generate the widget HTML** (generation playbook below).
 4. **Write the vault stub** (schema below).
 5. **Drop the bundle into the queue** atomically (procedure below).
-6. **Always emit ONE building ack first, then stay silent.** The moment you've decided to build a widget — **regardless of how JT asked** (the literal `/widget` command OR a natural-language request like "make me a widget…", "let me play with X", "let me tweak Y") — your **first** output is exactly one short building line, sent *before* you start generating: e.g. `🛠️ Building your widget — I'll ping back when it's live.` The host no longer acks widgets, so **this agent ack is the only "working on it" signal** and it must fire in *every* case (it works whether your session is warm or cold; a host ack would not). After the ack, stay silent: the host worker deploys asynchronously and sends the `🪟 Widget shipped: <link>` (or `⚠️ failed`) message itself. JT does **not** want a "queued" / "link incoming" / summary message from you between your ack and the host's shipped line — it's pure noise. **If you want to note completion, wrap your ENTIRE final message in `<internal>…</internal>` tags** — the system strips those before anything is sent, so JT sees nothing (output exactly, e.g.: `<internal>bundle queued; host will ship</internal>`). Do not poll, wait, or read a status file. **Exception:** if the bundle drop itself fails (e.g. the `mv` errors), report THAT as a normal (non-`<internal>`) message — a failure is the one thing JT must hear about.
+6. **Stay silent — the host sends the ack and the shipped/failed message.** The host worker fires the instant "working on it" ack and later the `🪟 Widget shipped: <link>` (or `⚠️ failed`) message itself. You do **not** emit a building line, a "queued" / "link incoming" note, or a summary — that's pure noise. **If you want to note completion, wrap your ENTIRE final message in `<internal>…</internal>` tags** — the system strips those before anything is sent, so JT sees nothing (e.g. `<internal>bundle queued; host will ship</internal>`). Do not poll, wait, or read a status file. **Exception:** if the bundle *drop itself* fails (e.g. the `mv` errors), report THAT as a normal (non-`<internal>`) message — a failed drop is the one thing JT must hear about.
 
 ## The `<id>` / slug rule (HARD)
 
@@ -71,9 +71,6 @@ Start from this exact skeleton (fill the title, state, and view):
 
     view(document.getElementById('app'))
   </script>
-  <footer class="mt-10 text-center text-xs text-slate-100">
-    Updated <CREATED> · <a class="underline hover:text-slate-300" href="https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fwidgets%2F<id>">📝 vault note</a>
-  </footer>
 </body>
 </html>
 ```
@@ -81,7 +78,7 @@ Start from this exact skeleton (fill the title, state, and view):
 Non-negotiables:
 
 - **`<link rel="stylesheet" href="./styles.css">` in `<head>`, and NO Tailwind `<script>`.** The host compiles a tree-shaken `styles.css` and serves it as a sibling of your `index.html` at `/<id>/styles.css`; the relative href resolves. A `cdn.tailwindcss.com` script would be redundant weight and is forbidden.
-- **Keep the footer** (last-updated timestamp + vault-note link), with two substitutions. **(1) `<CREATED>`** — the time this widget's content was generated (on a fresh build, that's now; if you ever regenerate/tweak an existing widget, recompute it). Compute it with Bash, **never in your head** (LLMs get day-of-week wrong): run `TZ=America/New_York date '+%a %-m/%-d/%y %-I:%M%P'` and append ` ET` → e.g. `Tue 6/16/26 2:03pm ET`. Embed the literal output. **Reuse this exact `<CREATED>` value in the vault stub** (below) so the footer and note agree (the stub's `*Updated …*` line; frontmatter `created:` stays the original birth date). **(2) `<id>`** into the vault-note href — URL-safe kebab, drop in verbatim, and **do not re-encode the rest of the href** (it's already percent-encoded). The link deep-links back to this widget's stub (`general/widgets/<id>.md`) via the Obsidian CF-worker redirect — the reverse of the stub's "Open widget" link. **Footer text color = `text-slate-100` (white), NOT a muted gray** (`text-slate-400/500/600`) — JT wants the footer legible, not faded. Keep the link's `underline` + `hover:text-slate-300`.
+- **Do NOT emit a footer or a last-updated timestamp** — the host injects the footer (timestamp + vault-note link) deterministically at deploy. End `<body>` after your `#app` + script.
 - **Mobile-first.** JT opens these from a phone (Telegram tap → CF Access). Default to single-column, large tap targets; layer desktop with `sm:` / `md:` breakpoints.
 - **Dark mode only (HARD).** Every widget renders dark — one fixed dark palette, no light option, no `dark:` variants, no toggle. Base: `bg-slate-900` (or `bg-slate-950`) + `text-slate-100`; surfaces a step lighter (`bg-slate-800`); borders `border-slate-700`; muted text `text-slate-400`/`text-slate-500`; bright accents that pop on dark (`emerald`, `sky`, `amber`, `rose`…). **Never use a light background** (`bg-white`, `bg-stone-50`, `bg-gray-100`, etc.) or dark-on-light text — it'll glare against the dark shell. Pick legible accent + text contrasts for a dark surface.
 - **Pin every dependency** (next section) — no floating CDN URLs.
@@ -260,8 +257,6 @@ prompt: |
 ---
 # Widget — <short human description>
 
-*Updated <CREATED>*
-
 <1–2 sentences: what it shows + how to interact with it.>
 
 [Open widget](https://widgets.crystaldatalabs.com/<id>/)
@@ -308,7 +303,7 @@ The filename stem and the JSON `.id` are the same `"$id"` string by construction
 - **Do NOT ask your container to fetch the internet** (no `curl`/`fetch`/`npm install` of widget deps). The widget's own `esm.sh` imports run in JT's *browser* at open-time — that's fine; your container fetching anything is not.
 - **Do NOT write the HTML and a manifest as two files** — one self-contained `<id>.bundle.json` only.
 - **Do NOT add a "Send to Daystrom" button speculatively.** Add it **only** when the prompt implies a round-trip (see "Send to Daystrom feedback button"); a purely-local widget gets none.
-- **Do NOT poll or wait for the deploy.** Your only up-front message is the single `🛠️ Building your widget…` ack from step 6 (always, however JT asked) — then stop.
+- **Do NOT poll or wait for the deploy, and do NOT emit a building/ack line** — the host sends the ack and the shipped/failed message (FU-2: the ack is deterministic host-side, not your prose). Stay silent after queuing (or use `<internal>…</internal>`); the only thing you speak up about is a failed bundle *drop*.
 
 ## Handling widget feedback (inbound — a widget sent you its state)
 

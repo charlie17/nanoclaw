@@ -651,6 +651,17 @@ async function startMessageLoop(): Promise<void> {
             lastAgentTimestamp[chatJid] =
               messagesToSend[messagesToSend.length - 1].timestamp;
             saveState();
+            // Slow-skill commands (/widget, /research, …) fire the host ack +
+            // typing heartbeat on this warm pipe path too — it previously
+            // bypassed the ack entirely (FU-2 D3). Keyed on the RAW last-message
+            // content, not the formatted prompt. startSlowSkillAck no-ops for
+            // ordinary messages, so we still set the one-shot typing indicator
+            // below (don't regress non-slow-skill warm-pipe typing).
+            startSlowSkillAck(
+              chatJid,
+              channel,
+              messagesToSend[messagesToSend.length - 1].content,
+            );
             // Show typing indicator while the container processes the piped message
             channel
               .setTyping?.(chatJid, true)
