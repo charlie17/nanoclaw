@@ -51,7 +51,7 @@ Start from this exact skeleton (fill the title, state, and view):
   <title>WIDGET TITLE</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
-<body class="bg-stone-50 text-stone-900 p-4 sm:p-6">
+<body class="bg-slate-900 text-slate-100 p-4 sm:p-6">
   <div id="app"></div>
   <script type="module">
     import { reactive, html } from 'https://esm.sh/@arrow-js/core@1.0.6'
@@ -65,14 +65,14 @@ Start from this exact skeleton (fill the title, state, and view):
     const view = html`
       <div class="flex flex-col gap-4 items-center">
         <p class="text-2xl font-semibold">${() => state.count}</p>
-        <button @click="${() => state.count++}" class="px-4 py-2 rounded-lg bg-stone-800 text-white">+1</button>
+        <button @click="${() => state.count++}" class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white">+1</button>
       </div>
     `
 
     view(document.getElementById('app'))
   </script>
-  <footer class="mt-6 text-center text-xs text-stone-400">
-    Updated <CREATED> · <a class="underline hover:text-stone-600" href="https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fwidgets%2F<id>">📝 vault note</a>
+  <footer class="mt-10 text-center text-xs text-slate-500">
+    Updated <CREATED> · <a class="underline hover:text-slate-300" href="https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fwidgets%2F<id>">📝 vault note</a>
   </footer>
 </body>
 </html>
@@ -83,6 +83,7 @@ Non-negotiables:
 - **`<link rel="stylesheet" href="./styles.css">` in `<head>`, and NO Tailwind `<script>`.** The host compiles a tree-shaken `styles.css` and serves it as a sibling of your `index.html` at `/<id>/styles.css`; the relative href resolves. A `cdn.tailwindcss.com` script would be redundant weight and is forbidden.
 - **Keep the footer** (last-updated timestamp + vault-note link), with two substitutions. **(1) `<CREATED>`** — the time this widget's content was generated (on a fresh build, that's now; if you ever regenerate/tweak an existing widget, recompute it). Compute it with Bash, **never in your head** (LLMs get day-of-week wrong): run `TZ=America/New_York date '+%a %-m/%-d/%y %-I:%M%P'` and append ` ET` → e.g. `Tue 6/16/26 2:03pm ET`. Embed the literal output. **Reuse this exact `<CREATED>` value in the vault stub** (below) so the footer and note agree (the stub's `*Updated …*` line; frontmatter `created:` stays the original birth date). **(2) `<id>`** into the vault-note href — URL-safe kebab, drop in verbatim, and **do not re-encode the rest of the href** (it's already percent-encoded). The link deep-links back to this widget's stub (`general/widgets/<id>.md`) via the Obsidian CF-worker redirect — the reverse of the stub's "Open widget" link.
 - **Mobile-first.** JT opens these from a phone (Telegram tap → CF Access). Default to single-column, large tap targets; layer desktop with `sm:` / `md:` breakpoints.
+- **Dark mode only (HARD).** Every widget renders dark — one fixed dark palette, no light option, no `dark:` variants, no toggle. Base: `bg-slate-900` (or `bg-slate-950`) + `text-slate-100`; surfaces a step lighter (`bg-slate-800`); borders `border-slate-700`; muted text `text-slate-400`/`text-slate-500`; bright accents that pop on dark (`emerald`, `sky`, `amber`, `rose`…). **Never use a light background** (`bg-white`, `bg-stone-50`, `bg-gray-100`, etc.) or dark-on-light text — it'll glare against the dark shell. Pick legible accent + text contrasts for a dark surface.
 - **Pin every dependency** (next section) — no floating CDN URLs.
 - **NO HTML comments inside an `html\`\`` template (HARD).** Arrow reads every `<!-- … -->` comment node as an interpolation slot, miscounts against the real `${}` count, and throws `Invalid HTML position` — the widget renders **completely blank**. (This bit a live widget 2026-06-16.) Don't annotate templates with `<!-- … -->`; use JS comments *outside* the `html\`\`` block, or no comments.
 
