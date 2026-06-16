@@ -2145,11 +2145,7 @@ describe('WebChannel HTTP — /widget/feedback (Plane C)', () => {
     };
   }
 
-  function fbBody(o: {
-    type?: string;
-    widgetId?: string;
-    state?: unknown;
-  }) {
+  function fbBody(o: { type?: string; widgetId?: string; state?: unknown }) {
     return JSON.stringify({
       type: o.type ?? 'conversational',
       widgetId: o.widgetId ?? 'test-widget-1',
@@ -2163,7 +2159,10 @@ describe('WebChannel HTTP — /widget/feedback (Plane C)', () => {
       {
         method: 'POST',
         path: '/widget/feedback',
-        headers: { ...fbHeaders(headers), 'Content-Length': Buffer.byteLength(body).toString() },
+        headers: {
+          ...fbHeaders(headers),
+          'Content-Length': Buffer.byteLength(body).toString(),
+        },
       },
       body,
     );
@@ -2180,7 +2179,9 @@ describe('WebChannel HTTP — /widget/feedback (Plane C)', () => {
     expect(res.status).toBe(204);
     expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
     expect(res.headers['access-control-allow-methods']).toContain('POST');
-    expect(res.headers['access-control-allow-headers']).toContain('Authorization');
+    expect(res.headers['access-control-allow-headers']).toContain(
+      'Authorization',
+    );
   });
 
   it('rejected origin gets NO ACAO header (but still processes)', async () => {
@@ -2268,7 +2269,9 @@ describe('WebChannel HTTP — /widget/feedback (Plane C)', () => {
   // ── Type discriminator + synthesis ────────────────────────────────────────
 
   it('conversational → 200, synthesizes onMessage to tg JID with the envelope; onChatMetadata NOT called', async () => {
-    const res = await post(fbBody({ widgetId: 'hvac-quotes-1', state: { pick: 'B' } }));
+    const res = await post(
+      fbBody({ widgetId: 'hvac-quotes-1', state: { pick: 'B' } }),
+    );
     expect(res.status).toBe(200);
     expect(fbOpts.onMessage).toHaveBeenCalledTimes(1);
     const [jid, msg] = vi.mocked(fbOpts.onMessage).mock.calls[0] as [

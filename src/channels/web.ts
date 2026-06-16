@@ -1325,7 +1325,10 @@ export class WebChannel implements Channel {
     // the CORS preflight is unauthenticated, and the route authenticates with
     // WIDGET_FEEDBACK_TOKEN (not NANOCLAW_TOKEN) — so it must NOT pass through
     // authorizeRequest below.
-    if (urlPath === '/widget/feedback' && (method === 'OPTIONS' || method === 'POST')) {
+    if (
+      urlPath === '/widget/feedback' &&
+      (method === 'OPTIONS' || method === 'POST')
+    ) {
       await this.handleWidgetFeedback(req, res);
       return;
     }
