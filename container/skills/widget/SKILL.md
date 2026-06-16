@@ -62,6 +62,9 @@ Start from this exact skeleton (fill the title, state, and view):
 
     view(document.getElementById('app'))
   </script>
+  <footer class="mt-6 text-center text-xs text-stone-400">
+    <a class="underline hover:text-stone-600" href="https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fwidgets%2F<id>">📝 vault note</a>
+  </footer>
 </body>
 </html>
 ```
@@ -69,6 +72,7 @@ Start from this exact skeleton (fill the title, state, and view):
 Non-negotiables:
 
 - **`<link rel="stylesheet" href="./styles.css">` in `<head>`, and NO Tailwind `<script>`.** The host compiles a tree-shaken `styles.css` and serves it as a sibling of your `index.html` at `/<id>/styles.css`; the relative href resolves. A `cdn.tailwindcss.com` script would be redundant weight and is forbidden.
+- **Keep the footer vault-note link**, substituting your `<id>` into the href (the only edit it needs). It deep-links back to this widget's own vault stub (`general/widgets/<id>.md`) through the Obsidian CF-worker redirect — the reverse of the stub's "Open widget" link. `<id>` is URL-safe kebab, so drop it in verbatim and **do not re-encode the rest of the href** (it's already percent-encoded).
 - **Mobile-first.** JT opens these from a phone (Telegram tap → CF Access). Default to single-column, large tap targets; layer desktop with `sm:` / `md:` breakpoints.
 - **Pin every dependency** (next section) — no floating CDN URLs.
 
