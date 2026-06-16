@@ -1,8 +1,14 @@
 import { Channel } from './types.js';
 import { logger } from './logger.js';
 
+// NOTE: `/widget` is intentionally NOT here. This host ack only fires on the
+// cold-start (spawn) path; warm sessions pipe messages straight into the live
+// container (index.ts) and bypass it — so a host ack on `/widget` is unreliable
+// (fires only when the session happens to be cold). The widget skill instead
+// emits its own "🛠️ Building…" ack unconditionally, which runs in BOTH paths.
+// Adding `widget` back here would double-ack on a cold `/widget`. (Impl-73 Step-3 FU.)
 const SLOW_SKILL_RE =
-  /^\s*\/(research|wiki-ingest|wiki-lint|wiki-query|wiki-scan|moc-refresh|nightly-report|weekly-review|widget)\b/;
+  /^\s*\/(research|wiki-ingest|wiki-lint|wiki-query|wiki-scan|moc-refresh|nightly-report|weekly-review)\b/;
 const HEARTBEAT_INTERVAL_MS = 4000;
 const TOPIC_MAX_LEN = 50;
 const HARD_TIMEOUT_MS = 5 * 60 * 1000;

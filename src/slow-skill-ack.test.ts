@@ -102,6 +102,16 @@ describe('slow-skill-ack', () => {
     stop();
   });
 
+  it('/widget does NOT host-ack (the skill self-acks in both warm + cold paths)', () => {
+    const channel = makeTelegramChannel();
+    const stop = startSlowSkillAck('jid:1', channel, '/widget a tip calculator');
+
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(channel.setTyping).not.toHaveBeenCalled();
+
+    stop();
+  });
+
   it('topic extraction and fallback', () => {
     const ch1 = makeTelegramChannel();
     startSlowSkillAck('jid:1', ch1, '/research foo bar');
