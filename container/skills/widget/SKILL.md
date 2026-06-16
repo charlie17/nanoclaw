@@ -63,7 +63,7 @@ Start from this exact skeleton (fill the title, state, and view):
     view(document.getElementById('app'))
   </script>
   <footer class="mt-6 text-center text-xs text-stone-400">
-    <a class="underline hover:text-stone-600" href="https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fwidgets%2F<id>">📝 vault note</a>
+    Updated <CREATED> · <a class="underline hover:text-stone-600" href="https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fwidgets%2F<id>">📝 vault note</a>
   </footer>
 </body>
 </html>
@@ -72,7 +72,7 @@ Start from this exact skeleton (fill the title, state, and view):
 Non-negotiables:
 
 - **`<link rel="stylesheet" href="./styles.css">` in `<head>`, and NO Tailwind `<script>`.** The host compiles a tree-shaken `styles.css` and serves it as a sibling of your `index.html` at `/<id>/styles.css`; the relative href resolves. A `cdn.tailwindcss.com` script would be redundant weight and is forbidden.
-- **Keep the footer vault-note link**, substituting your `<id>` into the href (the only edit it needs). It deep-links back to this widget's own vault stub (`general/widgets/<id>.md`) through the Obsidian CF-worker redirect — the reverse of the stub's "Open widget" link. `<id>` is URL-safe kebab, so drop it in verbatim and **do not re-encode the rest of the href** (it's already percent-encoded).
+- **Keep the footer** (last-updated timestamp + vault-note link), with two substitutions. **(1) `<CREATED>`** — the time this widget's content was generated (on a fresh build, that's now; if you ever regenerate/tweak an existing widget, recompute it). Compute it with Bash, **never in your head** (LLMs get day-of-week wrong): run `TZ=America/New_York date '+%a %-m/%-d/%y %-I:%M%P'` and append ` ET` → e.g. `Tue 6/16/26 2:03pm ET`. Embed the literal output. **Reuse this exact `<CREATED>` value in the vault stub** (below) so the footer and note agree (the stub's `*Updated …*` line; frontmatter `created:` stays the original birth date). **(2) `<id>`** into the vault-note href — URL-safe kebab, drop in verbatim, and **do not re-encode the rest of the href** (it's already percent-encoded). The link deep-links back to this widget's stub (`general/widgets/<id>.md`) via the Obsidian CF-worker redirect — the reverse of the stub's "Open widget" link.
 - **Mobile-first.** JT opens these from a phone (Telegram tap → CF Access). Default to single-column, large tap targets; layer desktop with `sm:` / `md:` breakpoints.
 - **Pin every dependency** (next section) — no floating CDN URLs.
 
@@ -193,6 +193,8 @@ prompt: |
   <JT's original prompt, verbatim>
 ---
 # Widget — <short human description>
+
+*Updated <CREATED>*
 
 <1–2 sentences: what it shows + how to interact with it.>
 
