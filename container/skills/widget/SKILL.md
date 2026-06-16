@@ -17,14 +17,17 @@ Canonical system explainer (read only if you need the why): `general/` is the va
 
 This skill builds **ad-hoc** widgets only — generated fresh, treated as throwaway (the URL stays live forever, but you don't maintain it; you regenerate). Standing widgets (the Projects Board) are hand-authored and pinned by the Three Man Team, not generated here.
 
-## The flow (async — the system acks; you stay silent)
+## The flow (async — the host ships the link; you ack only a conversational ask)
 
 1. **Parse intent** — what is JT manipulating? Identify the state variables and the actions (the buttons / inputs / drag the widget needs).
 2. **Choose the `<id>`** (slug rule below).
 3. **Generate the widget HTML** (generation playbook below).
 4. **Write the vault stub** (schema below).
 5. **Drop the bundle into the queue** atomically (procedure below).
-6. **Success path = NO Telegram message from you.** The system already fired an instant "Got it — working on it…" ack the moment JT sent `/widget`, and the host worker deploys asynchronously and sends the `🪟 Widget shipped: <link>` (or `⚠️ failed`) message itself. JT does **not** want a third "queued" / "building" / "link incoming" / summary message from you between those two — it's pure noise. **If you want to note completion, wrap your ENTIRE final message in `<internal>…</internal>` tags** — the system strips those before anything is sent, so JT sees nothing (output exactly, e.g.: `<internal>bundle queued; host will ship</internal>`). Do not poll, wait, or read a status file. **Exception:** if the bundle drop itself fails (e.g. the `mv` errors), report THAT as a normal (non-`<internal>`) message — a failure is the one thing JT must hear about.
+6. **Ack rule (depends on how JT invoked you), then stay silent.**
+   - **If JT's triggering message began with the literal `/widget` command → send NOTHING up front.** The system already fired an instant "Got it — working on it…" ack at receive time (it matches the leading `/widget`); a second building message from you would be noise.
+   - **If JT asked conversationally** — no leading `/widget`, you *inferred* the widget intent from natural language ("make me a widget…", "let me play with X", "let me tweak Y") — **the system did NOT ack.** Send exactly **one** short building line as your *first* output, then nothing more until you're done: e.g. `🛠️ Building your widget — I'll ping back when it's live.`
+   - Either way, after that: the host worker deploys asynchronously and sends the `🪟 Widget shipped: <link>` (or `⚠️ failed`) message itself. JT does **not** want a "queued" / "link incoming" / summary message from you between the ack and the host's shipped line — it's pure noise. **If you want to note completion, wrap your ENTIRE final message in `<internal>…</internal>` tags** — the system strips those before anything is sent, so JT sees nothing (output exactly, e.g.: `<internal>bundle queued; host will ship</internal>`). Do not poll, wait, or read a status file. **Exception:** if the bundle drop itself fails (e.g. the `mv` errors), report THAT as a normal (non-`<internal>`) message — a failure is the one thing JT must hear about.
 
 ## The `<id>` / slug rule (HARD)
 
@@ -71,7 +74,7 @@ Start from this exact skeleton (fill the title, state, and view):
 
     view(document.getElementById('app'))
   </script>
-  <footer class="mt-10 text-center text-xs text-slate-500">
+  <footer class="mt-10 text-center text-xs text-slate-100">
     Updated <CREATED> · <a class="underline hover:text-slate-300" href="https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3Dgeneral%2Fwidgets%2F<id>">📝 vault note</a>
   </footer>
 </body>
@@ -307,7 +310,7 @@ The filename stem and the JSON `.id` are the same `"$id"` string by construction
 - **Do NOT ask your container to fetch the internet** (no `curl`/`fetch`/`npm install` of widget deps). The widget's own `esm.sh` imports run in JT's *browser* at open-time — that's fine; your container fetching anything is not.
 - **Do NOT write the HTML and a manifest as two files** — one self-contained `<id>.bundle.json` only.
 - **Do NOT add a "Send to Daystrom" button speculatively.** Add it **only** when the prompt implies a round-trip (see "Send to Daystrom feedback button"); a purely-local widget gets none.
-- **Do NOT poll or wait for the deploy.** Ack `🛠️ Building your widget…` and stop.
+- **Do NOT poll or wait for the deploy.** Your only up-front message is the conditional ack from step 6 — one `🛠️ Building your widget…` line **if JT asked conversationally**, **nothing if he used the literal `/widget`** (the system already acked) — then stop.
 
 ## Handling widget feedback (inbound — a widget sent you its state)
 
