@@ -122,6 +122,7 @@ vi.mock('node:fs/promises', () => ({
 
 const mockConfig = vi.hoisted(() => ({
   NANOCLAW_TOKEN: 'test-secret-token',
+  WIDGET_FEEDBACK_TOKEN: 'test-widget-token',
   NANOCLAW_WEB_HOST: '127.0.0.1',
   NANOCLAW_WEB_PORT: 0,
   ASSISTANT_NAME: 'Daystrom',
@@ -132,6 +133,9 @@ const mockConfig = vi.hoisted(() => ({
 vi.mock('../config.js', () => ({
   get NANOCLAW_TOKEN() {
     return mockConfig.NANOCLAW_TOKEN;
+  },
+  get WIDGET_FEEDBACK_TOKEN() {
+    return mockConfig.WIDGET_FEEDBACK_TOKEN;
   },
   get NANOCLAW_WEB_HOST() {
     return mockConfig.NANOCLAW_WEB_HOST;
@@ -2094,4 +2098,251 @@ describe('WebChannel HTTP — Open WebUI proxy (/dash/private)', () => {
 // 300_000 (5 min) matches the slow-skill-ack hard cap from Impl-32.
 it('TYPING_TIMEOUT_MS is 300_000ms (5 min)', () => {
   expect(TYPING_TIMEOUT_MS).toBe(300_000);
+});
+
+// ── /widget/feedback — Plane C (Impl-73 Step 3) ───────────────────────────────
+
+const WIDGET_ORIGIN = 'https://widgets.crystaldatalabs.com';
+
+describe('WebChannel HTTP — /widget/feedback (Plane C)', () => {
+  let fbChannel: WebChannel;
+  let fbOpts: ChannelOpts;
+  let fbPort: number;
+
+  beforeAll(async () => {
+    fbOpts = {
+      onMessage: vi.fn(),
+      onChatMetadata: vi.fn(),
+      registeredGroups: vi.fn(() => ({})),
+    };
+    fbChannel = new WebChannel(fbOpts);
+    await fbChannel.connect();
+    fbPort = (
+      (
+        fbChannel as unknown as { server: http.Server }
+      ).server.address() as AddressInfo
+    ).port;
+  });
+
+  afterAll(async () => {
+    await fbChannel.disconnect();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    mockConfig.WIDGET_FEEDBACK_TOKEN = 'test-widget-token';
+  });
+
+  function fbHeaders(extra?: Record<string, string>) {
+    return {
+      Authorization: 'Bearer test-widget-token',
+      'Content-Type': 'application/json',
+      Origin: WIDGET_ORIGIN,
+      ...extra,
+    };
+  }
+
+  function fbBody(o: {
+    type?: string;
+    widgetId?: string;
+    state?: unknown;
+  }) {
+    return JSON.stringify({
+      type: o.type ?? 'conversational',
+      widgetId: o.widgetId ?? 'test-widget-1',
+      state: 'state' in o ? o.state : { count: 3 },
+    });
+  }
+
+  function post(body: string, headers?: Record<string, string>) {
+    return req(
+      fbPort,
+      {
+        method: 'POST',
+        path: '/widget/feedback',
+        headers: { ...fbHeaders(headers), 'Content-Length': Buffer.byteLength(body).toString() },
+      },
+      body,
+    );
+  }
+
+  // ── CORS ────────────────────────────────────────────────────────────────────
+
+  it('preflight OPTIONS returns 204 with ACAO + methods/headers', async () => {
+    const res = await req(fbPort, {
+      method: 'OPTIONS',
+      path: '/widget/feedback',
+      headers: { Origin: WIDGET_ORIGIN },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
+    expect(res.headers['access-control-allow-methods']).toContain('POST');
+    expect(res.headers['access-control-allow-headers']).toContain('Authorization');
+  });
+
+  it('rejected origin gets NO ACAO header (but still processes)', async () => {
+    const body = fbBody({});
+    const res = await req(
+      fbPort,
+      {
+        method: 'POST',
+        path: '/widget/feedback',
+        headers: {
+          Authorization: 'Bearer test-widget-token',
+          'Content-Type': 'application/json',
+          Origin: 'https://evil.example.com',
+          'Content-Length': Buffer.byteLength(body).toString(),
+        },
+      },
+      body,
+    );
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  // ── Auth ──────────────────────────────────────────────────────────────────
+
+  it('empty WIDGET_FEEDBACK_TOKEN → 503 (fail closed), still carries ACAO', async () => {
+    mockConfig.WIDGET_FEEDBACK_TOKEN = '';
+    const res = await post(fbBody({}));
+    expect(res.status).toBe(503);
+    // Hardening ask A — CORS-first, so even the disabled-route response is readable.
+    expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
+  });
+
+  it('bad bearer token → 401, still carries ACAO', async () => {
+    const res = await post(fbBody({}), { Authorization: 'Bearer wrong-token' });
+    expect(res.status).toBe(401);
+    expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
+    expect(fbOpts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('returns 429 after 5 failed token attempts from same IP', async () => {
+    const rl = new WebChannel(makeOpts());
+    await rl.connect();
+    const rlPort = (
+      (rl as unknown as { server: http.Server }).server.address() as AddressInfo
+    ).port;
+    const body = fbBody({});
+    try {
+      for (let i = 0; i < 5; i++) {
+        const r = await req(
+          rlPort,
+          {
+            method: 'POST',
+            path: '/widget/feedback',
+            headers: {
+              Authorization: 'Bearer wrong-token',
+              'Content-Type': 'application/json',
+              Origin: WIDGET_ORIGIN,
+              'Content-Length': Buffer.byteLength(body).toString(),
+            },
+          },
+          body,
+        );
+        expect(r.status).toBe(401);
+      }
+      const r6 = await req(
+        rlPort,
+        {
+          method: 'POST',
+          path: '/widget/feedback',
+          headers: {
+            Authorization: 'Bearer wrong-token',
+            'Content-Type': 'application/json',
+            Origin: WIDGET_ORIGIN,
+            'Content-Length': Buffer.byteLength(body).toString(),
+          },
+        },
+        body,
+      );
+      expect(r6.status).toBe(429);
+      expect(r6.headers['retry-after']).toBe('60');
+    } finally {
+      await rl.disconnect();
+    }
+  });
+
+  // ── Type discriminator + synthesis ────────────────────────────────────────
+
+  it('conversational → 200, synthesizes onMessage to tg JID with the envelope; onChatMetadata NOT called', async () => {
+    const res = await post(fbBody({ widgetId: 'hvac-quotes-1', state: { pick: 'B' } }));
+    expect(res.status).toBe(200);
+    expect(fbOpts.onMessage).toHaveBeenCalledTimes(1);
+    const [jid, msg] = vi.mocked(fbOpts.onMessage).mock.calls[0] as [
+      string,
+      { content: string; chat_jid: string; is_from_me?: boolean },
+    ];
+    // F divergence — onMessage-only to the main-group Telegram JID.
+    expect(jid).toBe('tg:8669367924');
+    expect(msg.chat_jid).toBe('tg:8669367924');
+    expect(msg.is_from_me).toBe(false);
+    expect(msg.content).toContain('===WIDGET-FEEDBACK-ENVELOPE-v1===');
+    expect(msg.content).toContain('hvac-quotes-1');
+    // onChatMetadata must NOT be called (would re-stamp the main group's channel as 'web').
+    expect(fbOpts.onChatMetadata).not.toHaveBeenCalled();
+    // CORS present on the success response.
+    expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
+  });
+
+  it('write-back → 202 deferred, no synthesis', async () => {
+    const res = await post(fbBody({ type: 'write-back' }));
+    expect(res.status).toBe(202);
+    const parsed = JSON.parse(res.body) as { deferred: boolean; type: string };
+    expect(parsed.deferred).toBe(true);
+    expect(parsed.type).toBe('write-back');
+    expect(fbOpts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('refresh → 202 deferred, no synthesis', async () => {
+    const res = await post(fbBody({ type: 'refresh' }));
+    expect(res.status).toBe(202);
+    const parsed = JSON.parse(res.body) as { deferred: boolean; type: string };
+    expect(parsed.deferred).toBe(true);
+    expect(parsed.type).toBe('refresh');
+    expect(fbOpts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('unknown type → 400', async () => {
+    const res = await post(fbBody({ type: 'frobnicate' }));
+    expect(res.status).toBe(400);
+    expect(fbOpts.onMessage).not.toHaveBeenCalled();
+  });
+
+  // ── Body validation ─────────────────────────────────────────────────────────
+
+  it('bad JSON → 400', async () => {
+    const res = await post('{not valid json');
+    expect(res.status).toBe(400);
+    expect(fbOpts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('body over 1 MB → 413', async () => {
+    const body = JSON.stringify({
+      type: 'conversational',
+      widgetId: 'big-1',
+      state: { blob: 'x'.repeat(1_100_000) },
+    });
+    const res = await post(body);
+    expect(res.status).toBe(413);
+    expect(fbOpts.onMessage).not.toHaveBeenCalled();
+  });
+
+  // ── Field validation (Vera Step-3 Should-Fix #2) ──────────────────────────────
+
+  it('invalid widgetId charset → 400, before synthesis', async () => {
+    // widgetId is interpolated into the synthesized content — reject non-slug chars.
+    const res = await post(fbBody({ widgetId: 'bad id!' }));
+    expect(res.status).toBe(400);
+    expect(fbOpts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('missing state → 400', async () => {
+    // fbBody omits the state key entirely when passed `state: undefined`.
+    const res = await post(fbBody({ state: undefined }));
+    expect(res.status).toBe(400);
+    expect(fbOpts.onMessage).not.toHaveBeenCalled();
+  });
 });

@@ -23,6 +23,7 @@ import {
   NANOCLAW_WEB_HOST,
   NANOCLAW_WEB_PORT,
   OWUI_PORT,
+  WIDGET_FEEDBACK_TOKEN,
 } from '../config.js';
 // JT: D-93 — added getConversation (display-history) + storeMessage (bot-reply persistence)
 // JT: Impl-26 Batch 3.1c — added getMessageCountForMonth (OAuth monthly counter for /dash/api-usage)
@@ -63,6 +64,16 @@ const SESSION_ORDER_MAX = 500;
 const SID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const RESERVED_SID = 'cron';
 const DASH_CACHE_TTL_MS = 5_000; // D-S3.10
+// Impl-73 Step 3 — Plane C (widget feedback) constants.
+// Allowed cross-origin for the feedback route — EXACTLY the widgets app origin.
+const WIDGET_ORIGIN = 'https://widgets.crystaldatalabs.com';
+// Destination for synthesized widget-feedback messages: the Daystrom is_main group
+// JID (recon-cited from `registered_groups`, 2026-06-16). Stable; a re-registration
+// is the single touch-point to update. Deliberately NOT a `local@web-*` jid (the D-92
+// routing gap) — a tg: jid routes the agent's reply back to JT's Telegram.
+const WIDGET_FEEDBACK_JID = 'tg:8669367924';
+// Sentinel for the route↔skill envelope contract (versioned for forward-compat).
+const WIDGET_FEEDBACK_SENTINEL = '===WIDGET-FEEDBACK-ENVELOPE-v1===';
 // D-S1.13
 // Impl-50 fold #3: script-src adds https://cdn.jsdelivr.net for Chart.js used by the embedded
 // claude-usage dashboard (D-CU2 reverse-proxy at /dash/usage). claude-usage's SPA loads
@@ -176,6 +187,18 @@ function collectBody(req: IncomingMessage, maxBytes: number): Promise<string> {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', (err) => reject(err));
   });
+}
+
+// Impl-73 Step 3 — CORS for the widget feedback route (the Bridge's only
+// cross-origin route). Echo ACAO ONLY for the exact widgets origin; any other
+// origin gets no ACAO and the browser blocks it (correct fail posture). `Vary:
+// Origin` is always set so intermediary caches key on the origin. Called as the
+// first action of the handler so 503/429/401 responses stay browser-readable.
+function applyWidgetCors(req: IncomingMessage, res: ServerResponse): void {
+  res.setHeader('Vary', 'Origin');
+  if (req.headers.origin === WIDGET_ORIGIN) {
+    res.setHeader('Access-Control-Allow-Origin', WIDGET_ORIGIN);
+  }
 }
 
 // Pattern from rozek/nanoclaw@9311ff1 — broadcast to all SSE clients of a session with try/catch + prune
@@ -1298,6 +1321,15 @@ export class WebChannel implements Channel {
       return;
     }
 
+    // Impl-73 Step 3 — Plane C feedback route. Pre-auth-gate (like /auth/login):
+    // the CORS preflight is unauthenticated, and the route authenticates with
+    // WIDGET_FEEDBACK_TOKEN (not NANOCLAW_TOKEN) — so it must NOT pass through
+    // authorizeRequest below.
+    if (urlPath === '/widget/feedback' && (method === 'OPTIONS' || method === 'POST')) {
+      await this.handleWidgetFeedback(req, res);
+      return;
+    }
+
     if (!this.authorizeRequest(req, res)) return;
 
     // D-V53.B5: POST /auth/logout — requires auth (gate above); D-V53.B6 rationale
@@ -1594,6 +1626,149 @@ export class WebChannel implements Channel {
     res
       .writeHead(200, { 'Content-Type': 'application/json' })
       .end(JSON.stringify({ ok: true, path: relPath, id: msgId }));
+  }
+
+  // ── Widget feedback (Plane C) ─────────────────────────────────────────────
+
+  // Impl-73 Step 3 — POST /widget/feedback: cross-origin endpoint the deployed
+  // widgets call to send state back to Daystrom. Conversational path synthesizes a
+  // NewMessage to the main Telegram group (D-83 pattern, onMessage-only). write-back
+  // / refresh are Step-4 (board-coupled) — accepted-and-deferred here, never a
+  // silent no-op. Distinct WIDGET_FEEDBACK_TOKEN auth (NOT NANOCLAW_TOKEN).
+  private async handleWidgetFeedback(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    // Hardening ask A — CORS is the ABSOLUTE first action, so the 503/429/401
+    // paths below also carry ACAO and surface to the widget as readable statuses
+    // instead of opaque CORS failures.
+    applyWidgetCors(req, res);
+
+    // Preflight — answered un-authenticated with the allowed methods/headers.
+    if (req.method === 'OPTIONS') {
+      res
+        .writeHead(204, {
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+          'Access-Control-Max-Age': '86400',
+        })
+        .end();
+      return;
+    }
+
+    // Fail closed — a public endpoint must never trust-by-default. Unlike
+    // NANOCLAW_TOKEN's loopback model, an empty token DISABLES the route.
+    if (!WIDGET_FEEDBACK_TOKEN) {
+      logger.error(
+        '[widget-feedback] WIDGET_FEEDBACK_TOKEN unset — route disabled',
+      );
+      res.writeHead(503).end('Service Unavailable');
+      return;
+    }
+
+    // Brute-force throttle via the shared failed-auth limiter (clone of handleAuthLogin).
+    const ip = req.socket.remoteAddress ?? 'unknown';
+    const now = Date.now();
+    if (this.isRateLimited(ip, now)) {
+      res.writeHead(429, { 'Retry-After': '60' }).end('Too Many Requests');
+      return;
+    }
+
+    // Constant-time bearer check against WIDGET_FEEDBACK_TOKEN.
+    const auth = req.headers.authorization;
+    const bearer = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (!bearer || !checkToken(bearer, WIDGET_FEEDBACK_TOKEN)) {
+      this.recordFailedAuth(ip, now);
+      logger.info({ ip }, '[widget-feedback] Auth failed');
+      res.writeHead(401).end('Unauthorized');
+      return;
+    }
+
+    // Body — reuse the 1 MB clamp + drain-on-oversize.
+    let body: string;
+    try {
+      body = await collectBody(req, BODY_LIMIT);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        res.writeHead(413).end('Payload Too Large');
+        return;
+      }
+      throw err;
+    }
+
+    let parsed: {
+      type?: string;
+      widgetId?: string;
+      state?: unknown;
+      baseSnapshot?: unknown;
+    };
+    try {
+      parsed = JSON.parse(body) as typeof parsed;
+    } catch {
+      res.writeHead(400).end('Bad Request');
+      return;
+    }
+
+    // widgetId must match the Step-2 bundle-id charset (kebab ASCII ≤64) so the
+    // envelope id is the same identifier as the deployed widget.
+    const widgetId = parsed.widgetId ?? '';
+    if (!/^[a-zA-Z0-9._-]{1,64}$/.test(widgetId)) {
+      res.writeHead(400).end('Invalid or missing widgetId');
+      return;
+    }
+    const type = parsed.type ?? '';
+    if (parsed.state === undefined || parsed.state === null) {
+      res.writeHead(400).end('Missing state');
+      return;
+    }
+
+    // write-back / refresh — Step 4 (board-coupled). Accept-and-defer (202),
+    // never a silent no-op: log + tell the widget it was accepted-but-deferred.
+    if (type === 'write-back' || type === 'refresh') {
+      logger.info(
+        { widgetId, type },
+        '[widget-feedback] deferred — Step 4 not yet implemented',
+      );
+      res
+        .writeHead(202, { 'Content-Type': 'application/json' })
+        .end(JSON.stringify({ ok: true, deferred: true, type }));
+      return;
+    }
+
+    if (type !== 'conversational') {
+      res.writeHead(400).end('Invalid type');
+      return;
+    }
+
+    // Conversational — synthesize a NewMessage to the main-group Telegram JID and
+    // route it through the existing onMessage pipeline (D-83 IPC synthesis). The
+    // main group is is_main (needsTrigger=false), so no @-trigger is needed; it
+    // dispatches on arrival and Daystrom's reply lands in JT's Telegram.
+    // onMessage ONLY — NOT onChatMetadata (would re-stamp the main group's channel
+    // as 'web') and NOT broadcastToSession/setTypingForSid (web-SSE-only).
+    const ts = new Date().toISOString();
+    const msgId = `widget-fb-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const envelope =
+      `🪟 Widget feedback — ${widgetId}\n\n` +
+      `${WIDGET_FEEDBACK_SENTINEL}\n` +
+      '```json\n' +
+      JSON.stringify({ widgetId, type, state: parsed.state }) +
+      '\n```';
+    const msg: NewMessage = {
+      id: msgId,
+      chat_jid: WIDGET_FEEDBACK_JID,
+      sender: 'user',
+      sender_name: 'You',
+      content: envelope,
+      timestamp: ts,
+      is_from_me: false,
+      is_bot_message: false,
+    };
+    this.opts.onMessage(WIDGET_FEEDBACK_JID, msg);
+
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify({ ok: true, id: msgId }));
   }
 
   // ── Session affordances ───────────────────────────────────────────────────

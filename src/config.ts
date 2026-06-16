@@ -14,6 +14,7 @@ const envConfig = readEnvFile([
   'NANOCLAW_WEB_PORT',
   'NANOCLAW_WEB_HOST',
   'NANOCLAW_TOKEN',
+  'WIDGET_FEEDBACK_TOKEN',
   'NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH',
   'RATE_LIMIT_ALERT_DELAY_MS',
 ]);
@@ -135,6 +136,11 @@ export const NANOCLAW_WEB_HOST =
   process.env.NANOCLAW_WEB_HOST || envConfig.NANOCLAW_WEB_HOST || '127.0.0.1';
 export const NANOCLAW_TOKEN =
   process.env.NANOCLAW_TOKEN || envConfig.NANOCLAW_TOKEN || '';
+// Impl-73 Step 3 — Bridge-process auth secret for POST /widget/feedback (Plane C).
+// Host-side only (like NANOCLAW_TOKEN above): never injected into a container — so it
+// belongs here, not in the credential proxy. Empty ⇒ the feedback route fails closed (503).
+export const WIDGET_FEEDBACK_TOKEN =
+  process.env.WIDGET_FEEDBACK_TOKEN || envConfig.WIDGET_FEEDBACK_TOKEN || '';
 // JT: Impl-26 Batch 3.1c — dual-usage $ rate for /dash/api-usage display.
 // Source: V6 Impl-25/26 scoped-key billing (2 dispatches × ~$0.20/dispatch observed).
 // Tune via .env as runtime data accumulates.

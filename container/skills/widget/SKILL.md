@@ -1,6 +1,6 @@
 ---
 name: widget
-description: Generate an interactive single-page web widget (Arrow JS + Tailwind) from JT's prompt and ship it to Cloudflare Pages behind CF Access, returning a tappable Telegram link. Invoke on the explicit `/widget <prompt>` command, and conservatively when JT clearly wants to *interactively touch* something — "let me play with X", "let me tweak Y", "compare these N options" with sliders/inputs/drag. Produces ad-hoc widgets only (Daystrom-generated, one-shot). Do NOT invoke for plain "show me" / "summarize" / "list" requests — those are normal chat replies.
+description: Generate an interactive single-page web widget (Arrow JS + Tailwind) from JT's prompt and ship it to Cloudflare Pages behind CF Access, returning a tappable Telegram link. Invoke on the explicit `/widget <prompt>` command, and conservatively when JT clearly wants to *interactively touch* something — "let me play with X", "let me tweak Y", "compare these N options" with sliders/inputs/drag. Produces ad-hoc widgets only (Daystrom-generated, one-shot). Do NOT invoke for plain "show me" / "summarize" / "list" requests — those are normal chat replies. ALSO consult this skill when an inbound message contains a widget-feedback envelope (the sentinel line `===WIDGET-FEEDBACK-ENVELOPE-v1===`) — that is a widget sending its state back for you to discuss; see "Handling widget feedback".
 ---
 
 # /widget — interactive web widgets (ad-hoc)
@@ -189,6 +189,60 @@ const { svg } = await mermaid.render('diagram', state.graphDefinition)
 document.getElementById('diagram').innerHTML = svg
 ```
 
+## "Send to Daystrom" feedback button (only when JT wants to send state back)
+
+Some widgets are **conversational** — JT manipulates state, then wants *you* to receive that state and discuss/analyse it (not just compute locally). Add a **"Send to Daystrom" button** only when the prompt clearly implies a round-trip: interactive inputs **plus** "analyse this", "let me tweak it and you process it", "send me your read on these numbers", etc. A widget that's purely a local calculator/comparator needs **no** Send button — don't add one speculatively.
+
+When you do add it: a button POSTs the current widget state cross-origin to the Bridge, which routes it back to you as a normal Telegram message (you reply in JT's chat). The POST is to a **different host** than the widget (`widgets.…` → `daystrom.…`), so it's cross-origin — the endpoint's CORS allows exactly the widgets origin.
+
+Recipe — drop this into the widget's `<script type="module">`, wired to your state:
+
+```js
+const FEEDBACK_URL = 'https://daystrom.crystaldatalabs.com/widget/feedback'
+const FEEDBACK_TOKEN = 'WIDGET_FEEDBACK_TOKEN_VALUE'  // see note below
+const WIDGET_ID = '<id>'                               // this widget's id, verbatim
+
+const ui = reactive({ sending: false, sent: false, error: '' })
+
+async function sendToDaystrom() {
+  if (ui.sending || ui.sent) return            // soft-lock: one send in flight, and don't re-send after success
+  ui.sending = true; ui.error = ''
+  try {
+    const res = await fetch(FEEDBACK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${FEEDBACK_TOKEN}` },
+      body: JSON.stringify({ type: 'conversational', widgetId: WIDGET_ID, state: state }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    ui.sent = true                              // instant client ack — covers the ~10-30s round-trip; zero backend wait
+  } catch (e) {
+    ui.error = 'Couldn’t send — try again'
+  } finally {
+    ui.sending = false
+  }
+}
+
+const sendButton = html`
+  <button
+    @click="${sendToDaystrom}"
+    ?disabled="${() => ui.sending || ui.sent}"
+    class="px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-white font-medium">
+    ${() => ui.sent ? '✅ Sent — Daystrom’s reviewing, check Telegram' : ui.sending ? 'Sending…' : 'Send to Daystrom'}
+  </button>
+  ${() => ui.error ? html`<p class="text-rose-400 text-sm mt-1">⚠️ ${() => ui.error}</p>` : ''}
+`
+```
+
+Wiring rules:
+
+- **`state` is whatever your widget's reactive state object is** — pass the slice JT cares about (don't dump UI-only flags). Keep it JSON-serialisable (numbers, strings, arrays, plain objects).
+- **Soft-lock the button**: disabled while `ui.sending` and after `ui.sent` (bind `disabled` to `${() => ui.sending || ui.sent}` via an attribute — e.g. `<button ... ?disabled="${() => ui.sending || ui.sent}">`, or set `el.disabled` in an effect). One send per interaction; JT re-opens / re-runs to send again.
+- **Instant ack only** — flip to "✅ Sent…" on a 2xx and stop. **Do NOT** wait for, poll, or display Daystrom's analysis in the widget; that lands in Telegram. The widget's job ends at "Sent".
+- **`type: 'conversational'`** always for ad-hoc Send. (`write-back` / `refresh` are the standing Projects Board's types — not for ad-hoc widgets.)
+- **Dark palette still applies** — the Send button is `bg-sky-500`/`bg-emerald-500`-class on the dark surface, never a light button.
+
+**The token (`WIDGET_FEEDBACK_TOKEN_VALUE`).** The Send button authenticates with the shared `WIDGET_FEEDBACK_TOKEN`, embedded directly in the widget HTML (single-user, behind CF Access — JT-confirmed acceptable for v1). **You do not know the token value inside your container** (it's host-side, never injected here). So emit the literal placeholder string **`WIDGET_FEEDBACK_TOKEN_VALUE`** in the HTML exactly as written above — the host deploy worker substitutes the real token at deploy time. Do not invent, guess, or omit it; emit the placeholder verbatim and the host fills it in.
+
 ## Vault stub
 
 Write a searchable record to **`/workspace/extra/vault/widgets/<id>.md`** (this is vault `general/widgets/<id>.md` — your vault mount is `/workspace/extra/vault/`, so **never prepend `general/`** to the container path). The `widgets/` folder **already exists** — just write the file into it. Do **not** create vault directories (that's a hard `CLAUDE.md` rule).
@@ -252,5 +306,27 @@ The filename stem and the JSON `.id` are the same `"$id"` string by construction
 - **Do NOT deploy, run `wrangler`, or touch Cloudflare** — deploy is host-side; you have no credentials and no internet, and that isolation must stay intact.
 - **Do NOT ask your container to fetch the internet** (no `curl`/`fetch`/`npm install` of widget deps). The widget's own `esm.sh` imports run in JT's *browser* at open-time — that's fine; your container fetching anything is not.
 - **Do NOT write the HTML and a manifest as two files** — one self-contained `<id>.bundle.json` only.
-- **Do NOT add a "Send to Daystrom" / feedback button or any POST-back in a generated widget.** Local interactivity (sliders, inputs, toggles, drag, local computation) is fully in scope; the round-trip-to-Daystrom feedback channel ships in a later step with its endpoint. A button posting to an endpoint that doesn't exist yet would be a broken affordance.
+- **Do NOT add a "Send to Daystrom" button speculatively.** Add it **only** when the prompt implies a round-trip (see "Send to Daystrom feedback button"); a purely-local widget gets none.
 - **Do NOT poll or wait for the deploy.** Ack `🛠️ Building your widget…` and stop.
+
+## Handling widget feedback (inbound — a widget sent you its state)
+
+When a widget's "Send to Daystrom" button fires, its state arrives back to you as an ordinary message in JT's chat, carrying a **feedback envelope**: a human line, the sentinel `===WIDGET-FEEDBACK-ENVELOPE-v1===`, then a fenced ` ```json ` block of `{ widgetId, type, state }`. Example:
+
+```
+🪟 Widget feedback — compare-hvac-quotes-2026-06-16
+
+===WIDGET-FEEDBACK-ENVELOPE-v1===
+```json
+{"widgetId":"compare-hvac-quotes-2026-06-16","type":"conversational","state":{...}}
+```
+```
+
+When you see that sentinel:
+
+1. **Parse the JSON** in the fenced block — that's the widget's current `state`. Robustness: if the fence is malformed (rare — e.g. the state itself contained a literal ` ``` `), fall back to taking everything from the first `{` to the last `}` after the sentinel and parsing that.
+2. **The state may arrive HTML-escaped** — the message pipeline XML-escapes inbound content, so `<`/`>`/`&`/`"` inside string values may appear as `&lt;`/`&gt;`/`&amp;`/`&quot;`. Decode those entities before reasoning about the values. *(v1 limitation, alongside the literal-` ``` ` note above; ad-hoc widgets are mostly numbers/short strings, so this rarely bites.)*
+3. **`type: "conversational"`** (the only type this skill sends) → present the state to JT in plain English — what he set, what it implies — and discuss/analyse per the widget's intent (e.g. "you weighted quote B highest on warranty; here's my read…"). This is a **conversation**: nothing is written to the vault, no files change. Just receive, interpret, and reply.
+4. Do **not** echo the raw envelope/JSON back to JT, and don't treat it as a `/widget` generation request — it's feedback *from* an existing widget, not a request to build a new one.
+
+*(Standing widgets such as the Projects Board send `type: "write-back"` / `"refresh"` — those are handled by the board's own playbook, not here. This skill only handles the ad-hoc `conversational` flavour.)*
