@@ -17,14 +17,14 @@ Canonical system explainer (read only if you need the why): `general/` is the va
 
 This skill builds **ad-hoc** widgets only — generated fresh, treated as throwaway (the URL stays live forever, but you don't maintain it; you regenerate). Standing widgets (the Projects Board) are hand-authored and pinned by the Three Man Team, not generated here.
 
-## The flow (async — you ack and stop)
+## The flow (async — the system acks; you stay silent)
 
 1. **Parse intent** — what is JT manipulating? Identify the state variables and the actions (the buttons / inputs / drag the widget needs).
 2. **Choose the `<id>`** (slug rule below).
 3. **Generate the widget HTML** (generation playbook below).
 4. **Write the vault stub** (schema below).
 5. **Drop the bundle into the queue** atomically (procedure below).
-6. **Ack and STOP.** Reply on Telegram: `🛠️ Building your widget — I'll send the link in a moment.` Then you are **done with this turn.** Do **not** poll, wait, read a status file, or re-check. The host worker deploys asynchronously and sends the `🪟 Widget shipped: <link>` (or `⚠️ failed`) message itself. Blocking to wait on the deploy is explicitly wrong — it would couple your container timeout to an external deploy call.
+6. **Stay silent — send NO message on the success path.** The system already fired an instant "Got it — working on it…" ack the moment JT sent `/widget`, and the host worker deploys asynchronously and sends the `🪟 Widget shipped: <link>` (or `⚠️ failed`) message itself. So once the bundle is dropped, **end your turn with no user-facing text** — do not say "building", do not summarize what you built, do not poll/wait/read a status file. A completion summary here only duplicates the host's shipped notice. **Exception:** if the bundle drop itself fails (e.g. the `mv` errors), DO report that — silence is for the success path only.
 
 ## The `<id>` / slug rule (HARD)
 
@@ -176,7 +176,7 @@ document.getElementById('diagram').innerHTML = svg
 
 ## Vault stub
 
-Write a searchable record to **`/workspace/extra/vault/widgets/<id>.md`** (this is vault `general/widgets/<id>.md` — your vault mount is `/workspace/extra/vault/`, so **never prepend `general/`** to the container path). Create the `widgets/` folder if it doesn't exist.
+Write a searchable record to **`/workspace/extra/vault/widgets/<id>.md`** (this is vault `general/widgets/<id>.md` — your vault mount is `/workspace/extra/vault/`, so **never prepend `general/`** to the container path). The `widgets/` folder **already exists** — just write the file into it. Do **not** create vault directories (that's a hard `CLAUDE.md` rule).
 
 ```markdown
 ---
