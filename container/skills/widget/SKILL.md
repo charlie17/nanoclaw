@@ -56,9 +56,18 @@ Start from this exact skeleton (fill the title, state, and view):
   <script type="module">
     import { reactive, html } from 'https://esm.sh/@arrow-js/core@1.0.6'
 
-    const state = reactive({ /* initial state */ })
+    const state = reactive({ count: 0 })
 
-    const view = html`<!-- template bound to state -->`
+    // Build your reactive UI here. HARD RULE: NO HTML comments (<!-- … -->) anywhere
+    // inside an html`` template — Arrow reads every comment node as an interpolation
+    // slot, miscounts, and throws "Invalid HTML position" → the widget renders BLANK.
+    // Annotate with JS comments (like this one) OUTSIDE the template only.
+    const view = html`
+      <div class="flex flex-col gap-4 items-center">
+        <p class="text-2xl font-semibold">${() => state.count}</p>
+        <button @click="${() => state.count++}" class="px-4 py-2 rounded-lg bg-stone-800 text-white">+1</button>
+      </div>
+    `
 
     view(document.getElementById('app'))
   </script>
@@ -75,6 +84,7 @@ Non-negotiables:
 - **Keep the footer** (last-updated timestamp + vault-note link), with two substitutions. **(1) `<CREATED>`** — the time this widget's content was generated (on a fresh build, that's now; if you ever regenerate/tweak an existing widget, recompute it). Compute it with Bash, **never in your head** (LLMs get day-of-week wrong): run `TZ=America/New_York date '+%a %-m/%-d/%y %-I:%M%P'` and append ` ET` → e.g. `Tue 6/16/26 2:03pm ET`. Embed the literal output. **Reuse this exact `<CREATED>` value in the vault stub** (below) so the footer and note agree (the stub's `*Updated …*` line; frontmatter `created:` stays the original birth date). **(2) `<id>`** into the vault-note href — URL-safe kebab, drop in verbatim, and **do not re-encode the rest of the href** (it's already percent-encoded). The link deep-links back to this widget's stub (`general/widgets/<id>.md`) via the Obsidian CF-worker redirect — the reverse of the stub's "Open widget" link.
 - **Mobile-first.** JT opens these from a phone (Telegram tap → CF Access). Default to single-column, large tap targets; layer desktop with `sm:` / `md:` breakpoints.
 - **Pin every dependency** (next section) — no floating CDN URLs.
+- **NO HTML comments inside an `html\`\`` template (HARD).** Arrow reads every `<!-- … -->` comment node as an interpolation slot, miscounts against the real `${}` count, and throws `Invalid HTML position` — the widget renders **completely blank**. (This bit a live widget 2026-06-16.) Don't annotate templates with `<!-- … -->`; use JS comments *outside* the `html\`\`` block, or no comments.
 
 ### Tailwind classes MUST be complete literal strings (HARD)
 
