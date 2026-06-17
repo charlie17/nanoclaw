@@ -38,9 +38,17 @@ describe('parseNext — ledger/next.md (messy general file, no #### groups)', ()
     expect(empty.text.raw).toBe('\t-');
   });
 
-  it('a markdown-link child stays literal text (v1 deep-links wikilinks only)', () => {
-    const watch = acts[2].children[0]; // under "3. Watch: ..."
-    expect(watch.text.tokens.every((t) => 'text' in t)).toBe(true);
+  it('a markdown link in activity text tokenizes to an mdlink segment (FU-2 #8)', () => {
+    const watch = acts[2]; // "3. Watch: [The Sample Talk](https://…)"
+    expect(watch.text.tokens).toEqual([
+      { text: 'Watch: ' },
+      {
+        mdlink: {
+          label: 'The Sample Talk',
+          href: 'https://example.com/talks/sample-talk',
+        },
+      },
+    ]);
   });
 
   it('a bare wikilink child tokenizes to a link segment', () => {
@@ -109,9 +117,15 @@ describe('parseNext — ledger/next-coding.md (3-deep nesting with ∙)', () => 
     );
   });
 
-  it('a code-span child keeps its backticks as literal text', () => {
+  it('a code span stays literal text; an inline bold run tokenizes (FU-2 #8)', () => {
     const spec = acts[2].children.find((c) => c.text.raw.includes('spec-030'));
-    expect(spec?.text.tokens.every((t) => 'text' in t)).toBe(true);
+    // FU-2 #8 covers Next children: the `**spec-030**` run is a bold token…
+    expect(spec?.text.tokens.some((t) => 'bold' in t)).toBe(true);
+    // …while the inline `code span` keeps its backticks as literal text.
+    const codeText = spec?.text.tokens.find(
+      (t) => 'text' in t && t.text.includes('`z_docs/spec-030.md`'),
+    );
+    expect(codeText).toBeDefined();
   });
 });
 

@@ -18,7 +18,7 @@ describe('buildProjectsBoardSnapshot', () => {
     expect(Number.isNaN(Date.parse(snap.lastRefreshed))).toBe(false);
     expect(snap.priorities.active.map((e) => e.slug)).toEqual([
       'alpha',
-      'ledger',
+      'ledger-coding', // FU-2 #5: unique slug; folder stays `ledger`
       'beacon',
       'crafter',
     ]);
@@ -51,6 +51,18 @@ describe('buildProjectsBoardSnapshot', () => {
       '1. First finalization track',
     );
     expect(business.next?.groups[0].activities.length).toBe(11);
+  });
+
+  it('FU-2 #5: both Ledger entries read the SAME folder log (general/projects/ledger/log.md)', async () => {
+    const snap = await buildProjectsBoardSnapshot(VAULT_ROOT);
+    const coding = snap.priorities.active[1];
+    const business = snap.priorities.inactive[3];
+    expect(coding.folder).toBe('ledger');
+    expect(business.folder).toBe('ledger');
+    // Same folder → same log stub (the #5 snapshot fix: log keys off folder,
+    // not the now-distinct slug, so neither resolves a ledger-coding/ folder).
+    expect(coding.log).toEqual(business.log);
+    expect(coding.flags.some((f) => f.startsWith('log missing'))).toBe(false);
   });
 
   it('a wikilink inside loaded next text survives as a link token', async () => {

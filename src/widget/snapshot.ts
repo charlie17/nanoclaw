@@ -49,12 +49,15 @@ async function enrichEntry(
       entry.flags.push(`next-file missing: ${entry.nextFile}`);
       entry.next = { groups: [] };
     } else {
-      const label = `${entry.slug}/${path.basename(entry.nextFile)}`;
+      const label = `${entry.folder}/${path.basename(entry.nextFile)}`;
       entry.next = parseNext(nextText, label, parseFlags);
     }
   }
 
-  const logRel = `general/projects/${entry.slug}/log.md`;
+  // FU-2 #5: the log lives under the resolved FOLDER, not the slug — both Ledger
+  // entries (slugs ledger-coding / ledger-business) share folder `ledger`, so
+  // both read general/projects/ledger/log.md.
+  const logRel = `general/projects/${entry.folder}/log.md`;
   const logText = await readFileOrNull(path.join(vaultRoot, logRel));
   if (logText === null) {
     entry.flags.push(`log missing: ${logRel}`);

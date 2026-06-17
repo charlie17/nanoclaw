@@ -32,10 +32,12 @@ const FOLDER_SET = new Set([
 describe('parsePriorities — the registry fixture', () => {
   const result = parsePriorities(prioritiesText, FOLDER_SET);
 
-  it('parses 4 active + 10 inactive, in file order', () => {
+  it('parses 4 active + 10 inactive, in file order (unique slugs — FU-2 #5)', () => {
+    // FU-2 #5: slug is now the UNIQUE board identity (slugify of the displayed
+    // label), so the two Ledger entries no longer both slug to `ledger`.
     expect(result.active.map((e) => e.slug)).toEqual([
       'alpha',
-      'ledger',
+      'ledger-coding',
       'beacon',
       'crafter',
     ]);
@@ -46,17 +48,21 @@ describe('parsePriorities — the registry fixture', () => {
     const coding = result.active[1]; // Ledger (Coding) → `ledger / next-coding.md`
     expect(coding.kind).toBe('full');
     expect(coding.resolved).toBe(true);
-    expect(coding.slug).toBe('ledger');
+    expect(coding.slug).toBe('ledger-coding'); // unique board id (FU-2 #5)
+    expect(coding.folder).toBe('ledger'); // resolution key
     expect(coding.nextFile).toBe('general/projects/ledger/next-coding.md');
     expect(coding.label.raw).toBe('Ledger (Coding)');
   });
 
-  it('two entries can share one folder with different next-files', () => {
+  it('two entries can share one FOLDER with distinct slugs + next-files (FU-2 #5)', () => {
     const coding = result.active[1]; // → next-coding.md
     const business = result.inactive[3]; // Ledger (Business) → `ledger / next.md`
-    expect(business.slug).toBe('ledger');
+    expect(business.folder).toBe('ledger');
+    expect(business.slug).toBe('ledger-business');
     expect(business.nextFile).toBe('general/projects/ledger/next.md');
-    expect(coding.slug).toBe(business.slug);
+    // Same folder, distinct board identities, distinct next-files.
+    expect(coding.folder).toBe(business.folder);
+    expect(coding.slug).not.toBe(business.slug);
     expect(coding.nextFile).not.toBe(business.nextFile);
   });
 
@@ -72,6 +78,7 @@ describe('parsePriorities — the registry fixture', () => {
     ]);
     for (const e of lightweight) {
       expect(e.kind).toBe('lightweight');
+      expect(e.folder).toBeNull(); // FU-2 #5: only `full` entries carry a folder
       expect(e.nextFile).toBeNull();
       expect(e.next).toBeNull();
       expect(e.log).toBeNull();
@@ -79,11 +86,17 @@ describe('parsePriorities — the registry fixture', () => {
     }
   });
 
-  it('a lightweight label with markdown links keeps them as literal text (not link tokens)', () => {
+  it('a lightweight label is truncated at the first colon for DISPLAY; raw stays full (FU-2 #6)', () => {
     const ref = result.inactive.find((e) =>
       e.label.raw.startsWith('Reference list'),
     );
-    expect(ref?.label.tokens).toEqual([{ text: ref?.label.raw }]);
+    // Display tokens carry only the kept prefix (the colon + md-links dropped)…
+    expect(ref?.label.tokens).toEqual([{ text: 'Reference list' }]);
+    // …while raw is the full original line, lossless.
+    expect(ref?.label.raw).toBe(
+      'Reference list: [first ref](http://localhost:9000/read/aaa) and [second ref](http://localhost:9000/read/bbb)',
+    );
+    expect(ref?.slug).toBe('reference-list');
   });
 
   it('a resolved label tokenizes plainly', () => {
@@ -143,5 +156,30 @@ describe('parsePriorities — capability cases (synthetic)', () => {
     expect(result.active.map((e) => e.slug)).toEqual(['alpha', 'beacon']);
     expect(result.active.every((e) => e.resolved)).toBe(true);
     expect(result.parseFlags).toEqual([]);
+  });
+
+  it('FU-2 #6: a space-surrounded dash truncates display, a hyphen does not', () => {
+    const result = parsePriorities(
+      '- Inactive\n\t1. Pricing model - rough notes to flesh out\n\t2. sequence-of-returns risk\n',
+      new Set(),
+    );
+    const dashed = result.inactive[0];
+    expect(dashed.label.tokens).toEqual([{ text: 'Pricing model' }]);
+    expect(dashed.label.raw).toBe('Pricing model - rough notes to flesh out');
+    expect(dashed.slug).toBe('pricing-model');
+    // A bare hyphen inside a word is NOT a delimiter — the name survives whole.
+    const hyphenated = result.inactive[1];
+    expect(hyphenated.label.tokens).toEqual([{ text: 'sequence-of-returns risk' }]);
+  });
+
+  it('FU-2 #5: two one-offs truncating to the same prefix get distinct slugs', () => {
+    const result = parsePriorities(
+      '- Inactive\n\t1. Brainstorm: topic A\n\t2. Brainstorm: topic B\n',
+      new Set(),
+    );
+    expect(result.inactive.map((e) => e.slug)).toEqual([
+      'brainstorm',
+      'brainstorm-2',
+    ]);
   });
 });
