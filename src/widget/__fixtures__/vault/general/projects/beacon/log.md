@@ -1,0 +1,11 @@
+- Tue 6/16/26: Shipped the sample command. Still need to ship the board. Planned flow:
+	- `priorities.md` — simple prioritized list of all projects
+	- Each project's `next.md` — todos/runway, structured as:
+		- `####` group header (optional)
+		- Main activity bullet
+			- Sub-task bullet
+- Mon 6/15/26: Started work with a neutral collaborator on the sample command
+- Mon 6/15/26: Search is fast again after a neutral fix
+- Mon 6/15/26: A time-citation bug was fixed
+- Mon 6/15/26: A health-monitor blind spot was fixed
+- Sat 5/16/26: Note: a neutral reference link https://example.com/wiki

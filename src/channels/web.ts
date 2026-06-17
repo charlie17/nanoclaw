@@ -44,6 +44,8 @@ import {
 import type { ChatInfo } from '../db.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
 import { logger } from '../logger.js';
+// Impl-73 Step 4a — Projects Board read plane (GET /widget/data/projects-board).
+import { buildProjectsBoardSnapshot } from '../widget/snapshot.js';
 import { registerChannel } from './registry.js';
 import type { ChannelOpts } from './registry.js';
 // JT: Channel, NewMessage, RegisteredGroup from src/types.ts — upstream-owned shapes
@@ -1333,6 +1335,19 @@ export class WebChannel implements Channel {
       return;
     }
 
+    // Impl-73 Step 4a — Plane C read route. Pre-auth-gate for the same reason
+    // as /widget/feedback: cross-origin from the widgets app, authenticates on
+    // WIDGET_FEEDBACK_TOKEN (not NANOCLAW_TOKEN), so it must NOT pass through
+    // authorizeRequest below. Strictly read-only (clone of the /dash/* C13
+    // posture) — no FS writes, no onMessage, no agent invoke.
+    if (
+      urlPath.startsWith('/widget/data/') &&
+      (method === 'OPTIONS' || method === 'GET')
+    ) {
+      await this.handleWidgetData(req, res, urlPath);
+      return;
+    }
+
     if (!this.authorizeRequest(req, res)) return;
 
     // D-V53.B5: POST /auth/logout — requires auth (gate above); D-V53.B6 rationale
@@ -1772,6 +1787,79 @@ export class WebChannel implements Channel {
     res
       .writeHead(200, { 'Content-Type': 'application/json' })
       .end(JSON.stringify({ ok: true, id: msgId }));
+  }
+
+  // Impl-73 Step 4a — GET /widget/data/<id>: the deployed Projects Board fetches
+  // its snapshot here on load/refresh. Read-only (clone of the /dash/* C13
+  // posture — no FS writes, no onMessage, no agent invoke); the Bridge parses
+  // priorities.md + each project's next-file/log live on each GET (D-4a.1).
+  // Same cross-origin CORS + WIDGET_FEEDBACK_TOKEN auth ladder as feedback.
+  // Pilot: only `projects-board` is valid.
+  private async handleWidgetData(
+    req: IncomingMessage,
+    res: ServerResponse,
+    urlPath: string,
+  ): Promise<void> {
+    applyWidgetCors(req, res);
+
+    if (req.method === 'OPTIONS') {
+      res
+        .writeHead(204, {
+          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+          'Access-Control-Max-Age': '86400',
+        })
+        .end();
+      return;
+    }
+
+    // Fail closed — an unset token DISABLES the route (clone of feedback).
+    if (!WIDGET_FEEDBACK_TOKEN) {
+      logger.error(
+        '[widget-data] WIDGET_FEEDBACK_TOKEN unset — route disabled',
+      );
+      res.writeHead(503).end('Service Unavailable');
+      return;
+    }
+
+    const ip = req.socket.remoteAddress ?? 'unknown';
+    const now = Date.now();
+    if (this.isRateLimited(ip, now)) {
+      res.writeHead(429, { 'Retry-After': '60' }).end('Too Many Requests');
+      return;
+    }
+
+    const auth = req.headers.authorization;
+    const bearer = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (!bearer || !checkToken(bearer, WIDGET_FEEDBACK_TOKEN)) {
+      this.recordFailedAuth(ip, now);
+      logger.info({ ip }, '[widget-data] Auth failed');
+      res.writeHead(401).end('Unauthorized');
+      return;
+    }
+
+    // /widget/data/<id> — id charset-validated (kebab ASCII ≤64). Pilot serves
+    // only the Projects Board; anything else 404s.
+    const id = urlPath.slice('/widget/data/'.length);
+    if (!/^[a-zA-Z0-9._-]{1,64}$/.test(id)) {
+      res.writeHead(400).end('Invalid id');
+      return;
+    }
+    if (id !== 'projects-board') {
+      res.writeHead(404).end('Not Found');
+      return;
+    }
+
+    try {
+      const vaultRoot = path.join(os.homedir(), 'vault'); // D-S3.9 — same as /dash/vault-stats
+      const snapshot = await buildProjectsBoardSnapshot(vaultRoot);
+      res
+        .writeHead(200, { 'Content-Type': 'application/json' })
+        .end(JSON.stringify(snapshot));
+    } catch (err) {
+      logger.error({ err: String(err) }, '[widget-data] snapshot build failed');
+      res.writeHead(500).end('Internal Server Error');
+    }
   }
 
   // ── Session affordances ───────────────────────────────────────────────────

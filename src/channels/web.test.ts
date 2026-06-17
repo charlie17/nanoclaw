@@ -2349,3 +2349,119 @@ describe('WebChannel HTTP — /widget/feedback (Plane C)', () => {
     expect(fbOpts.onMessage).not.toHaveBeenCalled();
   });
 });
+
+// ── GET /widget/data/<id> — Plane C read (Impl-73 Step 4a) ────────────────────
+//
+// The route's auth/CORS/validation/routing layer is what this suite covers; the
+// deep snapshot/schema correctness against the real fixture vault lives in
+// src/widget/snapshot.test.ts (which does not mock fs). Here node:fs/promises is
+// mocked, so the 200-wiring case uses readdir → [] (no project folders), making
+// every priorities entry lightweight — exercising the wired handler + serialized
+// schema + read-only posture without needing deep fs.
+
+describe('WebChannel HTTP — GET /widget/data (Plane C read)', () => {
+  let dataChannel: WebChannel;
+  let dataOpts: ChannelOpts;
+  let dataPort: number;
+
+  beforeAll(async () => {
+    dataOpts = makeOpts();
+    dataChannel = new WebChannel(dataOpts);
+    await dataChannel.connect();
+    dataPort = (
+      (
+        dataChannel as unknown as { server: http.Server }
+      ).server.address() as AddressInfo
+    ).port;
+  });
+
+  afterAll(async () => {
+    await dataChannel.disconnect();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockConfig.WIDGET_FEEDBACK_TOKEN = 'test-widget-token';
+    // No project folders → every priorities entry is lightweight, so only
+    // priorities.md is read and no next/log reads occur.
+    vi.mocked(readdir).mockResolvedValue([] as never);
+    vi.mocked(readFile).mockResolvedValue(
+      '---\ntype: project\narea: priorities\n---\n- Active\n\t1. Alpha\n' as never,
+    );
+  });
+
+  function get(pathSuffix: string, headers?: Record<string, string>) {
+    return req(dataPort, {
+      method: 'GET',
+      path: `/widget/data/${pathSuffix}`,
+      headers: {
+        Authorization: 'Bearer test-widget-token',
+        Origin: WIDGET_ORIGIN,
+        ...headers,
+      },
+    });
+  }
+
+  it('preflight OPTIONS → 204 with ACAO + GET in allow-methods', async () => {
+    const res = await req(dataPort, {
+      method: 'OPTIONS',
+      path: '/widget/data/projects-board',
+      headers: { Origin: WIDGET_ORIGIN },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
+    expect(res.headers['access-control-allow-methods']).toContain('GET');
+    expect(res.headers['access-control-allow-headers']).toContain(
+      'Authorization',
+    );
+  });
+
+  it('no/bad bearer token → 401, still carries ACAO', async () => {
+    const res = await get('projects-board', {
+      Authorization: 'Bearer wrong-token',
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
+  });
+
+  it('empty WIDGET_FEEDBACK_TOKEN → 503 (fail closed)', async () => {
+    mockConfig.WIDGET_FEEDBACK_TOKEN = '';
+    const res = await get('projects-board');
+    expect(res.status).toBe(503);
+    expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
+  });
+
+  it('invalid id charset → 400', async () => {
+    const res = await get('has~tilde');
+    expect(res.status).toBe(400);
+  });
+
+  it('unknown (but valid-charset) id → 404 (pilot serves only projects-board)', async () => {
+    const res = await get('some-other-widget');
+    expect(res.status).toBe(404);
+  });
+
+  it('projects-board → 200 with the serialized snapshot; read-only (no onMessage)', async () => {
+    const res = await get('projects-board');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('application/json');
+    const snap = JSON.parse(res.body) as {
+      version: number;
+      widgetId: string;
+      priorities: { active: { slug: string }[] };
+    };
+    expect(snap.version).toBe(1);
+    expect(snap.widgetId).toBe('projects-board');
+    expect(snap.priorities.active[0].slug).toBe('alpha');
+    expect(dataOpts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('a snapshot build failure surfaces a generic 500 (no raw error leak)', async () => {
+    vi.mocked(readFile).mockRejectedValue(
+      new Error('boom /home/ubuntu/secret'),
+    );
+    const res = await get('projects-board');
+    expect(res.status).toBe(500);
+    expect(res.body).not.toContain('secret');
+  });
+});
