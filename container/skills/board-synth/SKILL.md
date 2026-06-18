@@ -35,13 +35,14 @@ All reads happen within the agent container — no network calls.
 
 ## Execution order
 
-1. **Read** `priorities.md` and parse the project list.
-2. **For each full project** (folder-resolved, in registry order):
+1. **Read** `priorities.md` and parse the project list. Note which projects are **Active** vs **Inactive** (the Active list vs the collapsed Inactive section) — this distinction is used in step 4 (Insights) ONLY.
+2. **For each full project — EVERY full project, ACTIVE *and* INACTIVE** (folder-resolved, in registry order):
    a. Read `log.md` and `next.md` for context.
    b. Run the per-project git-log slice (§ below) for each mapped repo.
    c. Synthesize the Log (§ Log synthesis contract).
+   > **Logs are NOT active-scoped.** A user can select any project (active or inactive) on the board and must see its Log, so synthesize a Log for every full project regardless of active/inactive. The active-only rule belongs to Insights (step 4), never here.
 3. **Read the prior `insights-ledger.json`** (absent on first run → treat as empty ledger `{ "insights": [] }`).
-4. **Synthesize cross-project Insights** using the full loaded context (§ Insights contract).
+4. **Synthesize cross-project Insights** using the full loaded context (§ Insights contract) — **scoped to ACTIVE projects** (see that contract).
 5. **Write cache files atomically** (§ Atomic writes).
 
 ## Per-project git-log slice
@@ -104,7 +105,7 @@ For projects with no mapped repo, log.md-only synthesis is still valuable — pr
 
 **Why a ledger:** insights are slow-moving (days-to-weeks to work through). Regenerating from scratch nightly would reword the same insights — churn that looks like change. The ledger gives insights memory so the board stays stable and only flags genuine change.
 
-**Scan scope — ACTIVE projects only (JT 2026-06-18).** `priorities.md` separates **Active** from **Inactive** projects (the Active list vs the collapsed Inactive section). Scan only the **Active** projects' activity — their Next activities AND freshly-synthesized Logs. **Inactive projects are out of scope** — by definition JT is not focused on them, so "stalled / no commits / scaffolded-and-empty" observations about an inactive project are NOISE that wastes board space. **The one exception:** include an inactive project ONLY when there is something *of substance* about it that **connects to an active project** (e.g. an inactive project duplicates or blocks active work, or shares infra an active project now needs). A bare "this inactive project hasn't moved" is never an insight.
+**Scan scope — ACTIVE projects only (JT 2026-06-18).** *(This scoping governs INSIGHTS ONLY. Logs are still synthesized for every full project in step 2 — do not let this section narrow Log coverage.)* `priorities.md` separates **Active** from **Inactive** projects (the Active list vs the collapsed Inactive section). Scan only the **Active** projects' activity — their Next activities AND freshly-synthesized Logs. **Inactive projects are out of scope** — by definition JT is not focused on them, so "stalled / no commits / scaffolded-and-empty" observations about an inactive project are NOISE that wastes board space. **The one exception:** include an inactive project ONLY when there is something *of substance* about it that **connects to an active project** (e.g. an inactive project duplicates or blocks active work, or shares infra an active project now needs). A bare "this inactive project hasn't moved" is never an insight.
 
 Scan across four lenses (all applied within the active scope):
 1. Contradictions (conflicting activities across active projects)
