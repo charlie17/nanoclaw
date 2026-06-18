@@ -194,7 +194,9 @@ async function runTask(
           // narrates "silent success" otherwise). Forward only a final message the
           // skill flagged as an error (⚠️ marker). All other tasks: unchanged. JT 2026-06-18.
           const errorsOnly = task.id.startsWith('daystrom-board-synth');
-          const isErrorMsg = /⚠️|board synth error/i.test(streamedOutput.result);
+          const isErrorMsg = /⚠️|board synth error/i.test(
+            streamedOutput.result,
+          );
           if (!errorsOnly || isErrorMsg) {
             // Forward result to user (sendMessage handles formatting)
             await deps.sendMessage(task.chat_jid, streamedOutput.result);
