@@ -188,8 +188,17 @@ async function runTask(
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          // Errors-only tasks (board-synth nightly): silence on success is
+          // scheduler-ENFORCED here, not left to the agent reliably emitting an
+          // empty final message (feedback_deterministic_over_prompt — the agent
+          // narrates "silent success" otherwise). Forward only a final message the
+          // skill flagged as an error (⚠️ marker). All other tasks: unchanged. JT 2026-06-18.
+          const errorsOnly = task.id.startsWith('daystrom-board-synth');
+          const isErrorMsg = /⚠️|board synth error/i.test(streamedOutput.result);
+          if (!errorsOnly || isErrorMsg) {
+            // Forward result to user (sendMessage handles formatting)
+            await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          }
           scheduleClose();
         }
         if (streamedOutput.status === 'success') {
