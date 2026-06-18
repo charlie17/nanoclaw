@@ -161,8 +161,15 @@ Write `logs.json` first (logs before insights — if the run is interrupted, the
 
 - **READ ONLY** from `priorities.md`, `next.md`, `log.md` (no writes to the vault).
 - **WRITE ONLY** to `/workspace/extra/board-cache/` (the two cache files via temp+rename above).
-- No other vault writes. No Telegram messages (this is a silent background task — the scheduled task runner handles logging).
+- No other vault writes.
 - Do not write directly to `logs.json` or `insights-ledger.json` — always go through `.tmp.json` + rename.
+
+## Completion reporting (silent success, loud error)
+
+The scheduled-task runner forwards your FINAL message to JT's Telegram. An empty final message sends nothing. Use that:
+
+- **On success** — after both cache files are written atomically, **END YOUR TURN WITH NO FINAL MESSAGE.** Do NOT summarize, confirm, count projects, or list insights. Emit zero output text. The board itself is the surface; a silent run is the correct, expected outcome. (Do not narrate "done" — that would ping JT.)
+- **On an error you cannot recover from** (can't read `priorities.md`, can't write to `/workspace/extra/board-cache/`, the mount is missing, a required input is unreadable, etc.) — END with a SINGLE concise line prefixed **`⚠️ Board synth error:`** naming what failed and any host action needed. This is the ONLY case you emit a final message; it becomes JT's error alert. Do not also write a fallback copy elsewhere in the vault — just report the error and stop.
 
 ## First-run behavior
 
