@@ -204,4 +204,24 @@ describe('parseNext — edge cases', () => {
     expect(acts[1].text.raw).toBe('loose prose line');
     expect(flags).toEqual(["x: couldn't parse line 2"]);
   });
+
+  it('a <!-- board:ignore --> sentinel stops parsing — trailing section is dropped, no flags', () => {
+    const flags: string[] = [];
+    const result = parseNext(
+      '1. A\n2. B\n<!-- board:ignore -->\n## Notes index\nprose the parser would otherwise flag\n\t- and a stray indented line\n',
+      'x',
+      flags,
+    );
+    const acts = result.groups[0].activities;
+    expect(acts.length).toBe(2);
+    expect(acts.map((a) => a.text.raw)).toEqual(['1. A', '2. B']);
+    expect(flags).toEqual([]);
+  });
+
+  it('the board:ignore sentinel is tolerant of inner whitespace + case', () => {
+    const flags: string[] = [];
+    const result = parseNext('1. A\n<!--   BOARD:Ignore   -->\nignored\n', 'x', flags);
+    expect(result.groups[0].activities.length).toBe(1);
+    expect(flags).toEqual([]);
+  });
 });

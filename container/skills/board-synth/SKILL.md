@@ -70,7 +70,7 @@ For projects with no mapped repo, log.md-only synthesis is still valuable — pr
 
 **Format:**
 - Blend `log.md` entries + commit synthesis into ONE "recent activity" view. No source headers.
-- Repo-derived lines carry a trailing `*` (quiet Daystrom-internal marker; no on-screen legend). Hand-log lines get no `*`.
+- Mark repo-derived lines with `"repoDerived": true` (hand-log lines `false`). Do NOT add any marker character to the text — write clean prose. The board renders a quiet muted `*` from the flag; baking a `*` into the text too would double it.
 - Commit material is ALWAYS exec-synthesis — never raw commit messages, paths, diffs, or counts.
 - Default most-recent 5, newest-first.
 - Each bullet carries an absolute `date` = the most-recent underlying activity date in its cluster (commit date or log.md date stamp). Store `null` if genuinely undatable. The widget renders "Xd ago" client-side from the absolute date.
@@ -104,11 +104,13 @@ For projects with no mapped repo, log.md-only synthesis is still valuable — pr
 
 **Why a ledger:** insights are slow-moving (days-to-weeks to work through). Regenerating from scratch nightly would reword the same insights — churn that looks like change. The ledger gives insights memory so the board stays stable and only flags genuine change.
 
-**Scan scope:** every project's activity — Next activities AND the freshly-synthesized Logs. Scan across four lenses:
-1. Contradictions (conflicting activities across projects)
-2. Consolidation / duplicate activities (same work in two places)
-3. Streamlining (scaffolded/empty projects that haven't moved)
-4. Cross-cutting patterns (shared infra, upstream dependencies, sequencing leverage)
+**Scan scope — ACTIVE projects only (JT 2026-06-18).** `priorities.md` separates **Active** from **Inactive** projects (the Active list vs the collapsed Inactive section). Scan only the **Active** projects' activity — their Next activities AND freshly-synthesized Logs. **Inactive projects are out of scope** — by definition JT is not focused on them, so "stalled / no commits / scaffolded-and-empty" observations about an inactive project are NOISE that wastes board space. **The one exception:** include an inactive project ONLY when there is something *of substance* about it that **connects to an active project** (e.g. an inactive project duplicates or blocks active work, or shares infra an active project now needs). A bare "this inactive project hasn't moved" is never an insight.
+
+Scan across four lenses (all applied within the active scope):
+1. Contradictions (conflicting activities across active projects)
+2. Consolidation / duplicate activities (same work in two active places — or an active/inactive overlap per the exception above)
+3. Streamlining (an **active** project that is scaffolded/empty or hasn't moved — never an inactive one)
+4. Cross-cutting patterns (shared infra, upstream dependencies, sequencing leverage among active projects)
 
 **Each insight MUST name the project(s) it concerns** — a global box without names is not actionable.
 
@@ -119,8 +121,9 @@ For projects with no mapped repo, log.md-only synthesis is still valuable — pr
 - A carried insight seen ≥2 runs (or age ≥14 days) → `bucket: "standing"`.
 - An insight absent for ≥3 consecutive runs → `status: "resolved"` (ages out).
 - Dedup against the ledger, NOT just the rendered set — a resolved insight must not resurface (check `status:"resolved"` entries before adding a new one that is semantically identical).
+- **Out-of-scope sweep (active-focus):** any prior ledger insight that is about an **inactive** project with no substantive active connection (per Scan scope) → set `status: "resolved"` this run so it stops surfacing, even if it would otherwise still "match." This retires the inactive-only insights (e.g. a stalled/empty inactive project) that the broader earlier scope produced.
 
-**Missing-repo flag (§ 6.4):** for any project with no mapped repo (and no auto-match), surface one Insights line: "Health Agent (or <project>): commits not visible — repo not yet mirrored; log.md-only synthesis." This is `bucket: "new"` on first appearance, `bucket: "standing"` once it persists.
+**Missing-repo flag (§ 6.4):** for any **active** project with no mapped repo (and no auto-match), surface one Insights line: "Health Agent (or <project>): commits not visible — repo not yet mirrored; log.md-only synthesis." This is `bucket: "new"` on first appearance, `bucket: "standing"` once it persists. (Scoped to active projects too — an inactive project's missing repo is not worth board space.)
 
 **Output shape for `insights-ledger.json`:**
 ```json

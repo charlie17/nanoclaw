@@ -61,6 +61,13 @@ export function parseNext(
     const line = lines[i];
     if (line.trim() === '') continue;
 
+    // Board-ignore sentinel (JT 2026-06-18): an HTML comment `<!-- board:ignore -->`
+    // on its own line STOPS parsing here — everything from this line to EOF is
+    // dropped from the board (no activities, no parse flags). For one-off trailing
+    // sections a next-file keeps for itself (reference indexes, scratch notes) that
+    // the board shouldn't surface or flag. Tolerant of inner whitespace + case.
+    if (/^<!--\s*board:ignore\s*-->$/i.test(line.trim())) break;
+
     // `####` group header — exactly four hashes (decision 13).
     const groupHeader = /^#### +(.*)$/.exec(line);
     if (groupHeader) {
