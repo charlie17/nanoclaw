@@ -220,7 +220,11 @@ describe('parseNext — edge cases', () => {
 
   it('the board:ignore sentinel is tolerant of inner whitespace + case', () => {
     const flags: string[] = [];
-    const result = parseNext('1. A\n<!--   BOARD:Ignore   -->\nignored\n', 'x', flags);
+    const result = parseNext(
+      '1. A\n<!--   BOARD:Ignore   -->\nignored\n',
+      'x',
+      flags,
+    );
     expect(result.groups[0].activities.length).toBe(1);
     expect(flags).toEqual([]);
   });
