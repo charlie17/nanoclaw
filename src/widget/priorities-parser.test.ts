@@ -169,7 +169,9 @@ describe('parsePriorities — capability cases (synthetic)', () => {
     expect(dashed.slug).toBe('pricing-model');
     // A bare hyphen inside a word is NOT a delimiter — the name survives whole.
     const hyphenated = result.inactive[1];
-    expect(hyphenated.label.tokens).toEqual([{ text: 'sequence-of-returns risk' }]);
+    expect(hyphenated.label.tokens).toEqual([
+      { text: 'sequence-of-returns risk' },
+    ]);
   });
 
   it('FU-2 #5: two one-offs truncating to the same prefix get distinct slugs', () => {

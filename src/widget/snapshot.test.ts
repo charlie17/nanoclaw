@@ -67,7 +67,11 @@ describe('buildProjectsBoardSnapshot', () => {
     expect(business.folder).toBe('ledger');
     // 4b-Log: both entries receive the same empty pending stub.
     expect(coding.log).toEqual(business.log);
-    expect(coding.log).toEqual({ synthesized: false, repoMapped: false, entries: [] });
+    expect(coding.log).toEqual({
+      synthesized: false,
+      repoMapped: false,
+      entries: [],
+    });
   });
 
   it('a wikilink inside loaded next text survives as a link token', async () => {

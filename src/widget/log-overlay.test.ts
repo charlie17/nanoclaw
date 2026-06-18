@@ -15,7 +15,10 @@ function entry(slug: string, folder: string | null): Entry {
     notePath: null,
     flags: [],
     next: null,
-    log: folder !== null ? { synthesized: false, repoMapped: false, entries: [] } : null,
+    log:
+      folder !== null
+        ? { synthesized: false, repoMapped: false, entries: [] }
+        : null,
   };
 }
 
@@ -42,7 +45,13 @@ describe('overlayLogCache — folder-keyed Log cache overlay', () => {
       logs: {
         options: {
           repoMapped: true,
-          entries: [{ text: 'Shipped the backtester', date: '2026-06-17T00:00:00Z', repoDerived: true }],
+          entries: [
+            {
+              text: 'Shipped the backtester',
+              date: '2026-06-17T00:00:00Z',
+              repoDerived: true,
+            },
+          ],
         },
       },
     };
@@ -66,7 +75,12 @@ describe('overlayLogCache — folder-keyed Log cache overlay', () => {
     // Cache mistakenly keyed by the slug — must miss (proves folder-keying).
     const cache: LogsCache = {
       generatedAt: '2026-06-18T09:00:00Z',
-      logs: { 'options-coding': { repoMapped: true, entries: [{ text: 'x', date: null }] } },
+      logs: {
+        'options-coding': {
+          repoMapped: true,
+          entries: [{ text: 'x', date: null }],
+        },
+      },
     };
 
     overlayLogCache(s, cache);
@@ -78,7 +92,9 @@ describe('overlayLogCache — folder-keyed Log cache overlay', () => {
   it('skips lightweight entries (folder null) — their log stays null', () => {
     const lightweight = entry('refi-mortgage', null);
     const s = snap([lightweight]);
-    overlayLogCache(s, { logs: { 'refi-mortgage': { entries: [{ text: 'x', date: null }] } } });
+    overlayLogCache(s, {
+      logs: { 'refi-mortgage': { entries: [{ text: 'x', date: null }] } },
+    });
     expect(lightweight.log).toBeNull();
   });
 
@@ -86,7 +102,9 @@ describe('overlayLogCache — folder-keyed Log cache overlay', () => {
     const full = entry('podvast', 'podvast');
     const s = snap([full]);
     // `logs` missing/malformed — guard must short-circuit before iterating.
-    overlayLogCache(s, { generatedAt: '2026-06-18T09:00:00Z' } as unknown as LogsCache);
+    overlayLogCache(s, {
+      generatedAt: '2026-06-18T09:00:00Z',
+    } as unknown as LogsCache);
     expect(full.log?.synthesized).toBe(false);
     expect(s.cacheGeneratedAt).toBeNull();
   });
@@ -94,7 +112,14 @@ describe('overlayLogCache — folder-keyed Log cache overlay', () => {
   it('missing generatedAt on an otherwise-clean overlay → null (not undefined)', () => {
     const full = entry('podvast', 'podvast');
     const s = snap([full]);
-    overlayLogCache(s, { logs: { podvast: { repoMapped: false, entries: [{ text: 'hand log', date: null }] } } });
+    overlayLogCache(s, {
+      logs: {
+        podvast: {
+          repoMapped: false,
+          entries: [{ text: 'hand log', date: null }],
+        },
+      },
+    });
     expect(full.log?.synthesized).toBe(true);
     expect(full.log?.entries[0].repoDerived).toBe(false); // defaults when absent
     expect(s.cacheGeneratedAt).toBeNull();
