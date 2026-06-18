@@ -68,11 +68,34 @@ export interface NextContent {
   groups: NextGroup[];
 }
 
-// 4a Log = deterministic raw stub: the last-5 lines of log.md, un-synthesized.
-// The LLM blend (coding-recap, `*` markers, missing-repo flag) is 4b. — D-4a.6.
-export interface LogStub {
-  synthesized: false;
-  entries: string[];
+// 4b-Log: the nightly board-synth agent produces LogEntry[] per project and
+// writes them to board-cache/logs.json. handleWidgetData overlays the cache
+// onto each Entry.log when available; absent cache → synthesized:false + empty
+// entries (graceful fallback). `repoDerived` lines carry a `*` marker in the
+// widget. `date` is the most-recent underlying activity date for the cluster
+// (absolute ISO — rendered as "Xd ago" client-side, stays correct across
+// skipped overnights). — D-4a.6 + Step-4b-Log.
+export interface LogEntry {
+  text: TextField;
+  date: string | null;
+  repoDerived: boolean;
+}
+
+export interface LogSynth {
+  synthesized: boolean;
+  repoMapped: boolean;
+  entries: LogEntry[];
+}
+
+// A cross-project board insight. `firstSurfaced` is an absolute ISO date stored
+// in the ledger; the widget renders "Xd ago" client-side. `projects` names the
+// project(s) the insight concerns (always attributed — a global box without names
+// is not actionable). — Step-4b-Log Insights contract.
+export interface Insight {
+  id: string;
+  text: TextField;
+  projects: string[];
+  firstSurfaced: string;
 }
 
 export type EntryKind = 'full' | 'lightweight' | 'pointer';
@@ -97,16 +120,21 @@ export interface Entry {
   notePath: string | null;
   flags: string[];
   next: NextContent | null;
-  log: LogStub | null;
+  log: LogSynth | null;
 }
 
 export interface BoardSnapshot {
-  version: 1;
+  version: 2;
   widgetId: 'projects-board';
   lastRefreshed: string;
+  cacheGeneratedAt: string | null;
   priorities: {
     active: Entry[];
     inactive: Entry[];
+  };
+  insights: {
+    standing: Insight[];
+    new: Insight[];
   };
   parseFlags: string[];
 }

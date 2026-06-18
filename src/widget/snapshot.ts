@@ -1,18 +1,16 @@
 // Impl-73 Step 4a — board snapshot assembler. Reads priorities.md + each
-// resolved project's next-file (parsed) + log.md (raw last-5), serializes the
-// frozen D-4a.7 schema. Deterministic, always-current — the Bridge parses live
-// on each GET (D-4a.1); no agent, no cache, no synthesis. The LLM Log blend is
-// 4b (D-4a.6) — here `log` is the raw last-5 stub, `synthesized: false`.
+// resolved project's next-file, serializes the schema. Deterministic,
+// always-current — the Bridge parses live on each GET (D-4a.1); no agent,
+// no cache, no synthesis. Log synthesis is 4b-Log: handleWidgetData overlays
+// each entry.log from board-cache/logs.json; here the log is always the
+// graceful-fallback empty stub (synthesized:false, repoMapped:false).
 
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { parseNext } from './next-parser.js';
 import { parsePriorities } from './priorities-parser.js';
-import { stripFrontmatter } from './parse-util.js';
 import type { BoardSnapshot, Entry } from './types.js';
-
-const LOG_TAIL = 5;
 
 async function readFileOrNull(filePath: string): Promise<string | null> {
   try {
@@ -21,21 +19,6 @@ async function readFileOrNull(filePath: string): Promise<string | null> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
   }
-}
-
-// Last-5 content lines of a log.md (frontmatter stripped, trailing blanks
-// dropped). The YAML header is not a "log line", so a log holding only
-// frontmatter yields []. The LLM synthesis (4b) replaces this stub.
-function logTail(text: string): string[] {
-  const { body } = stripFrontmatter(text);
-  const lines = body.split('\n');
-  while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
-    lines.pop();
-  }
-  while (lines.length > 0 && lines[0].trim() === '') {
-    lines.shift();
-  }
-  return lines.slice(-LOG_TAIL);
 }
 
 async function enrichEntry(
@@ -54,17 +37,9 @@ async function enrichEntry(
     }
   }
 
-  // FU-2 #5: the log lives under the resolved FOLDER, not the slug — both Ledger
-  // entries (slugs ledger-coding / ledger-business) share folder `ledger`, so
-  // both read general/projects/ledger/log.md.
-  const logRel = `general/projects/${entry.folder}/log.md`;
-  const logText = await readFileOrNull(path.join(vaultRoot, logRel));
-  if (logText === null) {
-    entry.flags.push(`log missing: ${logRel}`);
-    entry.log = { synthesized: false, entries: [] };
-  } else {
-    entry.log = { synthesized: false, entries: logTail(logText) };
-  }
+  // 4b-Log: the synthesized log is served from board-cache/logs.json by
+  // handleWidgetData; here we emit the graceful-fallback stub only.
+  entry.log = { synthesized: false, repoMapped: false, entries: [] };
 }
 
 export async function buildProjectsBoardSnapshot(
@@ -95,10 +70,12 @@ export async function buildProjectsBoardSnapshot(
   }
 
   return {
-    version: 1,
+    version: 2,
     widgetId: 'projects-board',
     lastRefreshed: new Date().toISOString(),
+    cacheGeneratedAt: null,
     priorities: { active, inactive },
+    insights: { standing: [], new: [] },
     parseFlags,
   };
 }

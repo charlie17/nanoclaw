@@ -2448,10 +2448,16 @@ describe('WebChannel HTTP — GET /widget/data (Plane C read)', () => {
     const snap = JSON.parse(res.body) as {
       version: number;
       widgetId: string;
+      cacheGeneratedAt: null;
+      insights: { standing: unknown[]; new: unknown[] };
       priorities: { active: { slug: string }[] };
     };
-    expect(snap.version).toBe(1);
+    expect(snap.version).toBe(2);
     expect(snap.widgetId).toBe('projects-board');
+    // readFile mock returns priorities.md content → board-cache JSON.parse fails
+    // → cache overlay silently skipped → cacheGeneratedAt stays null + insights empty.
+    expect(snap.cacheGeneratedAt).toBeNull();
+    expect(snap.insights).toEqual({ standing: [], new: [] });
     expect(snap.priorities.active[0].slug).toBe('alpha');
     expect(dataOpts.onMessage).not.toHaveBeenCalled();
   });

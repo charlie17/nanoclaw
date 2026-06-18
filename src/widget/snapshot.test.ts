@@ -12,10 +12,12 @@ const VAULT_ROOT = fileURLToPath(
 describe('buildProjectsBoardSnapshot', () => {
   it('assembles the frozen schema header + priorities in file order', async () => {
     const snap = await buildProjectsBoardSnapshot(VAULT_ROOT);
-    expect(snap.version).toBe(1);
+    expect(snap.version).toBe(2);
     expect(snap.widgetId).toBe('projects-board');
     expect(typeof snap.lastRefreshed).toBe('string');
     expect(Number.isNaN(Date.parse(snap.lastRefreshed))).toBe(false);
+    expect(snap.cacheGeneratedAt).toBeNull();
+    expect(snap.insights).toEqual({ standing: [], new: [] });
     expect(snap.priorities.active.map((e) => e.slug)).toEqual([
       'alpha',
       'ledger-coding', // FU-2 #5: unique slug; folder stays `ledger`
@@ -31,7 +33,11 @@ describe('buildProjectsBoardSnapshot', () => {
     const alpha = snap.priorities.active[0];
     expect(alpha.kind).toBe('full');
     expect(alpha.next?.groups[0].activities.length).toBe(4);
+    // 4b-Log: log is an empty pending stub from the snapshot; cache overlay
+    // (handleWidgetData) sets synthesized:true when the cache is available.
     expect(alpha.log?.synthesized).toBe(false);
+    expect(alpha.log?.repoMapped).toBe(false);
+    expect(alpha.log?.entries).toEqual([]);
 
     const lightweight = snap.priorities.inactive.find(
       (e) => e.slug === 'sample-study',
@@ -53,16 +59,15 @@ describe('buildProjectsBoardSnapshot', () => {
     expect(business.next?.groups[0].activities.length).toBe(11);
   });
 
-  it('FU-2 #5: both Ledger entries read the SAME folder log (general/projects/ledger/log.md)', async () => {
+  it('FU-2 #5: both Ledger entries share the same folder (log stub is identical)', async () => {
     const snap = await buildProjectsBoardSnapshot(VAULT_ROOT);
     const coding = snap.priorities.active[1];
     const business = snap.priorities.inactive[3];
     expect(coding.folder).toBe('ledger');
     expect(business.folder).toBe('ledger');
-    // Same folder → same log stub (the #5 snapshot fix: log keys off folder,
-    // not the now-distinct slug, so neither resolves a ledger-coding/ folder).
+    // 4b-Log: both entries receive the same empty pending stub.
     expect(coding.log).toEqual(business.log);
-    expect(coding.flags.some((f) => f.startsWith('log missing'))).toBe(false);
+    expect(coding.log).toEqual({ synthesized: false, repoMapped: false, entries: [] });
   });
 
   it('a wikilink inside loaded next text survives as a link token', async () => {
@@ -79,17 +84,15 @@ describe('buildProjectsBoardSnapshot', () => {
     });
   });
 
-  it('log = raw last-5 lines, un-synthesized (deep nesting preserved verbatim)', async () => {
+  it('full entry log is a synthesized:false empty stub (cache overlay pending)', async () => {
     const snap = await buildProjectsBoardSnapshot(VAULT_ROOT);
     const beacon = snap.priorities.active[2];
     expect(beacon.log?.synthesized).toBe(false);
-    expect(beacon.log?.entries.length).toBe(5);
-    expect(beacon.log?.entries[beacon.log.entries.length - 1]).toContain(
-      'Note:',
-    );
+    expect(beacon.log?.repoMapped).toBe(false);
+    expect(beacon.log?.entries).toEqual([]);
   });
 
-  it('a frontmatter-only log → empty entries (the YAML header is not a log line)', async () => {
+  it('a frontmatter-only project still receives an empty log stub', async () => {
     const snap = await buildProjectsBoardSnapshot(VAULT_ROOT);
     const relay = snap.priorities.inactive.find((e) => e.slug === 'relay');
     expect(relay?.log?.entries).toEqual([]);

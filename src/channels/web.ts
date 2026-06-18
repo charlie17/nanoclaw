@@ -46,6 +46,10 @@ import { resolveGroupFolderPath } from '../group-folder.js';
 import { logger } from '../logger.js';
 // Impl-73 Step 4a — Projects Board read plane (GET /widget/data/projects-board).
 import { buildProjectsBoardSnapshot } from '../widget/snapshot.js';
+// Impl-73 Step 4b-Log — tokenize plain-text cache strings to TextField for the API response.
+import { tokenize } from '../widget/wikilink.js';
+import type { Insight } from '../widget/types.js';
+import { overlayLogCache, type LogsCache } from '../widget/log-overlay.js';
 import { registerChannel } from './registry.js';
 import type { ChannelOpts } from './registry.js';
 // JT: Channel, NewMessage, RegisteredGroup from src/types.ts — upstream-owned shapes
@@ -1853,6 +1857,66 @@ export class WebChannel implements Channel {
     try {
       const vaultRoot = path.join(os.homedir(), 'vault'); // D-S3.9 — same as /dash/vault-stats
       const snapshot = await buildProjectsBoardSnapshot(vaultRoot);
+
+      // 4b-Log: best-effort cache overlay — missing/unparseable cache degrades
+      // gracefully to the synthesized:false stub + empty insights already in snapshot.
+      const boardCache = path.join(
+        os.homedir(),
+        'daystrom-ops',
+        'state',
+        'board-cache',
+      );
+
+      try {
+        const logsText = await readFile(
+          path.join(boardCache, 'logs.json'),
+          'utf8',
+        );
+        // 4b-Log Must-Fix: overlay keyed by entry.folder (NOT slug) — see
+        // overlayLogCache. Best-effort + shape-guarded; mutates snapshot in place.
+        const logsData = JSON.parse(logsText) as LogsCache;
+        overlayLogCache(snapshot, logsData);
+      } catch {
+        // Cache absent or unparseable — synthesized:false stub already in place.
+      }
+
+      try {
+        const ledgerText = await readFile(
+          path.join(boardCache, 'insights-ledger.json'),
+          'utf8',
+        );
+        const ledger = JSON.parse(ledgerText) as {
+          insights: {
+            id: string;
+            text: string;
+            projects: string[];
+            firstSurfaced: string;
+            bucket: 'standing' | 'new';
+            status: 'active' | 'resolved';
+          }[];
+        };
+        const active = ledger.insights.filter((i) => i.status === 'active');
+        const toInsight = (i: {
+          id: string;
+          text: string;
+          projects: string[];
+          firstSurfaced: string;
+        }): Insight => ({
+          id: i.id,
+          text: tokenize(i.text),
+          projects: i.projects,
+          firstSurfaced: i.firstSurfaced,
+        });
+        snapshot.insights = {
+          standing: active
+            .filter((i) => i.bucket === 'standing')
+            .map(toInsight),
+          new: active.filter((i) => i.bucket === 'new').map(toInsight),
+        };
+      } catch {
+        // Cache absent or unparseable — empty insights already in place.
+      }
+
       res
         .writeHead(200, { 'Content-Type': 'application/json' })
         .end(JSON.stringify(snapshot));
