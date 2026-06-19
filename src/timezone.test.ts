@@ -133,23 +133,23 @@ describe('zonedWallClockToUtc', () => {
 
   it('converts a winter (EST, UTC−5) wall-clock to UTC correctly', () => {
     // 2026-12-15 is in EST (UTC−5); 09:00 ET → 14:00 UTC
-    expect(
-      zonedWallClockToUtc('2026-12-15T09:00:00', 'America/New_York'),
-    ).toBe('2026-12-15T14:00:00.000Z');
+    expect(zonedWallClockToUtc('2026-12-15T09:00:00', 'America/New_York')).toBe(
+      '2026-12-15T14:00:00.000Z',
+    );
   });
 
   // ── Incident cases (2026-06-19: 11am and noon fired 4h early) ────────────
 
   it('converts incident case 11:00 ET (EDT) to 15:00 UTC', () => {
-    expect(
-      zonedWallClockToUtc('2026-06-19T11:00:00', 'America/New_York'),
-    ).toBe('2026-06-19T15:00:00.000Z');
+    expect(zonedWallClockToUtc('2026-06-19T11:00:00', 'America/New_York')).toBe(
+      '2026-06-19T15:00:00.000Z',
+    );
   });
 
   it('converts incident case 12:00 ET (EDT) to 16:00 UTC', () => {
-    expect(
-      zonedWallClockToUtc('2026-06-19T12:00:00', 'America/New_York'),
-    ).toBe('2026-06-19T16:00:00.000Z');
+    expect(zonedWallClockToUtc('2026-06-19T12:00:00', 'America/New_York')).toBe(
+      '2026-06-19T16:00:00.000Z',
+    );
   });
 
   // ── Optional seconds ──────────────────────────────────────────────────────

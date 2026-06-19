@@ -3,7 +3,12 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, REMINDER_TIMEZONE, TIMEZONE } from './config.js';
+import {
+  DATA_DIR,
+  IPC_POLL_INTERVAL,
+  REMINDER_TIMEZONE,
+  TIMEZONE,
+} from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
@@ -249,7 +254,10 @@ export async function processTaskIpc(
         } else if (scheduleType === 'once') {
           let resolved: string;
           try {
-            resolved = zonedWallClockToUtc(data.schedule_value, REMINDER_TIMEZONE);
+            resolved = zonedWallClockToUtc(
+              data.schedule_value,
+              REMINDER_TIMEZONE,
+            );
           } catch {
             logger.warn(
               { scheduleValue: data.schedule_value },
