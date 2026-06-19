@@ -118,6 +118,14 @@ function resolveConfigTimezone(): string {
 }
 export const TIMEZONE = resolveConfigTimezone();
 
+// Explicit ET timezone for one-shot reminder scheduling (Impl-74).
+// Intentionally separate from TIMEZONE — TIMEZONE resolves to UTC on this
+// VPS (host clock UTC, no TZ env var), which is correct for cron expressions
+// that are hand-authored in UTC. One-shot reminders receive naive ET
+// wall-clock strings from the skill and must be converted deterministically
+// using this fixed zone — never via TIMEZONE.
+export const REMINDER_TIMEZONE = 'America/New_York';
+
 // JT: Batch 2.3 D-CU4 — claude-usage dashboard port (localhost-only; Bridge reverse-proxies to it per D-CU2)
 export const CLAUDE_USAGE_PORT = parseInt(
   process.env.CLAUDE_USAGE_PORT || '8080',

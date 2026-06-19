@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   convertResetTimeToEt,
   formatLocalTime,
   isValidTimezone,
   resolveTimezone,
+  zonedWallClockToUtc,
 } from './timezone.js';
 
 // --- formatLocalTime ---
@@ -117,3 +118,76 @@ describe('convertResetTimeToEt', () => {
     expect(result).not.toContain('UTC');
   });
 });
+
+// --- zonedWallClockToUtc (Impl-74) ---
+
+describe('zonedWallClockToUtc', () => {
+  // ── Core DST correctness ──────────────────────────────────────────────────
+
+  it('converts a summer (EDT, UTC−4) wall-clock to UTC correctly', () => {
+    // 2026-06-19 is in EDT (UTC−4); 09:00 ET → 13:00 UTC
+    expect(zonedWallClockToUtc('2026-06-19T09:00:00', 'America/New_York')).toBe(
+      '2026-06-19T13:00:00.000Z',
+    );
+  });
+
+  it('converts a winter (EST, UTC−5) wall-clock to UTC correctly', () => {
+    // 2026-12-15 is in EST (UTC−5); 09:00 ET → 14:00 UTC
+    expect(
+      zonedWallClockToUtc('2026-12-15T09:00:00', 'America/New_York'),
+    ).toBe('2026-12-15T14:00:00.000Z');
+  });
+
+  // ── Incident cases (2026-06-19: 11am and noon fired 4h early) ────────────
+
+  it('converts incident case 11:00 ET (EDT) to 15:00 UTC', () => {
+    expect(
+      zonedWallClockToUtc('2026-06-19T11:00:00', 'America/New_York'),
+    ).toBe('2026-06-19T15:00:00.000Z');
+  });
+
+  it('converts incident case 12:00 ET (EDT) to 16:00 UTC', () => {
+    expect(
+      zonedWallClockToUtc('2026-06-19T12:00:00', 'America/New_York'),
+    ).toBe('2026-06-19T16:00:00.000Z');
+  });
+
+  // ── Optional seconds ──────────────────────────────────────────────────────
+
+  it('accepts YYYY-MM-DDTHH:MM (no seconds) and produces correct UTC', () => {
+    expect(zonedWallClockToUtc('2026-06-19T09:00', 'America/New_York')).toBe(
+      '2026-06-19T13:00:00.000Z',
+    );
+  });
+
+  // ── Rejection of zone-aware inputs ───────────────────────────────────────
+
+  it('throws if the input has a Z suffix', () => {
+    expect(() =>
+      zonedWallClockToUtc('2026-06-19T09:00:00Z', 'America/New_York'),
+    ).toThrow();
+  });
+
+  it('throws if the input has a +HH:MM offset', () => {
+    expect(() =>
+      zonedWallClockToUtc('2026-06-19T09:00:00+00:00', 'America/New_York'),
+    ).toThrow();
+  });
+
+  it('throws on an unparseable datetime string', () => {
+    expect(() =>
+      zonedWallClockToUtc('not-a-date', 'America/New_York'),
+    ).toThrow();
+  });
+});
+
+// ── Past-guard: documented as covered by ipc.ts branch logic ──────────────
+//
+// The in-the-past guardrail lives in src/ipc.ts (schedule_task once-branch).
+// It compares new Date(resolved).getTime() <= Date.now() and logs+breaks
+// rather than persisting the task.  Testing that branch would require
+// mocking Date.now() and the full processTaskIpc dependency graph (db,
+// logger, deps).  The logic is a two-line conditional on the output of
+// zonedWallClockToUtc, which IS tested above.  Impl-74 B4 documents this
+// as covered by helper tests + branch inspection rather than an integration
+// test of the full IPC path.

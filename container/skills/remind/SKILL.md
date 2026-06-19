@@ -15,7 +15,7 @@ Route by intent. When phrasing is ambiguous across the three paths, show the opt
 
 Parse JT's natural-language input into `schedule_type` + `schedule_value`. Use Claude's temporal reasoning — do NOT codify NL→schedule rules as a rulebook.
 
-- **once:** "at 3pm today", "tomorrow at 9am", "on April 25 at noon" → `YYYY-MM-DDTHH:MM:SS` local time. No Z suffix — the scheduler rejects it.
+- **once:** "at 3pm today", "tomorrow at 9am", "on April 25 at noon" → `YYYY-MM-DDTHH:MM:SS` local time. No Z suffix — the scheduler rejects it. The value is ET wall-clock; the host converts ET→UTC deterministically (Impl-74) — do NOT pre-convert to UTC in the skill.
 - **cron:** "every weekday at 9am" → `0 9 * * 1-5`. "every Friday at 10am" → `0 10 * * 5`. "every morning" → ask JT for the time.
 - **interval:** "every 2 hours" → `7200000` (milliseconds).
 

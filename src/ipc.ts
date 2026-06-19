@@ -3,10 +3,11 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { DATA_DIR, IPC_POLL_INTERVAL, REMINDER_TIMEZONE, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
+import { zonedWallClockToUtc } from './timezone.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -225,6 +226,10 @@ export async function processTaskIpc(
               { scheduleValue: data.schedule_value },
               'Invalid cron expression',
             );
+            await deps.sendMessage(
+              targetJid,
+              "⚠️ I couldn't set that reminder — I couldn't read the recurring schedule. Please try again with a clearer time.",
+            );
             break;
           }
         } else if (scheduleType === 'interval') {
@@ -234,19 +239,44 @@ export async function processTaskIpc(
               { scheduleValue: data.schedule_value },
               'Invalid interval',
             );
+            await deps.sendMessage(
+              targetJid,
+              "⚠️ I couldn't set that reminder — the repeat interval wasn't valid. Please try again with a clearer interval.",
+            );
             break;
           }
           nextRun = new Date(Date.now() + ms).toISOString();
         } else if (scheduleType === 'once') {
-          const date = new Date(data.schedule_value);
-          if (isNaN(date.getTime())) {
+          let resolved: string;
+          try {
+            resolved = zonedWallClockToUtc(data.schedule_value, REMINDER_TIMEZONE);
+          } catch {
             logger.warn(
               { scheduleValue: data.schedule_value },
-              'Invalid timestamp',
+              'Invalid or non-naive timestamp for once task',
+            );
+            await deps.sendMessage(
+              targetJid,
+              "⚠️ I couldn't set that reminder — I couldn't read the date/time. Please try again with a clearer time.",
             );
             break;
           }
-          nextRun = date.toISOString();
+          // Defense-in-depth: a resolved UTC instant in the past means the
+          // skill produced a stale value (e.g. "9am" that already passed
+          // without resolving to tomorrow). Reject (and tell JT — B5) so a
+          // dropped reminder is never silent and a regression self-announces.
+          if (new Date(resolved).getTime() <= Date.now()) {
+            logger.warn(
+              { scheduleValue: data.schedule_value, resolved },
+              'Once task resolved to a past instant — not created',
+            );
+            await deps.sendMessage(
+              targetJid,
+              "⚠️ I couldn't set that reminder — the time came out in the past. Please try again with a future time.",
+            );
+            break;
+          }
+          nextRun = resolved;
         }
 
         const taskId =
