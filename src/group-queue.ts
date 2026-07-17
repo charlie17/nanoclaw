@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
-import { stopContainer } from './container-runtime.js';
+import { isNoSuchContainerError, stopContainer } from './container-runtime.js';
 import { logger } from './logger.js';
 
 /** FU-30 — closeStdin watchdog: if the container does not exit within this
@@ -157,6 +157,60 @@ export class GroupQueue {
     this.operatorNotify = fn;
   }
 
+  /**
+   * Stop a container on behalf of a watchdog.
+   * Returns false if the container was already gone — Impl-75 D1.
+   *
+   * JT: "Already gone" means the other kill path won the race, i.e. the
+   * JT: container is dead and the watchdog got what it wanted. Benign: log it,
+   * JT: never Telegram it. Pre-Impl-75 both watchdogs alerted JT regardless of
+   * JT: whether stopContainer succeeded, threw, or found nothing to kill.
+   */
+  private stopForWatchdog(
+    groupJid: string,
+    containerName: string,
+    label: string,
+  ): boolean {
+    try {
+      stopContainer(containerName);
+      return true;
+    } catch (err) {
+      if (isNoSuchContainerError(err)) {
+        logger.info(
+          { groupJid, containerName },
+          `${label}: container already gone (reaped by another path); no alert`,
+        );
+        return false;
+      }
+      logger.error(
+        { groupJid, containerName, err },
+        `${label}: stopContainer threw`,
+      );
+      return true;
+    }
+  }
+
+  /**
+   * What actually happens next after a watchdog kill — Impl-75 D2.
+   *
+   * JT: The old alerts flatly claimed "auto-retrying". On 2026-07-16 nothing
+   * JT: retried: the log shows dead air from 20:51:26 to 23:10:43 and JT waited
+   * JT: 2h19m on a recovery that was never scheduled. A false recovery claim is
+   * JT: worse than no claim. Re-verified against the code post-B2-removal:
+   * JT:   - message container → processMessages returns false ONLY when the run
+   * JT:     errored AND nothing at all reached the user (neither a reply nor the
+   * JT:     A2 lost-reply notice — both set outputSentToUser). That return is what
+   * JT:     triggers scheduleRetry, so the retry is real but strictly conditional
+   * JT:     on the message being unanswered. A clean run never retries.
+   * JT:   - task container → runTask catches and logs; the queue schedules NO
+   * JT:     retry. Only task-scheduler's own system-task path re-runs them.
+   */
+  private outcomeClause(state: GroupState): string {
+    return state.isTaskContainer
+      ? `The scheduled task was stopped; the watchdog does not retry it — it runs again on its normal schedule.`
+      : `Any message left unanswered is retried automatically — if you don't hear back shortly, resend it.`;
+  }
+
   // Fire-and-forget operator alert. Wraps in try/catch so a notify failure
   // (Telegram down, channel gone, etc.) never bubbles up into the watchdog
   // path that called it. The watchdog still does its real work either way.
@@ -285,13 +339,17 @@ export class GroupQueue {
         },
         'Container produced no SDK output within deadline; forcing docker stop (single-chat retry-storm watchdog)',
       );
-      try {
-        stopContainer(containerName);
-      } catch (err) {
-        logger.error(
-          { groupJid, containerName, err },
-          'No-output watchdog: stopContainer threw',
-        );
+      // JT: Impl-75 D1 — if the container was already reaped by the other kill
+      // JT: path, stay quiet. Nothing is wrong and nothing needs JT's attention.
+      // JT: NOTE this early return also skips `consecutiveHangs += 1` below, and
+      // JT: that is DELIBERATE: losing the race to the reaper is not a hang, so
+      // JT: counting it would inflate the streak and escalate the next genuine
+      // JT: hang's wording ("Hang #2 — same task, no progress") on a chat that
+      // JT: never actually hung.
+      if (
+        !this.stopForWatchdog(groupJid, containerName, 'No-output watchdog')
+      ) {
+        return;
       }
       // JT: Surface to operator immediately. Without this, the user just sees
       // JT: silence — container is dead, no retry happening, but they have no
@@ -301,13 +359,16 @@ export class GroupQueue {
       state.consecutiveHangs += 1;
       const minutes = Math.round(NO_OUTPUT_DEADLINE_MS / 60000);
       const n = state.consecutiveHangs;
+      // JT: Impl-75 D2 — wording states only what the code actually does. See
+      // JT: outcomeClause: the blanket "auto-retrying" promise was often a lie.
+      const outcome = this.outcomeClause(state);
       let alert: string;
       if (n === 1) {
-        alert = `⚠️ Container hung (no SDK output for ${minutes} min). Killed by watchdog; auto-retrying with backoff. Only the in-flight reply is lost — conversation continues.`;
+        alert = `⚠️ Container hung (no SDK output for ${minutes} min) and was killed by the watchdog. ${outcome}`;
       } else if (n === 2) {
-        alert = `⚠️ Hang #${n} — same task, no progress yet. Watchdog killed and retrying again. If this persists, the agent may be stuck in a rate-limit retry-storm.`;
+        alert = `⚠️ Hang #${n} — same task, no progress yet. Watchdog killed it again. If this persists, the agent may be stuck in a rate-limit retry-storm. ${outcome}`;
       } else {
-        alert = `⚠️ Hang #${n} — repeated stuck-task pattern. Watchdog killed and retrying. Recommend session reset (or just wait — Anthropic rate-limit backoff usually clears within a few minutes).`;
+        alert = `⚠️ Hang #${n} — repeated stuck-task pattern. Watchdog killed it again. Recommend session reset (or just wait — Anthropic rate-limit backoff usually clears within a few minutes). ${outcome}`;
       }
       this.notifyOperator(groupJid, alert);
     }, NO_OUTPUT_DEADLINE_MS);
@@ -393,20 +454,19 @@ export class GroupQueue {
         { groupJid, containerName },
         'Container did not exit within deadline of closeStdin; forcing docker stop (FU-30 watchdog)',
       );
-      try {
-        stopContainer(containerName);
-      } catch (err) {
-        logger.error(
-          { groupJid, containerName, err },
-          'FU-30 watchdog: stopContainer threw',
-        );
+      // JT: Impl-75 D1 — this is THE observed false alarm. On 2026-07-16 the
+      // JT: idle reaper stopped the container at 20:51:24.509; FU-30 fired
+      // JT: 1.1s later, got "No such container", threw — and alerted JT anyway.
+      // JT: Losing that race is normal and silent now.
+      if (!this.stopForWatchdog(groupJid, containerName, 'FU-30 watchdog')) {
+        return;
       }
       // JT: Surface to operator. FU-30 fires when the SDK is in an
       // JT: ungraceful retry-storm state past closeStdin. Same UX
       // JT: principle as the no-output watchdog. Context-agnostic.
       this.notifyOperator(
         groupJid,
-        `⚠️ Container failed to exit gracefully after closeStdin. Force-killed by FU-30 watchdog; auto-retrying. Only the in-flight reply is lost — conversation continues.`,
+        `⚠️ Container failed to exit gracefully and was force-killed by the FU-30 watchdog. ${this.outcomeClause(state)}`,
       );
     }, CLOSE_STDIN_DEADLINE_MS);
   }

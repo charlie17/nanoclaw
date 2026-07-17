@@ -21,7 +21,9 @@ import {
   getRegisteredChannelNames,
 } from './channels/registry.js';
 import {
+  classifyOutput,
   ContainerOutput,
+  isFailureSubtype,
   runContainerAgent,
   writeGroupsSnapshot,
   writeTasksSnapshot,
@@ -301,31 +303,94 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
+    // Streaming output callback — called for each agent result.
+    // JT: Impl-75 — `result.kind` is OPTIONAL. The agent-runner is a bind-mount
+    // JT: and this host is a build artifact; they deploy independently, so an
+    // JT: envelope with no `kind` must behave exactly as it did pre-Impl-75.
+    // JT: Every branch keyed on `kind` below is written to no-op in that case.
+    // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+    // and rewrite SDK rate-limit "resets X (UTC)" timestamps to ET (JT-facing).
+    let text = '';
     if (result.result) {
       const raw =
         typeof result.result === 'string'
           ? result.result
           : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      // and rewrite SDK rate-limit "resets X (UTC)" timestamps to ET (JT-facing).
-      const text = convertResetTimeToEt(
+      text = convertResetTimeToEt(
         raw.replace(/<internal>[\s\S]*?<\/internal>/g, ''),
       ).trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
-      }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
+      // JT: Impl-75 SF-1 — fires on ANY envelope carrying result text, matching
+      // JT: pre-Impl-75 exactly (bd34210:305-321 reset inside `if (result.result)`).
+      // JT: Must NOT be narrowed to the delivered case: a reply that is nothing
+      // JT: but <internal> reasoning strips to '' yet still proves the agent is
+      // JT: working, and an old runner (no `kind`) sends exactly that envelope.
+      // JT: Narrowing it closed stdin up to IDLE_TIMEOUT early.
       resetIdleTimer();
     }
+
+    const route = classifyOutput(result, text !== '');
+
+    if (route === 'ipc-consumed') {
+      // JT: Impl-75 B1 — the agent has taken a piped message off the IPC queue.
+      // JT: Reaching this callback at all has already reset container-runner's
+      // JT: hard idle timer (any output marker does), which is the whole point:
+      // JT: a pipe-in used to touch no timer, so a message landing seconds before
+      // JT: the reap deadline was consumed and then killed mid-read.
+      queue.markOutputReceived(chatJid);
+      resetIdleTimer();
+      return;
+    }
+
+    if (route === 'deliver') {
+      await channel.sendMessage(chatJid, text);
+      outputSentToUser = true;
+    }
+
+    // JT: Impl-75 A2 (SEV-1) — a 'result' marker is the SDK ending a turn, and a
+    // JT: turn that ends with nothing deliverable IS a lost reply. Pre-Impl-75
+    // JT: this fell through `if (result.result)` into total silence: no Telegram,
+    // JT: not even an "Agent output" log line. The work is often DONE (7/16: all
+    // JT: seven vault pages written, report composed at 23:32:28, never sent) —
+    // JT: so say so plainly rather than implying failure.
+    if (route === 'lost-reply') {
+      const why = isFailureSubtype(result.subtype)
+        ? ` The SDK ended the turn with: ${result.subtype}.`
+        : '';
+      logger.error(
+        { group: group.name, subtype: result.subtype },
+        'Agent turn ended with no deliverable reply — notifying user (lost reply)',
+      );
+      await channel
+        .sendMessage(
+          chatJid,
+          `⚠️ I finished that turn but the reply itself was lost — nothing came back to send you.${why} The work may well have completed, so check the vault before re-running it. Ask me to retry if you'd rather I start over.`,
+        )
+        .catch((err: unknown) =>
+          logger.warn({ chatJid, err }, 'Failed to send lost-reply notice'),
+        );
+      // JT: Impl-75 — the notice counts as output for cursor purposes, so A4's
+      // JT: new error return does NOT roll the cursor back and silently re-run
+      // JT: the whole job. Deliberate: we cannot tell a lost reply from lost WORK
+      // JT: (on 7/16 the work was complete — seven vault pages written), so
+      // JT: auto-replaying a 3.5h ingest could duplicate real side-effects. JT has
+      // JT: been told plainly and can say "retry". It is also what keeps the
+      // JT: notice honest: it says check-then-ask, so we must not quietly retry.
+      outputSentToUser = true;
+    }
+
     // Reset the no-output watchdog on every output marker (incl. result:null
     // session-update markers — those still indicate the SDK is alive and
     // emitting; the watchdog catches the case where NO output emerges at all).
     queue.markOutputReceived(chatJid);
 
-    if (result.status === 'success') {
+    // JT: Impl-75 A3 — do NOT declare idle on a failed turn. notifyIdle sets
+    // JT: idleWaiting=true, which clears the no-output watchdog AND makes its
+    // JT: fire-path early-return without re-arming — i.e. it disarms the hang
+    // JT: alarm on a container that just failed. `status` is 'success' even for
+    // JT: error subtypes (the runner keeps it that way for old-host compat), so
+    // JT: the subtype is the only honest signal here.
+    if (result.status === 'success' && !isFailureSubtype(result.subtype)) {
       queue.notifyIdle(chatJid);
     }
 
@@ -360,6 +425,49 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   return true;
+}
+
+/**
+ * Fired on EVERY SDK event the agent-runner emits — assistant, user, system,
+ * result, etc., not just result emissions.
+ *
+ * JT: Reset the watchdog on any SDK event. Tool calls (Edit / Write / Read /
+ * JT: Glob) emit assistant + user events on the SDK stream. Pre-fix, those
+ * JT: didn't reset the watchdog because they don't take the NANOCLAW_OUTPUT
+ * JT: path; only result events did. Routine vault work that does many tool calls
+ * JT: without an intermediate user-facing result was getting watchdog-killed
+ * JT: spuriously. See post-mortem 2026-05-03.
+ *
+ * JT 2026-05-11: Also cancel any pending rate-limit alert — observed SDK
+ * JT: activity IS the "response is forthcoming" signal that lets us suppress the
+ * JT: alert in the false-positive case (brief 1-5s backoff that resolves itself).
+ *
+ * JT: Impl-75 C1 — NAMED, not inlined at the call site, because it was inlined
+ * JT: at exactly one of the two runContainerAgent call sites. task-scheduler
+ * JT: never passed it, so SDK activity never reset the watchdog for ANY
+ * JT: scheduled task and board-synth was watchdog-killed at 09:10 UTC every
+ * JT: single morning. Both call sites now share this one definition.
+ */
+function handleAgentActivity(jid: string): void {
+  cancelPendingRateLimitAlert(jid);
+  queue.markOutputReceived(jid);
+}
+
+/**
+ * Fired on the first SDK rate_limit_event per container.
+ *
+ * JT: Surface SDK rate_limit_event to the operator — but debounce by
+ * JT: RATE_LIMIT_ALERT_DELAY_MS (default 5s) so we don't spam the alert when the
+ * JT: rate-limit resolves in 1-5s and a response is actually forthcoming. The
+ * JT: observed-SDK-event signal (handleAgentActivity) is the cancel trigger.
+ *
+ * JT: Impl-75 C1 — named for the same reason as handleAgentActivity: it was
+ * JT: missing from the task path entirely.
+ */
+function handleRateLimitEvent(jid: string): void {
+  const channel = findChannel(channels, jid);
+  if (!channel) return;
+  scheduleRateLimitAlert(jid, channel, RATE_LIMIT_ALERT_DELAY_MS);
 }
 
 async function runAgent(
@@ -422,33 +530,8 @@ async function runAgent(
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
-      // JT: Surface SDK rate_limit_event to the operator — but debounce by
-      // JT: RATE_LIMIT_ALERT_DELAY_MS (default 5s) so we don't spam the
-      // JT: alert when the rate-limit resolves in 1-5s and a response is
-      // JT: actually forthcoming. The observed-SDK-event signal (handled
-      // JT: in the agent-activity callback below) is the cancel trigger.
-      (jid) => {
-        const channel = findChannel(channels, jid);
-        if (!channel) return;
-        scheduleRateLimitAlert(jid, channel, RATE_LIMIT_ALERT_DELAY_MS);
-      },
-      // JT: Reset watchdog on EVERY SDK event from the agent — assistant,
-      // JT: user, system, etc., not just result emissions. Tool calls
-      // JT: (Edit / Write / Read / Glob) emit assistant + user events on the
-      // JT: SDK stream. Pre-fix, those didn't reset the watchdog because
-      // JT: they don't take the NANOCLAW_OUTPUT path; only result events
-      // JT: did. Routine vault work that does many tool calls without an
-      // JT: intermediate user-facing result was getting watchdog-killed
-      // JT: spuriously. See post-mortem 2026-05-03.
-      //
-      // JT 2026-05-11: Also cancel any pending rate-limit alert — observed
-      // JT: SDK activity IS the "response is forthcoming" signal that lets
-      // JT: us suppress the alert in the false-positive case (brief 1-5s
-      // JT: backoff that resolves on its own).
-      (jid) => {
-        cancelPendingRateLimitAlert(jid);
-        queue.markOutputReceived(jid);
-      },
+      handleRateLimitEvent,
+      handleAgentActivity,
     );
 
     if (output.newSessionId) {
@@ -842,6 +925,14 @@ async function main(): Promise<void> {
     queue,
     onProcess: (groupJid, proc, containerName, groupFolder) =>
       queue.registerProcess(groupJid, proc, containerName, groupFolder),
+    // JT: Impl-75 C1 — the same callbacks runAgent passes. Their absence here is
+    // JT: the entire Defect C: scheduled tasks never reset the no-output
+    // JT: watchdog, so board-synth (errorsOnly, emits no intermediate results)
+    // JT: was killed at 600s every morning and Telegrammed JT a false "Container
+    // JT: hung" alert at 5:10 AM ET — training him to ignore the exact alert
+    // JT: class that should have caught Defect A.
+    onAgentActivity: handleAgentActivity,
+    onRateLimitEvent: handleRateLimitEvent,
     sendMessage: async (jid, rawText) => {
       const channel = findChannel(channels, jid);
       if (!channel) {

@@ -25,9 +25,18 @@ vi.mock('fs', async () => {
 
 // Mock container-runtime so the FU-30 closeStdin watchdog's stopContainer call
 // is observable without invoking the real docker CLI.
-vi.mock('./container-runtime.js', () => ({
-  stopContainer: vi.fn(),
-}));
+// Impl-75 D1: isNoSuchContainerError is deliberately the REAL implementation —
+// the watchdogs' alert/no-alert decision hinges on it, so a stub would test
+// nothing. Only stopContainer is faked.
+vi.mock('./container-runtime.js', async () => {
+  const actual = await vi.importActual<typeof import('./container-runtime.js')>(
+    './container-runtime.js',
+  );
+  return {
+    ...actual,
+    stopContainer: vi.fn(),
+  };
+});
 
 describe('GroupQueue', () => {
   let queue: GroupQueue;
@@ -758,6 +767,160 @@ describe('GroupQueue', () => {
 
     // Cleanup: simulate natural process exit so runForGroup completes
     resolveProcess();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  // --- Impl-75 D: no false alarms at container-close boundaries ---
+
+  /** Reproduce docker's "already gone" failure the way execSync surfaces it. */
+  function noSuchContainerError(name: string): Error {
+    return new Error(
+      `Command failed: docker stop -t 1 ${name}\nError response from daemon: No such container: ${name}\n`,
+    );
+  }
+
+  async function startContainerFor(
+    jid: string,
+    containerName: string,
+  ): Promise<() => void> {
+    let resolveProcess: () => void = () => {};
+    queue.setProcessMessagesFn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+    queue.enqueueMessageCheck(jid, 'daystrom');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(jid, {} as any, containerName, 'daystrom');
+    return () => resolveProcess();
+  }
+
+  it('D1 — FU-30 losing the race to the reaper does NOT notify the operator', async () => {
+    const { stopContainer } = await import('./container-runtime.js');
+    const stopMock = vi.mocked(stopContainer);
+    stopMock.mockClear();
+    // The 2026-07-16 sequence: the idle reaper already stopped it 1.1s earlier.
+    stopMock.mockImplementation(() => {
+      throw noSuchContainerError('nanoclaw-daystrom-d1');
+    });
+
+    const notify = vi.fn(async () => {});
+    queue.setOperatorNotifier(notify);
+    const done = await startContainerFor('A@g.us', 'nanoclaw-daystrom-d1');
+
+    queue.closeStdin('A@g.us');
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(stopMock).toHaveBeenCalledWith('nanoclaw-daystrom-d1');
+    // Pre-Impl-75 this Telegrammed JT about a container that was already dead.
+    expect(notify).not.toHaveBeenCalled();
+
+    done();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('D1 — no-output watchdog losing the race does NOT notify the operator', async () => {
+    const { stopContainer } = await import('./container-runtime.js');
+    const stopMock = vi.mocked(stopContainer);
+    stopMock.mockClear();
+    stopMock.mockImplementation(() => {
+      throw noSuchContainerError('nanoclaw-daystrom-d1b');
+    });
+
+    const notify = vi.fn(async () => {});
+    queue.setOperatorNotifier(notify);
+    const done = await startContainerFor('A@g.us', 'nanoclaw-daystrom-d1b');
+
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 100);
+
+    expect(stopMock).toHaveBeenCalledWith('nanoclaw-daystrom-d1b');
+    expect(notify).not.toHaveBeenCalled();
+
+    done();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('D1 — a genuine stop failure still notifies (we only suppress "already gone")', async () => {
+    const { stopContainer } = await import('./container-runtime.js');
+    const stopMock = vi.mocked(stopContainer);
+    stopMock.mockClear();
+    stopMock.mockImplementation(() => {
+      throw new Error('Cannot connect to the Docker daemon');
+    });
+
+    const notify = vi.fn(async () => {});
+    queue.setOperatorNotifier(notify);
+    const done = await startContainerFor('A@g.us', 'nanoclaw-daystrom-d1c');
+
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 100);
+
+    expect(notify).toHaveBeenCalledTimes(1);
+
+    done();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('D2 — the hang alert no longer claims an unconditional auto-retry', async () => {
+    const { stopContainer } = await import('./container-runtime.js');
+    const stopMock = vi.mocked(stopContainer);
+    stopMock.mockClear();
+    stopMock.mockImplementation(() => {});
+
+    const notify = vi.fn(async (_jid: string, _msg: string) => {});
+    queue.setOperatorNotifier(notify);
+    const done = await startContainerFor('A@g.us', 'nanoclaw-daystrom-d2');
+
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 100);
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    const alert = notify.mock.calls[0][1] as unknown as string;
+    // On 2026-07-16 JT was told a recovery was underway that never happened and
+    // waited 2h19m on it. The message path DOES retry, but only if the message
+    // went unanswered — so the wording must be conditional, never a promise.
+    expect(alert).not.toMatch(/auto-retrying/i);
+    expect(alert).toMatch(/unanswered/i);
+
+    done();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('D2 — a task container is not promised a watchdog retry it never gets', async () => {
+    const { stopContainer } = await import('./container-runtime.js');
+    const stopMock = vi.mocked(stopContainer);
+    stopMock.mockClear();
+    stopMock.mockImplementation(() => {});
+
+    const notify = vi.fn(async (_jid: string, _msg: string) => {});
+    queue.setOperatorNotifier(notify);
+
+    let resolveTask: () => void = () => {};
+    queue.enqueueTask(
+      'A@g.us',
+      'daystrom-board-synth-v1',
+      () =>
+        new Promise<void>((resolve) => {
+          resolveTask = resolve;
+        }),
+      'daystrom',
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'A@g.us',
+      {} as any,
+      'nanoclaw-daystrom-d2task',
+      'daystrom',
+    );
+
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 100);
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    const alert = notify.mock.calls[0][1] as unknown as string;
+    // runTask catches and logs; the queue schedules NO retry for tasks.
+    expect(alert).not.toMatch(/auto-retrying/i);
+    expect(alert).toMatch(/does not retry/i);
+
+    resolveTask();
     await vi.advanceTimersByTimeAsync(10);
   });
 });

@@ -48,11 +48,72 @@ export interface ContainerInput {
   script?: string;
 }
 
+/**
+ * Which kind of marker an envelope is. Impl-75 A1. Mirrors the type in
+ * container/agent-runner/src/index.ts — keep the two in sync.
+ *
+ * JT: OPTIONAL BY CONTRACT. The agent-runner reaches the container via the
+ * JT: data/sessions/<group>/agent-runner-src → /app/src bind-mount and this host
+ * JT: is a build artifact; they deploy independently. A runner that predates
+ * JT: Impl-75 emits no `kind`, and every consumer of this field MUST fall back to
+ * JT: pre-Impl-75 behaviour when it is absent.
+ */
+export type OutputKind = 'result' | 'session-update' | 'ipc-consumed';
+
 export interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
   newSessionId?: string;
   error?: string;
+  kind?: OutputKind;
+  subtype?: string;
+}
+
+/**
+ * True when the SDK ended a turn in a way that carries no reply. Impl-75 A3.
+ *
+ * JT: `undefined` means a pre-Impl-75 runner that never sent a subtype — treat
+ * JT: as non-failure so back-compat holds (today's behaviour, exactly).
+ */
+export function isFailureSubtype(subtype?: string): boolean {
+  return subtype !== undefined && subtype !== 'success';
+}
+
+/** What an output envelope actually means to the host. Impl-75 A1/A2. */
+export type OutputRoute =
+  /** The agent consumed a piped IPC message (B1). */
+  | 'ipc-consumed'
+  /** There is text to send to the user. */
+  | 'deliver'
+  /** A turn ended carrying nothing deliverable — the reply is gone. Tell the user. */
+  | 'lost-reply'
+  /** Benign post-query heartbeat. Correctly silent. */
+  | 'heartbeat';
+
+/**
+ * Route an output envelope. Impl-75 A1/A2 — the SEV-1 decision, isolated.
+ *
+ * JT: Pre-Impl-75 'lost-reply' and 'heartbeat' were the SAME envelope
+ * JT: ({status:'success', result:null}) and both took the silent path. That
+ * JT: collapse is what let a completed /wiki-ingest look identical to an idling
+ * JT: agent for 18 hours. `kind` is what separates them, so these two shapes MUST
+ * JT: route differently.
+ *
+ * JT: `hasDeliverableText` is passed in rather than read off `output.result`
+ * JT: because the host strips <internal> blocks first — a reply that is nothing
+ * JT: but internal reasoning is also a lost reply, not a heartbeat.
+ *
+ * JT: Back-compat: a pre-Impl-75 runner sends no `kind`, so an empty envelope
+ * JT: falls through to 'heartbeat' — exactly today's behaviour.
+ */
+export function classifyOutput(
+  output: Pick<ContainerOutput, 'kind' | 'subtype'>,
+  hasDeliverableText: boolean,
+): OutputRoute {
+  if (output.kind === 'ipc-consumed') return 'ipc-consumed';
+  if (hasDeliverableText) return 'deliver';
+  if (output.kind === 'result') return 'lost-reply';
+  return 'heartbeat';
 }
 
 interface VolumeMount {
@@ -474,6 +535,14 @@ export async function runContainerAgent(
               newSessionId = parsed.newSessionId;
             }
             hadStreamingOutput = true;
+            // JT: Impl-75 A4 — `hadStreamingOutput` only means "a marker came
+            // JT: out", which session-update heartbeats and empty failed-turn
+            // JT: results both satisfy. Track separately whether the agent ever
+            // JT: emitted a marker carrying REAL reply text; that is the only
+            // JT: thing that proves it actually spoke to JT.
+            if (typeof parsed.result === 'string' && parsed.result.trim()) {
+              hadRealResult = true;
+            }
             // Activity detected — reset the hard timeout
             resetTimeout();
             // Call onOutput for all markers (including null results)
@@ -540,6 +609,7 @@ export async function runContainerAgent(
 
     let timedOut = false;
     let hadStreamingOutput = false;
+    let hadRealResult = false;
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
@@ -587,13 +657,22 @@ export async function runContainerAgent(
             `Duration: ${duration}ms`,
             `Exit Code: ${code}`,
             `Had Streaming Output: ${hadStreamingOutput}`,
+            `Had Real Result: ${hadRealResult}`,
           ].join('\n'),
         );
 
-        // Timeout after output = idle cleanup, not failure.
+        // Timeout after a REAL reply = idle cleanup, not failure.
         // The agent already sent its response; this is just the
         // container being reaped after the idle period expired.
-        if (hadStreamingOutput) {
+        //
+        // JT: Impl-75 A4 — this branch used to gate on `hadStreamingOutput`
+        // JT: alone and assert "the agent already sent its response". That is
+        // JT: FALSE when every marker was a {result:null} heartbeat: the 7/16
+        // JT: container did 22 min of real work, emitted only null markers, and
+        // JT: got reaped straight into `{status:'success'}` — the last of the
+        // JT: four layers that turned a lost reply into silence. Gate on proof
+        // JT: the agent spoke, not proof it made noise.
+        if (hadStreamingOutput && hadRealResult) {
           logger.info(
             { group: group.name, containerName, duration, code },
             'Container timed out after output (idle cleanup)',
@@ -603,6 +682,26 @@ export async function runContainerAgent(
               status: 'success',
               result: null,
               newSessionId,
+            });
+          });
+          return;
+        }
+
+        // JT: Impl-75 A4 — markers came out but none carried a reply. This is a
+        // JT: lost turn, not an idle cleanup. Surfacing it as an error lets the
+        // JT: caller roll the cursor back and retry instead of going quiet.
+        if (hadStreamingOutput) {
+          logger.error(
+            { group: group.name, containerName, duration, code },
+            'Container reaped after emitting only empty markers — the agent never sent a reply (lost turn)',
+          );
+          outputChain.then(() => {
+            resolve({
+              status: 'error',
+              result: null,
+              newSessionId,
+              error:
+                'Container was reaped after emitting only empty output markers; the agent never produced a reply.',
             });
           });
           return;

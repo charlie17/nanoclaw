@@ -35,11 +35,31 @@ interface ContainerInput {
   script?: string;
 }
 
+/**
+ * Which kind of marker an envelope is. Impl-75 A1.
+ *
+ * JT: OPTIONAL AND ADDITIVE ON PURPOSE. The host is a build artifact and this
+ * JT: runner is a bind-mount (data/sessions/<group>/agent-runner-src → /app/src);
+ * JT: they deploy independently, so an envelope WITHOUT `kind` must keep
+ * JT: behaving exactly as it did pre-Impl-75. Never widen `status`/`result`
+ * JT: semantics to carry this information — an old host reads those fields and
+ * JT: would change behaviour. New fields only; old hosts ignore them.
+ *
+ *   'result'         — the SDK ended a turn. `subtype` says how. This is the
+ *                      ONLY kind that is supposed to carry a reply for JT, so
+ *                      an empty one is a lost reply, not a heartbeat.
+ *   'session-update' — post-query heartbeat. Legitimately has no text.
+ *   'ipc-consumed'   — the agent took a piped message off the IPC queue (B1).
+ */
+type OutputKind = 'result' | 'session-update' | 'ipc-consumed';
+
 interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
   newSessionId?: string;
   error?: string;
+  kind?: OutputKind;
+  subtype?: string;
 }
 
 interface SessionEntry {
@@ -125,6 +145,28 @@ function writeOutput(output: ContainerOutput): void {
 
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
+}
+
+/**
+ * Impl-75 B1 — announce that a piped IPC message has been consumed.
+ *
+ * JT: This exists to reset container-runner's HARD idle timer. That timer is a
+ * JT: local closure inside runContainerAgent and resets ONLY on a stdout output
+ * JT: marker ("Don't reset timeout on stderr" — container-runner.ts). An IPC
+ * JT: pipe-in touched nothing, so a message arriving late in the idle window was
+ * JT: consumed and then hard-killed with the agent mid-read: silent loss of user
+ * JT: input, no retry, no trace (2026-07-16: ping at 20:50:27, reap at 20:51:24).
+ * JT: Emitting a marker here reuses the existing reset path with zero
+ * JT: cross-module plumbing, and proves AGENT-side consumption rather than
+ * JT: host-side intent.
+ */
+function announceIpcConsumed(count: number): void {
+  writeOutput({
+    status: 'success',
+    result: null,
+    kind: 'ipc-consumed',
+  });
+  log(`Consumed ${count} IPC message(s); emitted ipc-consumed marker`);
 }
 
 function getSessionSummary(
@@ -356,6 +398,10 @@ function waitForIpcMessage(): Promise<string | null> {
       }
       const messages = drainIpcInput();
       if (messages.length > 0) {
+        // B1: the between-queries consume path. Without a marker here the hard
+        // idle timer keeps counting from the last output while the next query
+        // spins up, which can be many minutes on a big resumed session.
+        announceIpcConsumed(messages.length);
         resolve(messages.join('\n'));
         return;
       }
@@ -403,6 +449,9 @@ async function runQuery(
       log(`Piping IPC message into active query (${text.length} chars)`);
       stream.push(text);
     }
+    // B1: marker emitted AFTER the messages are in the stream, so it can never
+    // claim consumption the agent didn't get.
+    if (messages.length > 0) announceIpcConsumed(messages.length);
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
   setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
@@ -609,10 +658,22 @@ async function runQuery(
       log(
         `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
       );
+      // JT: Impl-75 A1 — `subtype` was already in hand here and thrown away, and
+      // JT: `status` was hardcoded 'success' regardless of it. An SDK result with
+      // JT: subtype error_during_execution / error_max_turns carries NO text, so
+      // JT: it emitted {status:'success', result:null} — byte-identical to the
+      // JT: benign session-update marker below. The host could not tell a failed
+      // JT: turn from an idling agent and silently dropped it (2026-07-16
+      // JT: /wiki-ingest: report composed, never delivered, nobody noticed for 18h).
+      // JT: `status` stays 'success' deliberately — flipping it to 'error' would
+      // JT: change how a PRE-Impl-75 host treats this envelope. `kind` + `subtype`
+      // JT: are additive, so old hosts are unaffected and new hosts can route.
       writeOutput({
         status: 'success',
         result: textResult || null,
         newSessionId,
+        kind: 'result',
+        subtype: message.subtype,
       });
     }
   }
@@ -742,9 +803,14 @@ async function main(): Promise<void> {
         ? 'wakeAgent=false'
         : 'script error/no output';
       log(`Script decided not to wake agent: ${reason}`);
+      // JT: Impl-75 A1 — deliberate silence (the script said don't wake the
+      // JT: agent), so this is a session-update, NOT an empty result. Tagging it
+      // JT: 'result' would make the host cry "lost reply" on every quiet run of a
+      // JT: script-gated task.
       writeOutput({
         status: 'success',
         result: null,
+        kind: 'session-update',
       });
       return;
     }
@@ -785,8 +851,16 @@ async function main(): Promise<void> {
         break;
       }
 
-      // Emit session update so host can track it
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+      // Emit session update so host can track it.
+      // JT: Impl-75 A1 — `kind` marks this as the benign post-query heartbeat.
+      // JT: It is the envelope the failed-turn result used to be indistinguishable
+      // JT: from; tagging it is what lets the host stay silent here and speak up there.
+      writeOutput({
+        status: 'success',
+        result: null,
+        newSessionId: sessionId,
+        kind: 'session-update',
+      });
 
       log('Query ended, waiting for next IPC message...');
 

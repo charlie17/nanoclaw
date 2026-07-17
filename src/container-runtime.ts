@@ -76,6 +76,29 @@ export function stopContainer(name: string): void {
   execSync(`${CONTAINER_RUNTIME_BIN} stop -t 1 ${name}`, { stdio: 'pipe' });
 }
 
+/**
+ * True when a stopContainer failure just means the container was already gone.
+ * Impl-75 D1.
+ *
+ * JT: Two kill paths race on the same container with no mutual awareness — the
+ * JT: container-runner idle reaper and group-queue's FU-30 / no-output watchdogs.
+ * JT: On 2026-07-16 the reaper stopped the container gracefully at 20:51:24.509
+ * JT: and FU-30 fired 1.1s later, found nothing to kill, threw, and Telegrammed
+ * JT: JT anyway. Losing the race is the SYSTEM WORKING: the container is dead,
+ * JT: which is what the watchdog wanted. It is not an operator-facing event.
+ *
+ * JT: Checks `stderr` as well as `message` because execSync surfaces docker's
+ * JT: "Error response from daemon: No such container: X" on the child's stderr,
+ * JT: and only folds it into `message` on some paths.
+ */
+export function isNoSuchContainerError(err: unknown): boolean {
+  const e = err as { message?: unknown; stderr?: unknown };
+  const parts = [e?.message, e?.stderr]
+    .filter((p) => p != null)
+    .map((p) => String(p));
+  return parts.some((p) => /no such container/i.test(p));
+}
+
 /** Ensure the container runtime is running, starting it if needed. */
 export function ensureContainerRuntimeRunning(): void {
   try {

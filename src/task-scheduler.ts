@@ -74,6 +74,14 @@ export interface SchedulerDependencies {
     groupFolder: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
+  // JT: Impl-75 C1 — supplied by index.ts so the task path gets the SAME
+  // JT: watchdog-reset and rate-limit behaviour as the message path. Optional
+  // JT: only so existing tests can construct deps without them; production wires
+  // JT: both. Without onAgentActivity, container-runner's
+  // JT: `if (input.chatJid && onAgentActivity && SDK_EVENT_LINE_RE.test(line))`
+  // JT: guard is permanently false for every scheduled task.
+  onAgentActivity?: (groupJid: string) => void;
+  onRateLimitEvent?: (groupJid: string) => void;
 }
 
 async function runTask(
@@ -211,6 +219,18 @@ async function runTask(
           error = streamedOutput.error || 'Unknown error';
         }
       },
+      // JT: Impl-75 C1 — these two arguments were simply missing, and that
+      // JT: absence WAS Defect C. chat_jid is set above, so container-runner's
+      // JT: onAgentActivity guard failed only on the callback being undefined:
+      // JT: SDK activity never called markOutputReceived for any scheduled task.
+      // JT: board-synth emits no intermediate results by design (errorsOnly), so
+      // JT: the 10-min watchdog counted from container start against a ~10-min
+      // JT: run and killed it daily (7/17: 174 SDK messages in stderr, no reset,
+      // JT: duration 601194ms). This is the exact regression container-runner's
+      // JT: own doc comment warns about — the fix went into index.ts and never
+      // JT: here.
+      deps.onRateLimitEvent,
+      deps.onAgentActivity,
     );
 
     if (closeTimer) clearTimeout(closeTimer);

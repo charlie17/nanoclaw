@@ -100,7 +100,12 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runContainerAgent, ContainerOutput } from './container-runner.js';
+import {
+  classifyOutput,
+  isFailureSubtype,
+  runContainerAgent,
+  ContainerOutput,
+} from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -220,5 +225,243 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+});
+
+// --- Impl-75 A1/A2: envelope routing ---
+
+describe('classifyOutput (Impl-75 A1/A2)', () => {
+  // The SEV-1 assertion. Pre-Impl-75 these two envelopes were byte-identical
+  // ({status:'success', result:null}) and both routed to silence, which is how a
+  // completed /wiki-ingest became indistinguishable from an idling agent.
+  it('routes an empty-text result and a session-update DIFFERENTLY', () => {
+    const emptyResult = classifyOutput(
+      { kind: 'result', subtype: 'error_during_execution' },
+      false,
+    );
+    const sessionUpdate = classifyOutput({ kind: 'session-update' }, false);
+
+    expect(emptyResult).toBe('lost-reply');
+    expect(sessionUpdate).toBe('heartbeat');
+    expect(emptyResult).not.toBe(sessionUpdate);
+  });
+
+  it('treats a result with a success subtype but no text as a lost reply', () => {
+    // The 2026-07-16 shape: the SDK ended the turn emitting no text at all.
+    expect(classifyOutput({ kind: 'result', subtype: 'success' }, false)).toBe(
+      'lost-reply',
+    );
+  });
+
+  it('routes a result carrying text to delivery', () => {
+    expect(classifyOutput({ kind: 'result', subtype: 'success' }, true)).toBe(
+      'deliver',
+    );
+  });
+
+  it('treats an internal-only reply (text stripped to empty) as a lost reply', () => {
+    // Host strips <internal> blocks before this call; a reply that was nothing
+    // but internal reasoning leaves no deliverable text and must not go silent.
+    expect(classifyOutput({ kind: 'result' }, false)).toBe('lost-reply');
+  });
+
+  it('routes an ipc-consumed marker to its own path', () => {
+    expect(classifyOutput({ kind: 'ipc-consumed' }, false)).toBe(
+      'ipc-consumed',
+    );
+  });
+
+  // Back-compat is load-bearing: host and agent-runner deploy independently.
+  it('BACK-COMPAT: an envelope with no kind stays silent, exactly as pre-Impl-75', () => {
+    expect(classifyOutput({}, false)).toBe('heartbeat');
+  });
+
+  it('BACK-COMPAT: an envelope with no kind but with text still delivers', () => {
+    expect(classifyOutput({}, true)).toBe('deliver');
+  });
+});
+
+describe('isFailureSubtype (Impl-75 A3)', () => {
+  it('treats non-success SDK subtypes as failures', () => {
+    expect(isFailureSubtype('error_during_execution')).toBe(true);
+    expect(isFailureSubtype('error_max_turns')).toBe(true);
+  });
+
+  it('treats success as a non-failure', () => {
+    expect(isFailureSubtype('success')).toBe(false);
+  });
+
+  it('BACK-COMPAT: an absent subtype (old runner) is not a failure', () => {
+    expect(isFailureSubtype(undefined)).toBe(false);
+  });
+});
+
+// --- Impl-75 A4: the reaper must not launder a lost turn into success ---
+
+describe('container-runner reaper (Impl-75 A4)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('resolves as error when reaped after only empty markers', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    // The 2026-07-16 shape: a result marker carrying no text, then the benign
+    // session-update heartbeat. Both set hadStreamingOutput; neither is a reply.
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      kind: 'result',
+      subtype: 'error_during_execution',
+    });
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      newSessionId: 'session-789',
+      kind: 'session-update',
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(1830000);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    // Pre-Impl-75 this asserted 'success' — the silent-loss bug.
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('never produced a reply');
+  });
+
+  it('still resolves as success when a real reply preceded the reap', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Here is the finished report',
+      newSessionId: 'session-abc',
+      kind: 'result',
+      subtype: 'success',
+    });
+    // A heartbeat after the reply must not undo the "agent spoke" fact.
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      newSessionId: 'session-abc',
+      kind: 'session-update',
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(1830000);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(result.newSessionId).toBe('session-abc');
+  });
+
+  it('treats whitespace-only result text as no reply', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: '   \n  ',
+      kind: 'result',
+      subtype: 'success',
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(1830000);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+  });
+});
+
+// --- Impl-75 B1: an IPC-consume marker must reset the hard idle timer ---
+
+describe('container-runner idle timer (Impl-75 B1)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('an ipc-consumed marker resets the hard timeout, sparing a message piped in late', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'first answer',
+      kind: 'result',
+      subtype: 'success',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Live replay of 2026-07-16: the ping landed 57s before the reap deadline.
+    await vi.advanceTimersByTimeAsync(1830000 - 57_000);
+
+    // The agent consumes it and says so. This is the marker that did not exist.
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      kind: 'ipc-consumed',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Past the ORIGINAL deadline — pre-Impl-75 the container was dead here.
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(fakeProc.kill).not.toHaveBeenCalled();
+
+    // The agent now answers the piped message well after the old deadline.
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'answer to the piped message',
+      kind: 'result',
+      subtype: 'success',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ result: 'answer to the piped message' }),
+    );
   });
 });

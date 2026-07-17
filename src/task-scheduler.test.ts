@@ -401,4 +401,87 @@ describe('task scheduler', () => {
       expect(nextRun).toBeGreaterThan(Date.now() + 60_000);
     });
   });
+
+  // --- Impl-75 C1: scheduled tasks must reset the no-output watchdog ---
+
+  describe('watchdog callbacks (Impl-75 C1)', () => {
+    async function runOneTask(
+      deps: Partial<{
+        onAgentActivity: (jid: string) => void;
+        onRateLimitEvent: (jid: string) => void;
+      }>,
+    ) {
+      const { runContainerAgent } = await import('./container-runner.js');
+      const runMock = vi.mocked(runContainerAgent);
+      runMock.mockClear();
+      runMock.mockResolvedValue({ status: 'success', result: null });
+
+      createTask({
+        id: 'daystrom-board-synth-v1',
+        group_folder: 'daystrom',
+        chat_jid: 'jt@g.us',
+        prompt: 'synth the board',
+        schedule_type: 'cron',
+        schedule_value: '0 9 * * *',
+        context_mode: 'isolated',
+        next_run: new Date(Date.now() - 60_000).toISOString(),
+        status: 'active',
+        created_at: '2026-07-17T00:00:00.000Z',
+      });
+
+      startSchedulerLoop({
+        registeredGroups: () => ({
+          'jt@g.us': {
+            name: 'Daystrom',
+            folder: 'daystrom',
+            trigger: '@d',
+            added_at: '2026-07-17T00:00:00.000Z',
+            isMain: true,
+          },
+        }),
+        getSessions: () => ({}),
+        queue: {
+          enqueueTask: (_jid: string, _id: string, fn: () => Promise<void>) => {
+            void fn();
+          },
+          notifyIdle: () => {},
+          closeStdin: () => {},
+        } as any,
+        onProcess: () => {},
+        sendMessage: async () => {},
+        ...deps,
+      });
+
+      await vi.advanceTimersByTimeAsync(50);
+      return runMock;
+    }
+
+    it('passes onAgentActivity through to runContainerAgent (5th arg)', async () => {
+      const onAgentActivity = vi.fn();
+      const onRateLimitEvent = vi.fn();
+      const runMock = await runOneTask({ onAgentActivity, onRateLimitEvent });
+
+      expect(runMock).toHaveBeenCalledTimes(1);
+      const args = runMock.mock.calls[0];
+      // Defect C was literally this: the call passed only 4 arguments, so
+      // container-runner's `onAgentActivity &&` guard was permanently false for
+      // every scheduled task and board-synth was killed at 600s daily.
+      expect(args.length).toBeGreaterThanOrEqual(6);
+      expect(args[5]).toBe(onAgentActivity);
+      expect(args[4]).toBe(onRateLimitEvent);
+    });
+
+    it('chat_jid is set on the container input, so the callback guard can pass', async () => {
+      const runMock = await runOneTask({
+        onAgentActivity: vi.fn(),
+        onRateLimitEvent: vi.fn(),
+      });
+      // container-runner guards on `input.chatJid && onAgentActivity`; chat_jid
+      // was never the missing half, the callback was.
+      expect(runMock.mock.calls[0][1]).toMatchObject({
+        chatJid: 'jt@g.us',
+        isScheduledTask: true,
+      });
+    });
+  });
 });
