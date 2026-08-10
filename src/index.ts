@@ -611,7 +611,7 @@ async function maybeHandleModelCommand(
     reply =
       'Unknown model. Use /model opus or /model sonnet (or /model to show current).';
   } else if (parsed.kind === 'show') {
-    const current = group.agentModel || 'claude-sonnet-4-6';
+    const current = group.agentModel || 'claude-sonnet-5';
     reply = `Currently using ${displayName(current)} (${current}).`;
   } else {
     const fullId = MODEL_MAP[parsed.model].id;

@@ -8,8 +8,8 @@ export type ParsedModelCommand =
 
 // Short-name → SDK identifier + display label. Haiku intentionally omitted.
 export const MODEL_MAP: Record<string, { id: string; display: string }> = {
-  opus: { id: 'claude-opus-4-7', display: 'Opus' },
-  sonnet: { id: 'claude-sonnet-4-6', display: 'Sonnet' },
+  opus: { id: 'claude-opus-4-8', display: 'Opus' },
+  sonnet: { id: 'claude-sonnet-5', display: 'Sonnet' },
 };
 
 export function parseModelCommand(text: string): ParsedModelCommand {

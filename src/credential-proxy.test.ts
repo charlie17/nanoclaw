@@ -182,7 +182,7 @@ describe('credential-proxy', () => {
         headers: { 'content-type': 'application/json' },
       },
       JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         max_tokens: 100,
         tools: [{ type: 'web_search_20250305', name: 'ws' }],
         messages: [{ role: 'user', content: 'test' }],
@@ -206,7 +206,7 @@ describe('credential-proxy', () => {
         path: '/v1/messages',
         headers: { 'content-type': 'application/json' },
       },
-      '{"tools":[{"type":"web\\u005fsearch_20250305","name":"ws"}],"model":"claude-sonnet-4-6","max_tokens":100,"messages":[{"role":"user","content":"test"}]}',
+      '{"tools":[{"type":"web\\u005fsearch_20250305","name":"ws"}],"model":"claude-sonnet-5","max_tokens":100,"messages":[{"role":"user","content":"test"}]}',
     );
 
     expect(res.statusCode).toBe(403);
@@ -224,7 +224,7 @@ describe('credential-proxy', () => {
         headers: { 'content-type': 'application/json' },
       },
       JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         max_tokens: 100,
         tools: [{ type: ' web_search_20250305 ', name: 'ws' }],
         messages: [{ role: 'user', content: 'test' }],
@@ -246,7 +246,7 @@ describe('credential-proxy', () => {
         headers: { 'content-type': 'application/json' },
       },
       JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         max_tokens: 100,
         messages: [{ role: 'user', content: 'hi' }],
       }),
@@ -267,7 +267,7 @@ describe('credential-proxy', () => {
         headers: { 'content-type': 'application/json' },
       },
       JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         max_tokens: 100,
         tools: [{ type: 'text_editor_20250124', name: 'editor' }],
         messages: [{ role: 'user', content: 'hi' }],
@@ -295,7 +295,7 @@ describe('credential-proxy', () => {
           {
             custom_id: 'req-1',
             params: {
-              model: 'claude-sonnet-4-6',
+              model: 'claude-sonnet-5',
               max_tokens: 100,
               tools: [{ type: 'web_search_20250305', name: 'ws' }],
               messages: [{ role: 'user', content: 'test' }],
@@ -326,7 +326,7 @@ describe('credential-proxy', () => {
           {
             custom_id: 'req-1',
             params: {
-              model: 'claude-sonnet-4-6',
+              model: 'claude-sonnet-5',
               max_tokens: 100,
               messages: [{ role: 'user', content: 'safe' }],
             },
@@ -334,7 +334,7 @@ describe('credential-proxy', () => {
           {
             custom_id: 'req-2',
             params: {
-              model: 'claude-sonnet-4-6',
+              model: 'claude-sonnet-5',
               max_tokens: 100,
               tools: [{ type: 'web_search_20250305', name: 'ws' }],
               messages: [{ role: 'user', content: 'danger' }],
@@ -363,7 +363,7 @@ describe('credential-proxy', () => {
           {
             custom_id: 'req-1',
             params: {
-              model: 'claude-sonnet-4-6',
+              model: 'claude-sonnet-5',
               max_tokens: 100,
               tools: [{ type: 'text_editor_20250124', name: 'editor' }],
               messages: [{ role: 'user', content: 'hi' }],
@@ -407,7 +407,7 @@ describe('credential-proxy', () => {
         headers: { 'content-type': 'application/json' },
       },
       JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         max_tokens: 100,
         tools: [{ type: 'web_search_20250305', name: 'ws' }],
         messages: [{ role: 'user', content: 'test' }],
@@ -429,7 +429,7 @@ describe('credential-proxy', () => {
         headers: { 'content-type': 'application/json' },
       },
       JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         max_tokens: 100,
         tools: [{ type: 'web_search_20250305', name: 'ws' }],
         messages: [{ role: 'user', content: 'test' }],
@@ -455,7 +455,7 @@ describe('credential-proxy', () => {
           {
             custom_id: 'req-1',
             params: {
-              model: 'claude-sonnet-4-6',
+              model: 'claude-sonnet-5',
               max_tokens: 100,
               tools: [{ type: 'web_search_20250305', name: 'ws' }],
               messages: [{ role: 'user', content: 'test' }],
@@ -480,7 +480,7 @@ describe('credential-proxy', () => {
         headers: { 'content-type': 'application/json' },
       },
       JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         max_tokens: 100,
         tools: [{ type: 'web_search_20250305', name: 'ws' }],
         messages: [{ role: 'user', content: 'test' }],
@@ -502,7 +502,7 @@ describe('credential-proxy', () => {
         headers: { 'content-type': 'application/json' },
       },
       JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         max_tokens: 100,
         tools: [{ type: ' Web_Search_20250305 ', name: 'ws' }],
         messages: [{ role: 'user', content: 'test' }],

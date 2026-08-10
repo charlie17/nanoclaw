@@ -34,12 +34,12 @@ describe('parseModelCommand', () => {
 
 describe('MODEL_MAP + displayName', () => {
   it('maps opus / sonnet to SDK identifiers', () => {
-    expect(MODEL_MAP.opus.id).toBe('claude-opus-4-7');
-    expect(MODEL_MAP.sonnet.id).toBe('claude-sonnet-4-6');
+    expect(MODEL_MAP.opus.id).toBe('claude-opus-4-8');
+    expect(MODEL_MAP.sonnet.id).toBe('claude-sonnet-5');
   });
   it('displayName resolves identifier to label, falls back to raw id', () => {
-    expect(displayName('claude-opus-4-7')).toBe('Opus');
-    expect(displayName('claude-sonnet-4-6')).toBe('Sonnet');
+    expect(displayName('claude-opus-4-8')).toBe('Opus');
+    expect(displayName('claude-sonnet-5')).toBe('Sonnet');
     expect(displayName('claude-future-9-9')).toBe('claude-future-9-9');
   });
 });

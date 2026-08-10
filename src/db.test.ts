@@ -739,10 +739,10 @@ describe('registered group agentModel', () => {
       added_at: '2024-01-01T00:00:00.000Z',
       isMain: true,
     });
-    setGroupAgentModel('daystrom', 'claude-opus-4-7');
-    expect(getGroupAgentModel('daystrom')).toBe('claude-opus-4-7');
+    setGroupAgentModel('daystrom', 'claude-opus-4-8');
+    expect(getGroupAgentModel('daystrom')).toBe('claude-opus-4-8');
     const groups = getAllRegisteredGroups();
-    expect(groups['main@s.whatsapp.net'].agentModel).toBe('claude-opus-4-7');
+    expect(groups['main@s.whatsapp.net'].agentModel).toBe('claude-opus-4-8');
   });
 
   it('returns null when agent_model has never been set', () => {

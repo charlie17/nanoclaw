@@ -531,6 +531,6 @@ Your base model is in the `DAYSTROM_AGENT_MODEL` environment variable. If JT ask
 echo $DAYSTROM_AGENT_MODEL
 ```
 
-and report the result (e.g. `claude-sonnet-4-6`).
+and report the result (e.g. `claude-sonnet-5`).
 
 Note: `/research` and `/brainstorm` internally dispatch synthesis work to Opus via `Agent({model:"opus"})` per D-78 — the interactive shell you run in stays Sonnet. Explain this distinction to JT if asked.

@@ -389,7 +389,7 @@ function buildContainerArgs(
   // Unconditional: all group containers (Daystrom, Worf, future groups) benefit.
   // FU-27a: per-group override via /model command; fallback default preserves
   // pre-FU-27a behavior for any group never `/model`-set.
-  args.push('-e', `DAYSTROM_AGENT_MODEL=${agentModel || 'claude-sonnet-4-6'}`);
+  args.push('-e', `DAYSTROM_AGENT_MODEL=${agentModel || 'claude-sonnet-5'}`);
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
