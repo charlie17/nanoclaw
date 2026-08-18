@@ -27,6 +27,7 @@ import {
 } from '../config.js';
 // JT: D-93 — added getConversation (display-history) + storeMessage (bot-reply persistence)
 // JT: Impl-26 Batch 3.1c — added getMessageCountForMonth (OAuth monthly counter for /dash/api-usage)
+// JT: Board-v2 SPEC §4 — added getTaskById + updateTask for the insight-task poke
 import {
   clearChatMessages,
   deleteChat,
@@ -35,11 +36,13 @@ import {
   getConversation,
   getMessageCountForMonth,
   getMessagesSince,
+  getTaskById,
   setRouterState,
   storeChatMetadata,
   ensureChatExists,
   storeMessage,
   updateChatName,
+  updateTask,
 } from '../db.js';
 import type { ChatInfo } from '../db.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
@@ -50,6 +53,24 @@ import { buildProjectsBoardSnapshot } from '../widget/snapshot.js';
 import { tokenize } from '../widget/wikilink.js';
 import type { Insight } from '../widget/types.js';
 import { overlayLogCache, type LogsCache } from '../widget/log-overlay.js';
+// Projects Board v2 (SPEC §4) — data / state / insights-regen plane. Entirely
+// separate module tree from v1's widget/*.ts; v1 behaviour is unchanged.
+import {
+  boardV2StateDir,
+  buildBoardV2Snapshot,
+  readInsightsBlock,
+  readOverlay,
+  validateOverlay,
+  writeOverlay,
+  writeRegenRequest,
+} from '../widget/board-v2/snapshot.js';
+import {
+  BOARD_V2_TASK_ID,
+  BOARD_V2_WIDGET_ID,
+  OVERLAY_BODY_LIMIT,
+  type BoardV2Overlay,
+  type BoardV2Snapshot,
+} from '../widget/board-v2/types.js';
 import { registerChannel } from './registry.js';
 import type { ChannelOpts } from './registry.js';
 // JT: Channel, NewMessage, RegisteredGroup from src/types.ts — upstream-owned shapes
@@ -1352,6 +1373,27 @@ export class WebChannel implements Channel {
       return;
     }
 
+    // Board-v2 SPEC §4 — the two v2 write planes. Same pre-auth-gate rationale
+    // as /widget/data and /widget/feedback: cross-origin from the widgets app,
+    // authenticating on WIDGET_FEEDBACK_TOKEN rather than NANOCLAW_TOKEN, so
+    // they must NOT pass through authorizeRequest below. Unlike the v1 read
+    // plane these DO write — but only to the board's own state dir; still no
+    // onMessage, no agent invoke, no vault write.
+    if (
+      urlPath.startsWith('/widget/state/') &&
+      (method === 'OPTIONS' || method === 'POST')
+    ) {
+      await this.handleWidgetState(req, res, urlPath);
+      return;
+    }
+    if (
+      urlPath.startsWith('/widget/insights-regen/') &&
+      (method === 'OPTIONS' || method === 'POST')
+    ) {
+      await this.handleWidgetInsightsRegen(req, res, urlPath);
+      return;
+    }
+
     if (!this.authorizeRequest(req, res)) return;
 
     // D-V53.B5: POST /auth/logout — requires auth (gate above); D-V53.B6 rationale
@@ -1849,6 +1891,13 @@ export class WebChannel implements Channel {
       res.writeHead(400).end('Invalid id');
       return;
     }
+    // Board v2 (SPEC §4.1) — a different snapshot, a different state dir, and
+    // it returns the overlay in the same round-trip. v1's path below is
+    // untouched; the two boards run side by side through the trial (D10).
+    if (id === BOARD_V2_WIDGET_ID) {
+      await this.serveBoardV2Data(res);
+      return;
+    }
     if (id !== 'projects-board') {
       res.writeHead(404).end('Not Found');
       return;
@@ -1924,6 +1973,257 @@ export class WebChannel implements Channel {
       logger.error({ err: String(err) }, '[widget-data] snapshot build failed');
       res.writeHead(500).end('Internal Server Error');
     }
+  }
+
+  // ── Projects Board v2 (SPEC §4) ───────────────────────────────────────────
+
+  // The /widget/* auth ladder, cloned from handleWidgetData for the v2 routes:
+  // CORS absolute-first (so 503/429/401 stay browser-readable instead of
+  // becoming opaque CORS failures), fail-closed on an unset token, failed-auth
+  // throttle, constant-time bearer, charset-validated id. Returns false when it
+  // has already answered the request; true when the caller should proceed.
+  private widgetV2Gate(
+    req: IncomingMessage,
+    res: ServerResponse,
+    urlPath: string,
+    prefix: string,
+    tag: string,
+  ): boolean {
+    applyWidgetCors(req, res);
+
+    if (req.method === 'OPTIONS') {
+      res
+        .writeHead(204, {
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+          'Access-Control-Max-Age': '86400',
+        })
+        .end();
+      return false;
+    }
+
+    if (!WIDGET_FEEDBACK_TOKEN) {
+      logger.error(`[${tag}] WIDGET_FEEDBACK_TOKEN unset — route disabled`);
+      res.writeHead(503).end('Service Unavailable');
+      return false;
+    }
+
+    const ip = req.socket.remoteAddress ?? 'unknown';
+    const now = Date.now();
+    if (this.isRateLimited(ip, now)) {
+      res.writeHead(429, { 'Retry-After': '60' }).end('Too Many Requests');
+      return false;
+    }
+
+    const auth = req.headers.authorization;
+    const bearer = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (!bearer || !checkToken(bearer, WIDGET_FEEDBACK_TOKEN)) {
+      this.recordFailedAuth(ip, now);
+      logger.info({ ip }, `[${tag}] Auth failed`);
+      res.writeHead(401).end('Unauthorized');
+      return false;
+    }
+
+    const id = urlPath.slice(prefix.length);
+    if (!/^[a-zA-Z0-9._-]{1,64}$/.test(id)) {
+      res.writeHead(400).end('Invalid id');
+      return false;
+    }
+    if (id !== BOARD_V2_WIDGET_ID) {
+      res.writeHead(404).end('Not Found');
+      return false;
+    }
+    return true;
+  }
+
+  // GET /widget/data/projects-board-v2 → { snapshot, overlay }. The vault is
+  // parsed live per request (D6 plane 1); a vault-read failure is a 500 (v1
+  // posture — a board with no cards is a real outage), while the state dir is
+  // best-effort so a missing/corrupt overlay or insights file degrades to
+  // null/empty + a parse flag.
+  private async serveBoardV2Data(res: ServerResponse): Promise<void> {
+    const stateDir = boardV2StateDir();
+    let snapshot: BoardV2Snapshot;
+    try {
+      const vaultRoot = path.join(os.homedir(), 'vault'); // D-S3.9 — as v1
+      snapshot = await buildBoardV2Snapshot(vaultRoot, stateDir);
+    } catch (err) {
+      logger.error(
+        { err: String(err) },
+        '[widget-data] v2 snapshot build failed',
+      );
+      res.writeHead(500).end('Internal Server Error');
+      return;
+    }
+
+    // The overlay is NEVER filtered against the snapshot here — reconciliation
+    // is client-side (SPEC §3), so a transiently missing card cannot
+    // permanently evict its placement.
+    let overlay: BoardV2Overlay | null = null;
+    try {
+      overlay = await readOverlay(stateDir, snapshot.parseFlags);
+    } catch (err) {
+      logger.error(
+        { err: String(err) },
+        '[widget-data] v2 overlay read failed',
+      );
+      snapshot.parseFlags.push('overlay.json: unreadable — ignored');
+    }
+
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify({ snapshot, overlay }));
+  }
+
+  // POST /widget/state/projects-board-v2 — persist JT's arrangement (D4:
+  // host-side, cross-device, last-write-wins). Strict schema validation, then
+  // an atomic tmp+rename write.
+  private async handleWidgetState(
+    req: IncomingMessage,
+    res: ServerResponse,
+    urlPath: string,
+  ): Promise<void> {
+    if (!this.widgetV2Gate(req, res, urlPath, '/widget/state/', 'widget-state'))
+      return;
+
+    let body: string;
+    try {
+      body = await collectBody(req, OVERLAY_BODY_LIMIT);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        res.writeHead(413).end('Payload Too Large');
+        return;
+      }
+      throw err;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      res.writeHead(400).end('Bad Request');
+      return;
+    }
+
+    const validated = validateOverlay(parsed);
+    if (!validated.ok) {
+      res.writeHead(400).end(`Invalid overlay: ${validated.error}`);
+      return;
+    }
+
+    // The HOST stamps updatedAt: a client clock (a phone in another timezone,
+    // or simply wrong) must never become the ordering authority.
+    const updatedAt = new Date().toISOString();
+    validated.overlay.updatedAt = updatedAt;
+
+    try {
+      await writeOverlay(boardV2StateDir(), validated.overlay);
+    } catch (err) {
+      logger.error({ err: String(err) }, '[widget-state] overlay write failed');
+      res.writeHead(500).end('Internal Server Error');
+      return;
+    }
+
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify({ ok: true, updatedAt }));
+  }
+
+  // POST /widget/insights-regen/projects-board-v2 — D6 plane 2. Writes the
+  // mode handshake file, then pokes the one-shot insight task awake. The mode
+  // travels through the file, not the prompt, so the toggle is deterministic
+  // rather than prompt-compliance-dependent (REQ §8.1).
+  private async handleWidgetInsightsRegen(
+    req: IncomingMessage,
+    res: ServerResponse,
+    urlPath: string,
+  ): Promise<void> {
+    if (
+      !this.widgetV2Gate(
+        req,
+        res,
+        urlPath,
+        '/widget/insights-regen/',
+        'widget-regen',
+      )
+    )
+      return;
+
+    let body: string;
+    try {
+      body = await collectBody(req, BODY_LIMIT);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        res.writeHead(413).end('Payload Too Large');
+        return;
+      }
+      throw err;
+    }
+
+    let parsed: { mode?: string };
+    try {
+      parsed = JSON.parse(body) as typeof parsed;
+    } catch {
+      res.writeHead(400).end('Bad Request');
+      return;
+    }
+
+    const mode = parsed.mode;
+    if (mode !== 'new-only' && mode !== 'full') {
+      res.writeHead(400).end('Invalid mode');
+      return;
+    }
+
+    const stateDir = boardV2StateDir();
+
+    // "Already running" is computed exactly the same way as on the data GET
+    // (shared helper), or the button state and the board state would disagree.
+    const { running } = await readInsightsBlock(stateDir, []);
+    if (running) {
+      res
+        .writeHead(200, { 'Content-Type': 'application/json' })
+        .end(JSON.stringify({ ok: true, alreadyRunning: true }));
+      return;
+    }
+
+    // A missing row means the deploy INSERT never happened. Loud (503 + error
+    // log), never silent: otherwise the button would appear to work forever
+    // while no agent ever ran.
+    if (!getTaskById(BOARD_V2_TASK_ID)) {
+      logger.error(
+        { taskId: BOARD_V2_TASK_ID },
+        '[widget-regen] scheduled task row missing — regen cannot start',
+      );
+      res.writeHead(503).end('Service Unavailable');
+      return;
+    }
+
+    // Request file first: the skill reads it at run start, so it must exist
+    // before the task can possibly wake.
+    const requestedAt = new Date().toISOString();
+    try {
+      await writeRegenRequest(stateDir, mode, requestedAt);
+    } catch (err) {
+      logger.error(
+        { err: String(err) },
+        '[widget-regen] regen-request write failed',
+      );
+      res.writeHead(500).end('Internal Server Error');
+      return;
+    }
+
+    // The poke. A `schedule_type='once'` task is left next_run=NULL AND
+    // status='completed' by updateTaskAfterRun (db.ts) after every run, pass or
+    // fail — getDueTasks requires status='active' AND next_run IS NOT NULL, so
+    // BOTH fields are needed to re-arm it, and setting both re-arms exactly one
+    // run: the same post-run path disarms it again immediately afterwards. No
+    // restart needed — getDueTasks polls the DB live.
+    updateTask(BOARD_V2_TASK_ID, { next_run: requestedAt, status: 'active' });
+    logger.info({ mode }, '[widget-regen] board-synth-v2 poked');
+
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify({ ok: true, started: true }));
   }
 
   // ── Session affordances ───────────────────────────────────────────────────

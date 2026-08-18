@@ -44,6 +44,9 @@ vi.mock('../db.js', () => ({
     const v = mockOauthReturns.counts.shift();
     return v ?? 0;
   }),
+  // board-v2 SPEC §4.3 — the insight-task poke.
+  getTaskById: vi.fn(() => undefined),
+  updateTask: vi.fn(),
 }));
 
 // vi.hoisted: allows per-test group folder path override (same pattern as mockConfig)
@@ -112,12 +115,16 @@ vi.mock('net', () => ({
   },
 }));
 
+// mkdir/rename/rm are used by the board-v2 state-dir atomic writes.
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
   readdir: vi.fn(),
   stat: vi.fn(),
   statfs: vi.fn(),
+  mkdir: vi.fn(),
+  rename: vi.fn(),
+  rm: vi.fn(),
 }));
 
 const mockConfig = vi.hoisted(() => ({
@@ -156,17 +163,27 @@ vi.mock('../config.js', () => ({
   NANOCLAW_ANTHROPIC_RATE_PER_DISPATCH: 0.2,
 }));
 
-import { readFile, readdir, stat, statfs, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  stat,
+  statfs,
+  writeFile,
+} from 'node:fs/promises';
 import {
   clearChatMessages,
   deleteChat,
   deleteMessage as dbDeleteMessage,
   getConversation,
   getMessageCountForMonth,
+  getTaskById,
   setRouterState,
   storeChatMetadata,
   storeMessage,
   updateChatName,
+  updateTask,
 } from '../db.js';
 import { logger } from '../logger.js';
 import {
@@ -2469,5 +2486,407 @@ describe('WebChannel HTTP — GET /widget/data (Plane C read)', () => {
     const res = await get('projects-board');
     expect(res.status).toBe(500);
     expect(res.body).not.toContain('secret');
+  });
+});
+
+// ── Projects Board v2 — data / state / insights-regen (SPEC §4) ───────────────
+//
+// Same division of labour as the v1 read suite above: the auth/CORS/validation/
+// routing layer is covered here (node:fs/promises mocked), while the deep
+// parser/snapshot/overlay semantics live in src/widget/board-v2/*.test.ts
+// against real temp dirs.
+
+const V2_ID = 'projects-board-v2';
+const V2_TASK_ID = 'daystrom-board-synth-v2';
+
+// Shaped after the live daystrom/next.md (capture 2026-08-18): an R1 card with
+// a child and an R2 card that splits on its first colon.
+const V2_NEXT_MD = [
+  '---',
+  'type: project',
+  'project: daystrom',
+  'status: active',
+  '---',
+  '1. Path to v3',
+  '\t- Come back to build this Claude native when the time is right',
+  '2. Server hardening + backup steps: Identified Fri 7/3/26 - just run it w him',
+  '',
+].join('\n');
+
+// Files the fake state dir currently holds; anything absent throws ENOENT, the
+// shape of a freshly deployed host.
+const v2StateFiles = new Map<string, string>();
+
+function enoent(): NodeJS.ErrnoException {
+  const err = new Error('ENOENT') as NodeJS.ErrnoException;
+  err.code = 'ENOENT';
+  return err;
+}
+
+function wireV2Fs(): void {
+  vi.mocked(readdir).mockResolvedValue([
+    { name: 'daystrom', isDirectory: () => true },
+  ] as never);
+  vi.mocked(readFile).mockImplementation((async (p: unknown) => {
+    const file = String(p);
+    if (file.endsWith('next.md')) return V2_NEXT_MD;
+    for (const [name, body] of v2StateFiles) {
+      if (file.endsWith(name)) return body;
+    }
+    throw enoent();
+  }) as never);
+}
+
+interface V2DataBody {
+  snapshot: {
+    version: number;
+    widgetId: string;
+    projects: { folder: string; cards: { key: string; titleText: string }[] }[];
+    emptyProjects: string[];
+    insights: { asOf: string | null; running: boolean; stale: boolean };
+    parseFlags: string[];
+  };
+  overlay: { placements: Record<string, string>; updatedAt: string } | null;
+}
+
+describe('WebChannel HTTP — Projects Board v2 routes', () => {
+  let v2Channel: WebChannel;
+  let v2Opts: ChannelOpts;
+  let v2Port: number;
+
+  beforeAll(async () => {
+    v2Opts = makeOpts();
+    v2Channel = new WebChannel(v2Opts);
+    await v2Channel.connect();
+    v2Port = (
+      (
+        v2Channel as unknown as { server: http.Server }
+      ).server.address() as AddressInfo
+    ).port;
+  });
+
+  afterAll(async () => {
+    await v2Channel.disconnect();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockConfig.WIDGET_FEEDBACK_TOKEN = 'test-widget-token';
+    v2StateFiles.clear();
+    wireV2Fs();
+    vi.mocked(writeFile).mockResolvedValue(undefined as never);
+    vi.mocked(rename).mockResolvedValue(undefined as never);
+    vi.mocked(mkdir).mockResolvedValue(undefined as never);
+    vi.mocked(getTaskById).mockReturnValue(undefined);
+  });
+
+  function call(
+    method: string,
+    urlPath: string,
+    body?: string,
+    headers?: Record<string, string>,
+  ) {
+    return req(
+      v2Port,
+      {
+        method,
+        path: urlPath,
+        headers: {
+          Authorization: 'Bearer test-widget-token',
+          Origin: WIDGET_ORIGIN,
+          ...headers,
+        },
+      },
+      body,
+    );
+  }
+
+  // ── GET /widget/data/projects-board-v2 ─────────────────────────────────────
+
+  it('GET → 200 { snapshot, overlay } with the v2 schema header', async () => {
+    const res = await call('GET', `/widget/data/${V2_ID}`);
+    expect(res.status).toBe(200);
+    const { snapshot, overlay } = JSON.parse(res.body) as V2DataBody;
+    expect(snapshot.version).toBe(1);
+    expect(snapshot.widgetId).toBe(V2_ID);
+    expect(snapshot.projects[0].folder).toBe('daystrom');
+    expect(snapshot.projects[0].cards.map((c) => c.titleText)).toEqual([
+      'Path to v3',
+      'Server hardening + backup steps',
+    ]);
+    expect(overlay).toBeNull();
+    expect(v2Opts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('GET → the stored overlay rides along in the same round-trip', async () => {
+    v2StateFiles.set(
+      'overlay.json',
+      JSON.stringify({
+        schemaVersion: 1,
+        updatedAt: '2026-08-18T14:22:31.000Z',
+        placements: { 'daystrom␟Path to v3': 'active' },
+      }),
+    );
+    const { overlay } = JSON.parse(
+      (await call('GET', `/widget/data/${V2_ID}`)).body,
+    ) as V2DataBody;
+    expect(overlay?.placements).toEqual({ 'daystrom␟Path to v3': 'active' });
+  });
+
+  it('GET → a corrupt overlay degrades to null + a parse flag, not a 500', async () => {
+    v2StateFiles.set('overlay.json', '{{{ not json');
+    const res = await call('GET', `/widget/data/${V2_ID}`);
+    expect(res.status).toBe(200);
+    const { snapshot, overlay } = JSON.parse(res.body) as V2DataBody;
+    expect(overlay).toBeNull();
+    expect(snapshot.parseFlags.some((f) => f.includes('overlay.json'))).toBe(
+      true,
+    );
+  });
+
+  it('GET → insights running state is derived from the state dir', async () => {
+    v2StateFiles.set(
+      'regen-request.json',
+      JSON.stringify({ mode: 'full', requestedAt: new Date().toISOString() }),
+    );
+    const { snapshot } = JSON.parse(
+      (await call('GET', `/widget/data/${V2_ID}`)).body,
+    ) as V2DataBody;
+    expect(snapshot.insights).toMatchObject({ running: true, stale: false });
+  });
+
+  it('GET → a vault-read failure is a generic 500 (no raw error leak)', async () => {
+    vi.mocked(readdir).mockRejectedValue(new Error('boom /home/ubuntu/secret'));
+    const res = await call('GET', `/widget/data/${V2_ID}`);
+    expect(res.status).toBe(500);
+    expect(res.body).not.toContain('secret');
+  });
+
+  // ── POST /widget/state/projects-board-v2 ───────────────────────────────────
+
+  const OVERLAY = {
+    schemaVersion: 1,
+    updatedAt: '1999-01-01T00:00:00.000Z',
+    placements: { 'daystrom␟Path to v3': 'active' },
+    order: { active: ['daystrom␟Path to v3'], 'col:daystrom': [] },
+    expanded: { 'daystrom␟Path to v3': true },
+    placedHash: { 'daystrom␟Path to v3': 'a1b2c3d4e5f6' },
+    ui: { theme: 'dark', collapsedColumns: ['podvast'] },
+  };
+
+  it('state: preflight OPTIONS → 204 with ACAO + POST in allow-methods', async () => {
+    const res = await req(v2Port, {
+      method: 'OPTIONS',
+      path: `/widget/state/${V2_ID}`,
+      headers: { Origin: WIDGET_ORIGIN },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
+    expect(res.headers['access-control-allow-methods']).toContain('POST');
+  });
+
+  it('state: bad bearer → 401, still carries ACAO', async () => {
+    const res = await call('POST', `/widget/state/${V2_ID}`, '{}', {
+      Authorization: 'Bearer wrong-token',
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
+  });
+
+  it('state: empty WIDGET_FEEDBACK_TOKEN → 503 (fail closed)', async () => {
+    mockConfig.WIDGET_FEEDBACK_TOKEN = '';
+    const res = await call('POST', `/widget/state/${V2_ID}`, '{}');
+    expect(res.status).toBe(503);
+    expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
+  });
+
+  it('state: invalid id charset → 400; unknown id → 404', async () => {
+    expect((await call('POST', '/widget/state/has~tilde', '{}')).status).toBe(
+      400,
+    );
+    expect(
+      (await call('POST', '/widget/state/projects-board', '{}')).status,
+    ).toBe(404);
+  });
+
+  it('state: a valid overlay is written atomically, host-stamped', async () => {
+    const res = await call(
+      'POST',
+      `/widget/state/${V2_ID}`,
+      JSON.stringify(OVERLAY),
+    );
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as { ok: boolean; updatedAt: string };
+    expect(body.ok).toBe(true);
+    // The client's updatedAt is ignored — the host is the ordering authority.
+    expect(body.updatedAt).not.toBe(OVERLAY.updatedAt);
+    expect(Number.isNaN(Date.parse(body.updatedAt))).toBe(false);
+
+    // tmp + rename, both inside the v2 state dir.
+    const [tmpPath, payload] = vi.mocked(writeFile).mock.calls[0];
+    const [from, to] = vi.mocked(rename).mock.calls[0];
+    expect(String(tmpPath)).toContain(path.join('board-cache', 'v2'));
+    expect(String(tmpPath)).toContain('.overlay.json.tmp-');
+    expect(String(from)).toBe(String(tmpPath));
+    expect(String(to)).toBe(path.join(String(tmpPath), '..', 'overlay.json'));
+    const written = JSON.parse(String(payload)) as { updatedAt: string };
+    expect(written.updatedAt).toBe(body.updatedAt);
+  });
+
+  it('state: rejects unknown fields, a bad schemaVersion and a bad theme (400)', async () => {
+    const bad = async (mutate: (o: Record<string, unknown>) => void) => {
+      const body = JSON.parse(JSON.stringify(OVERLAY)) as Record<
+        string,
+        unknown
+      >;
+      mutate(body);
+      return (
+        await call('POST', `/widget/state/${V2_ID}`, JSON.stringify(body))
+      ).status;
+    };
+    expect(await bad((o) => (o.sneaky = 1))).toBe(400);
+    expect(await bad((o) => (o.schemaVersion = 2))).toBe(400);
+    expect(
+      await bad((o) => ((o.ui as Record<string, unknown>).theme = 'neon')),
+    ).toBe(400);
+    expect(vi.mocked(rename)).not.toHaveBeenCalled();
+  });
+
+  it('state: malformed JSON → 400', async () => {
+    expect(
+      (await call('POST', `/widget/state/${V2_ID}`, '{ nope')).status,
+    ).toBe(400);
+  });
+
+  it('state: a body over 64 KB is refused before parsing', async () => {
+    const res = await call(
+      'POST',
+      `/widget/state/${V2_ID}`,
+      JSON.stringify({ schemaVersion: 1, expanded: {} }) + ' '.repeat(70_000),
+    );
+    expect(res.status).toBe(413);
+    expect(vi.mocked(writeFile)).not.toHaveBeenCalled();
+  });
+
+  it('state: a write failure is a generic 500', async () => {
+    vi.mocked(writeFile).mockRejectedValue(new Error('ENOSPC /home/ubuntu'));
+    const res = await call(
+      'POST',
+      `/widget/state/${V2_ID}`,
+      JSON.stringify(OVERLAY),
+    );
+    expect(res.status).toBe(500);
+    expect(res.body).not.toContain('ubuntu');
+  });
+
+  // ── POST /widget/insights-regen/projects-board-v2 ──────────────────────────
+
+  it('regen: bad bearer → 401; unknown id → 404', async () => {
+    expect(
+      (
+        await call(
+          'POST',
+          `/widget/insights-regen/${V2_ID}`,
+          '{"mode":"full"}',
+          { Authorization: 'Bearer wrong-token' },
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await call(
+          'POST',
+          '/widget/insights-regen/projects-board',
+          '{"mode":"full"}',
+        )
+      ).status,
+    ).toBe(404);
+  });
+
+  it('regen: an unknown mode → 400, nothing written, nothing poked', async () => {
+    const res = await call(
+      'POST',
+      `/widget/insights-regen/${V2_ID}`,
+      '{"mode":"sideways"}',
+    );
+    expect(res.status).toBe(400);
+    expect(vi.mocked(writeFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(updateTask)).not.toHaveBeenCalled();
+  });
+
+  it('regen: a missing task row is LOUD — 503 + logger.error, no request file', async () => {
+    const res = await call(
+      'POST',
+      `/widget/insights-regen/${V2_ID}`,
+      '{"mode":"full"}',
+    );
+    expect(res.status).toBe(503);
+    expect(vi.mocked(logger.error)).toHaveBeenCalled();
+    expect(vi.mocked(writeFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(updateTask)).not.toHaveBeenCalled();
+  });
+
+  it('regen: writes the mode file, then pokes next_run + status together', async () => {
+    vi.mocked(getTaskById).mockReturnValue({ id: V2_TASK_ID } as never);
+    const res = await call(
+      'POST',
+      `/widget/insights-regen/${V2_ID}`,
+      '{"mode":"new-only"}',
+    );
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true, started: true });
+
+    const [tmpPath, payload] = vi.mocked(writeFile).mock.calls[0];
+    expect(String(tmpPath)).toContain('.regen-request.json.tmp-');
+    const request = JSON.parse(String(payload)) as {
+      mode: string;
+      requestedAt: string;
+    };
+    expect(request.mode).toBe('new-only');
+
+    // Both fields, together: a `once` task is left next_run=NULL AND
+    // status='completed' after each run, so either alone re-arms nothing.
+    expect(vi.mocked(updateTask)).toHaveBeenCalledTimes(1);
+    const [taskId, updates] = vi.mocked(updateTask).mock.calls[0];
+    expect(taskId).toBe(V2_TASK_ID);
+    expect(updates.status).toBe('active');
+    expect(updates.next_run).toBe(request.requestedAt);
+  });
+
+  it('regen: an in-flight run short-circuits to alreadyRunning (no second poke)', async () => {
+    vi.mocked(getTaskById).mockReturnValue({ id: V2_TASK_ID } as never);
+    v2StateFiles.set(
+      'regen-request.json',
+      JSON.stringify({
+        mode: 'full',
+        requestedAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    );
+    const res = await call(
+      'POST',
+      `/widget/insights-regen/${V2_ID}`,
+      '{"mode":"full"}',
+    );
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true, alreadyRunning: true });
+    expect(vi.mocked(updateTask)).not.toHaveBeenCalled();
+  });
+
+  it('regen: a run older than the staleness window is re-pokeable', async () => {
+    vi.mocked(getTaskById).mockReturnValue({ id: V2_TASK_ID } as never);
+    v2StateFiles.set(
+      'regen-request.json',
+      JSON.stringify({
+        mode: 'full',
+        requestedAt: new Date(Date.now() - 45 * 60_000).toISOString(),
+      }),
+    );
+    const res = await call(
+      'POST',
+      `/widget/insights-regen/${V2_ID}`,
+      '{"mode":"full"}',
+    );
+    expect(JSON.parse(res.body)).toEqual({ ok: true, started: true });
+    expect(vi.mocked(updateTask)).toHaveBeenCalledTimes(1);
   });
 });
