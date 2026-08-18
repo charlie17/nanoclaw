@@ -31,6 +31,7 @@ import {
   REGEN_STALE_MS,
   type BoardV2Overlay,
   type BoardV2Snapshot,
+  type FontScaleV2,
   type InsightsBlockV2,
   type InsightsFileV2,
   type ProjectV2,
@@ -266,7 +267,8 @@ const OVERLAY_KEYS = [
   'placedHash',
   'ui',
 ];
-const UI_KEYS = ['theme', 'collapsedColumns'];
+const UI_KEYS = ['theme', 'collapsedColumns', 'fontScale'];
+const FONT_SCALES = ['s', 'm', 'l'];
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -284,6 +286,11 @@ export type OverlayValidation =
 // because this file is also read by the P3 agent — silently discarding a field
 // the widget thinks it saved would desync the two readers. `updatedAt` is
 // accepted but ignored; the caller stamps it.
+//
+// Post-SPEC addition: `ui.fontScale` ('s'|'m'|'l', optional, absent means 'm')
+// for the widget's text-size toggle. Because the validator is strict, this
+// field HAD to be allow-listed here before P2 could ship the toggle — a client
+// sending an unknown ui key gets its whole save rejected.
 export function validateOverlay(input: unknown): OverlayValidation {
   if (!isPlainObject(input))
     return { ok: false, error: 'body must be an object' };
@@ -420,6 +427,16 @@ export function validateOverlay(input: unknown): OverlayValidation {
         }
       }
       overlay.ui.collapsedColumns = cols as string[];
+    }
+    // Font-size toggle (JT request). Same posture as ui.theme: absent is fine
+    // (the widget defaults to 'm'), but a present value must be in the enum —
+    // a wrong type or an out-of-enum value is a 400, never a silent coercion.
+    if (input.ui.fontScale !== undefined) {
+      const scale = input.ui.fontScale;
+      if (typeof scale !== 'string' || !FONT_SCALES.includes(scale)) {
+        return { ok: false, error: 'ui.fontScale must be s|m|l' };
+      }
+      overlay.ui.fontScale = scale as FontScaleV2;
     }
   }
 

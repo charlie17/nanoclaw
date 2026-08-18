@@ -476,6 +476,38 @@ describe('validateOverlay', () => {
       reject((o) => ((o.ui as Record<string, unknown>).theme = 'solarized')),
     ).toContain('dark|light');
   });
+
+  // ui.fontScale — the widget's text-size toggle (JT request).
+  it.each(['s', 'm', 'l'])('accepts ui.fontScale "%s"', (scale) => {
+    const body = JSON.parse(JSON.stringify(VALID)) as Record<string, unknown>;
+    (body.ui as Record<string, unknown>).fontScale = scale;
+    const result = validateOverlay(body);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.overlay.ui.fontScale).toBe(scale);
+  });
+
+  it('an absent ui.fontScale is fine and stays absent (widget defaults to m)', () => {
+    const result = validateOverlay(VALID);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.overlay.ui.fontScale).toBeUndefined();
+    expect('fontScale' in result.overlay.ui).toBe(false);
+  });
+
+  it('rejects a fontScale outside s|m|l, and a non-string one', () => {
+    expect(
+      reject((o) => ((o.ui as Record<string, unknown>).fontScale = 'xl')),
+    ).toContain('s|m|l');
+    expect(
+      reject((o) => ((o.ui as Record<string, unknown>).fontScale = 'M')),
+    ).toContain('s|m|l');
+    expect(
+      reject((o) => ((o.ui as Record<string, unknown>).fontScale = 2)),
+    ).toContain('s|m|l');
+    expect(
+      reject((o) => ((o.ui as Record<string, unknown>).fontScale = null)),
+    ).toContain('s|m|l');
+  });
 });
 
 // ── Overlay storage ──────────────────────────────────────────────────────────
@@ -496,6 +528,19 @@ describe('writeOverlay / readOverlay', () => {
     expect(await readdir(stateDir)).toEqual(['overlay.json']);
     const read = await readOverlay(stateDir, []);
     expect(read).toEqual(overlay);
+  });
+
+  it('ui.fontScale survives the storage round-trip like every other ui field', async () => {
+    await writeOverlay(stateDir, {
+      ...overlay,
+      ui: { theme: 'light', collapsedColumns: ['podvast'], fontScale: 'l' },
+    });
+    const read = await readOverlay(stateDir, []);
+    expect(read?.ui).toEqual({
+      theme: 'light',
+      collapsedColumns: ['podvast'],
+      fontScale: 'l',
+    });
   });
 
   it('an absent overlay is null with NO flag (a fresh board is not an error)', async () => {

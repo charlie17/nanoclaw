@@ -90,6 +90,10 @@ export interface BoardV2Snapshot {
 
 export type PlacementV2 = 'active' | 'ondeck';
 export type ThemeV2 = 'dark' | 'light';
+// Card/body font-size step for the widget's text-size toggle (JT request). An
+// ABSENT value means 'm' — the widget applies that default, so the stored file
+// only ever carries a scale JT actually chose.
+export type FontScaleV2 = 's' | 'm' | 'l';
 
 // JT's arrangement. Reconciliation against the live snapshot is CLIENT-side:
 // the host stores what it is given (validated) and never filters keys against
@@ -102,7 +106,7 @@ export interface BoardV2Overlay {
   order: Record<string, string[]>;
   expanded: Record<string, boolean>;
   placedHash: Record<string, string>;
-  ui: { theme?: ThemeV2; collapsedColumns?: string[] };
+  ui: { theme?: ThemeV2; collapsedColumns?: string[]; fontScale?: FontScaleV2 };
 }
 
 // ── State-dir files (SPEC §1) ───────────────────────────────────────────────

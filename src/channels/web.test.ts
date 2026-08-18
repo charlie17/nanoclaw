@@ -2549,7 +2549,11 @@ interface V2DataBody {
     insights: { asOf: string | null; running: boolean; stale: boolean };
     parseFlags: string[];
   };
-  overlay: { placements: Record<string, string>; updatedAt: string } | null;
+  overlay: {
+    placements: Record<string, string>;
+    updatedAt: string;
+    ui: Record<string, unknown>;
+  } | null;
 }
 
 describe('WebChannel HTTP — Projects Board v2 routes', () => {
@@ -2774,6 +2778,37 @@ describe('WebChannel HTTP — Projects Board v2 routes', () => {
     expect(
       await bad((o) => ((o.ui as Record<string, unknown>).theme = 'neon')),
     ).toBe(400);
+    expect(vi.mocked(rename)).not.toHaveBeenCalled();
+  });
+
+  it('state: ui.fontScale saves and comes back on the next GET', async () => {
+    const body = JSON.parse(JSON.stringify(OVERLAY)) as Record<string, unknown>;
+    (body.ui as Record<string, unknown>).fontScale = 'l';
+    expect(
+      (await call('POST', `/widget/state/${V2_ID}`, JSON.stringify(body)))
+        .status,
+    ).toBe(200);
+
+    const { overlay } = JSON.parse(
+      (await call('GET', `/widget/data/${V2_ID}`)).body,
+    ) as V2DataBody;
+    expect(overlay?.ui).toEqual({
+      theme: 'dark',
+      collapsedColumns: ['podvast'],
+      fontScale: 'l',
+    });
+  });
+
+  it('state: a bogus ui.fontScale rejects the whole save (400)', async () => {
+    const body = JSON.parse(JSON.stringify(OVERLAY)) as Record<string, unknown>;
+    (body.ui as Record<string, unknown>).fontScale = 'xl';
+    const res = await call(
+      'POST',
+      `/widget/state/${V2_ID}`,
+      JSON.stringify(body),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body).toContain('s|m|l');
     expect(vi.mocked(rename)).not.toHaveBeenCalled();
   });
 
