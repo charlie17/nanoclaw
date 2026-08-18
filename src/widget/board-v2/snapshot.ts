@@ -11,12 +11,14 @@
 // STATE-dir read is best-effort (absent or corrupt degrades to empty + a parse
 // flag, never a 500 — the board must stay usable).
 
+import { randomUUID } from 'node:crypto';
 import {
   mkdir,
   readFile,
   readdir,
   rename,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
@@ -68,33 +70,50 @@ async function readStateJson<T>(
   let text: string | null;
   try {
     text = await readFileOrNull(filePath);
-  } catch (err) {
-    flags.push(`${label}: unreadable (${(err as Error).message})`);
+  } catch {
+    // Vera SF8: the flag text is served inside a 200 body, so it must not leak
+    // host paths (which is exactly why the 500 path scrubs them). The label
+    // alone identifies the file; the detail goes nowhere useful anyway.
+    flags.push(`${label}: unreadable — ignored`);
     return null;
   }
   if (text === null) return null;
   try {
     return JSON.parse(text) as T;
-  } catch (err) {
-    flags.push(`${label}: unparseable JSON (${(err as Error).message})`);
+  } catch {
+    flags.push(`${label}: unparseable JSON — ignored`);
     return null;
   }
 }
 
 // tmp + rename in the SAME directory (rename is atomic only within a
 // filesystem), 0644 so the container-side agent can read it back.
+//
+// Vera SF1: the tmp name carries a random UUID, NOT pid+timestamp. Two devices
+// saving in the same millisecond would otherwise pick the same tmp path and
+// interleave their writes — one 500 on a legitimate save, or a half-written
+// overlay that reads back corrupt and self-heals to null (a silent full reset
+// of JT's arrangement).
+//
+// Vera SF2: the guard spans writeFile AND rename, and unlinks the tmp on ANY
+// failure path — an ENOSPC/EACCES mid-write would otherwise litter the state
+// dir, which the container agent also reads.
 async function atomicWriteJson(
   dir: string,
   name: string,
   data: unknown,
 ): Promise<void> {
   await mkdir(dir, { recursive: true });
-  const tmp = path.join(dir, `.${name}.tmp-${process.pid}-${Date.now()}`);
-  await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o644 });
+  const tmp = path.join(dir, `.${name}.tmp-${randomUUID()}`);
   try {
+    await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o644 });
     await rename(tmp, path.join(dir, name));
   } catch (err) {
-    await rm(tmp, { force: true });
+    try {
+      await rm(tmp, { force: true });
+    } catch {
+      // Best-effort cleanup — the original failure is the one worth surfacing.
+    }
     throw err;
   }
 }
@@ -107,23 +126,43 @@ function parseTime(value: unknown): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
+// mtime of a state file in ms, or null when it is absent/unreadable. The
+// optional-chain guard also covers a stat stub that returns nothing.
+async function fileMtimeMs(filePath: string): Promise<number | null> {
+  try {
+    const info = await stat(filePath);
+    return typeof info?.mtimeMs === 'number' ? info.mtimeMs : null;
+  } catch {
+    return null;
+  }
+}
+
 // Derive the insights block from the two files. `running`/`stale` are computed,
-// never stored: a regen newer than the last result is in flight until the
-// staleness window expires, after which it is presumed failed. Both the data
-// GET and the regen POST call this, so "already running" means exactly the same
-// thing on both routes.
+// never stored. Both the data GET and the regen POST call this, so "already
+// running" means exactly the same thing on both routes.
+//
+// Vera SF4 (deterministic_over_prompt): the run is considered FINISHED when
+// insights.json's MTIME — stamped mechanically by the container's `mv`, not by
+// anything the agent writes — is newer than the request. The agent-authored
+// `asOf` string is display-only: a skill that forgets to update it, or writes a
+// malformed date, can no longer wedge the button in "updating…" for the whole
+// staleness window.
 export function deriveInsightsBlock(
   insights: InsightsFileV2 | null,
   regen: RegenRequestV2 | null,
+  insightsMtimeMs: number | null,
   now: number,
 ): InsightsBlockV2 {
-  const asOfMs = parseTime(insights?.asOf);
   const requestedMs = parseTime(regen?.requestedAt);
 
   let running = false;
   let stale = false;
-  // A request is only interesting while it is NEWER than the result we hold.
-  if (requestedMs !== null && (asOfMs === null || requestedMs > asOfMs)) {
+  // A request is only in flight while it is NEWER than the file on disk (or
+  // there is no file yet — a first-ever regen).
+  if (
+    requestedMs !== null &&
+    (insightsMtimeMs === null || requestedMs > insightsMtimeMs)
+  ) {
     if (now - requestedMs <= REGEN_STALE_MS) running = true;
     else stale = true;
   }
@@ -147,6 +186,15 @@ export async function readInsightsBlock(
   flags: string[],
   now: number = Date.now(),
 ): Promise<InsightsBlockV2> {
+  // ORDERING IS LOAD-BEARING: stat BEFORE reading the content.
+  //
+  // The container replaces insights.json with a `mv` that can land between our
+  // two reads. Stat-then-read means the worst case is a FRESH list paired with
+  // an mtime from before the move — i.e. new items still labelled "updating…",
+  // which self-corrects on the very next fetch. Read-then-stat would produce
+  // the opposite and much worse pairing: the OLD list stamped running:false, a
+  // stale list confidently labelled "done" until JT manually refreshes.
+  const mtime = await fileMtimeMs(path.join(stateDir, INSIGHTS_FILE));
   const insights = await readStateJson<InsightsFileV2>(
     path.join(stateDir, INSIGHTS_FILE),
     INSIGHTS_FILE,
@@ -157,7 +205,7 @@ export async function readInsightsBlock(
     REGEN_FILE,
     flags,
   );
-  return deriveInsightsBlock(insights, regen, now);
+  return deriveInsightsBlock(insights, regen, mtime, now);
 }
 
 export async function writeRegenRequest(
@@ -167,6 +215,40 @@ export async function writeRegenRequest(
 ): Promise<void> {
   const request: RegenRequestV2 = { mode, requestedAt };
   await atomicWriteJson(stateDir, REGEN_FILE, request);
+}
+
+// Roll back a regen request whose poke failed (Vera SF3), but ONLY if the file
+// on disk is still the one this request wrote.
+//
+// Two near-simultaneous POSTs can both clear the `running` guard. If A's poke
+// throws after B's succeeded, an unconditional unlink would delete B's LIVE
+// request and the board would report idle in the middle of a real run. So the
+// rollback checks ownership by `requestedAt` and otherwise leaves the file
+// alone — an orphaned request only mis-reports a UI hint for the staleness
+// window, which is strictly the cheaper failure.
+//
+// Best-effort throughout: if the file can't be read or parsed we cannot prove
+// ownership, so we leave it, and a failed unlink never masks the poke error
+// that triggered the rollback.
+export async function rollbackRegenRequest(
+  stateDir: string,
+  requestedAt: string,
+): Promise<void> {
+  const filePath = path.join(stateDir, REGEN_FILE);
+  let current: RegenRequestV2 | null;
+  try {
+    const text = await readFileOrNull(filePath);
+    if (text === null) return; // Already gone — nothing to roll back.
+    current = JSON.parse(text) as RegenRequestV2;
+  } catch {
+    return; // Unreadable/corrupt — can't prove it's ours, so don't touch it.
+  }
+  if (current?.requestedAt !== requestedAt) return;
+  try {
+    await rm(filePath, { force: true });
+  } catch {
+    // Nothing further to do — the caller is already reporting a failure.
+  }
 }
 
 // ── Overlay (SPEC §3) ───────────────────────────────────────────────────────

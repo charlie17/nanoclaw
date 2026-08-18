@@ -60,6 +60,7 @@ import {
   buildBoardV2Snapshot,
   readInsightsBlock,
   readOverlay,
+  rollbackRegenRequest,
   validateOverlay,
   writeOverlay,
   writeRegenRequest,
@@ -2218,7 +2219,23 @@ export class WebChannel implements Channel {
     // BOTH fields are needed to re-arm it, and setting both re-arms exactly one
     // run: the same post-run path disarms it again immediately afterwards. No
     // restart needed — getDueTasks polls the DB live.
-    updateTask(BOARD_V2_TASK_ID, { next_run: requestedAt, status: 'active' });
+    //
+    // Vera SF3: if the poke throws, the request file we just wrote would make
+    // the next GET report running:true — a dead Regenerate button for the full
+    // 30-minute staleness window with nothing actually running. Roll it back.
+    try {
+      updateTask(BOARD_V2_TASK_ID, { next_run: requestedAt, status: 'active' });
+    } catch (err) {
+      // Guarded by requestedAt: a concurrent request that already poked
+      // successfully must keep its file (see rollbackRegenRequest).
+      await rollbackRegenRequest(stateDir, requestedAt);
+      logger.error(
+        { err: String(err) },
+        '[widget-regen] task poke failed — regen request rolled back',
+      );
+      res.writeHead(500).end('Internal Server Error');
+      return;
+    }
     logger.info({ mode }, '[widget-regen] board-synth-v2 poked');
 
     res

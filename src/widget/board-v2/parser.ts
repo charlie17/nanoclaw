@@ -119,7 +119,11 @@ export function parseNextV2(
   parseFlags: string[],
 ): CardV2[] {
   const { body, offset } = stripFrontmatter(text);
-  const allLines = body.split('\n');
+  // Vera SF6: strip a CRLF carriage return per line. Every regex below anchors
+  // on `$` or exact content, so a stray `\r` would turn an entire CRLF-authored
+  // file into unparsed cards. Normalizing here also makes `contentHash` stable
+  // across a line-ending change.
+  const allLines = body.split('\n').map((line) => line.replace(/\r$/, ''));
 
   // Everything from a `<!-- board:ignore -->` line to EOF is invisible to the
   // board — including for indent inference, so a trailing scratch section can't

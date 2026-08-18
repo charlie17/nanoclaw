@@ -359,6 +359,46 @@ describe('parseNextV2 — structural edges', () => {
     expect(flags[0]).toContain('mixed tab+space');
   });
 
+  // Vera SF6 — a next.md edited on Windows (or round-tripped through a tool
+  // that rewrites line endings) must parse identically, not collapse into a
+  // file full of unparsed cards.
+  it('a CRLF file yields exactly the same cards as the LF original', () => {
+    const lines = [
+      '1. Path to v3',
+      '\t- Come back to build this Claude native when the time is right',
+      '\t\t- **Note** — see [[notes/path-z]]',
+      '2. Server hardening + backup steps: Identified Fri 7/3/26',
+      '3. LLC operating agreements',
+    ];
+    const lf = parse(lines);
+    const flags: string[] = [];
+    const crlf = parseNextV2(
+      [...FM, ...lines].join('\r\n'),
+      'x',
+      'x/next.md',
+      flags,
+    );
+    expect(crlf).toEqual(lf.cards);
+    expect(flags).toEqual([]);
+  });
+
+  it('a MIXED CRLF/LF file parses cleanly too', () => {
+    const flags: string[] = [];
+    const cards = parseNextV2(
+      [...FM, '1. Path to v3', '\t- one child'].join('\n') +
+        '\r\n2. LLC operating agreements\r\n',
+      'x',
+      'x/next.md',
+      flags,
+    );
+    expect(cards.map((c) => c.titleText)).toEqual([
+      'Path to v3',
+      'LLC operating agreements',
+    ]);
+    expect(cards.every((c) => c.unparsed === undefined)).toBe(true);
+    expect(flags).toEqual([]);
+  });
+
   it('a `-` top-level bullet is a card, same as a numbered one', () => {
     const { cards } = parse([
       '- Dailies dash',

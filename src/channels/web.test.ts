@@ -168,6 +168,7 @@ import {
   readFile,
   readdir,
   rename,
+  rm,
   stat,
   statfs,
   writeFile,
@@ -2514,8 +2515,10 @@ const V2_NEXT_MD = [
 ].join('\n');
 
 // Files the fake state dir currently holds; anything absent throws ENOENT, the
-// shape of a freshly deployed host.
+// shape of a freshly deployed host. `v2TmpWrites` holds bodies parked at a tmp
+// path by writeFile until rename publishes them.
 const v2StateFiles = new Map<string, string>();
+const v2TmpWrites = new Map<string, string>();
 
 function enoent(): NodeJS.ErrnoException {
   const err = new Error('ENOENT') as NodeJS.ErrnoException;
@@ -2574,10 +2577,32 @@ describe('WebChannel HTTP — Projects Board v2 routes', () => {
     mockConfig.WIDGET_FEEDBACK_TOKEN = 'test-widget-token';
     v2StateFiles.clear();
     wireV2Fs();
-    vi.mocked(writeFile).mockResolvedValue(undefined as never);
-    vi.mocked(rename).mockResolvedValue(undefined as never);
     vi.mocked(mkdir).mockResolvedValue(undefined as never);
+    vi.mocked(stat).mockRejectedValue(enoent() as never);
     vi.mocked(getTaskById).mockReturnValue(undefined);
+    vi.mocked(updateTask).mockImplementation(() => {});
+    // tmp+rename is modelled faithfully (write parks the body under the tmp
+    // path, rename publishes it under the target's basename) so read-back paths
+    // — notably the ownership-guarded regen rollback — see what was written.
+    v2TmpWrites.clear();
+    vi.mocked(writeFile).mockImplementation((async (
+      p: unknown,
+      data: unknown,
+    ) => {
+      v2TmpWrites.set(String(p), String(data));
+    }) as never);
+    vi.mocked(rename).mockImplementation((async (
+      from: unknown,
+      to: unknown,
+    ) => {
+      const body = v2TmpWrites.get(String(from));
+      v2TmpWrites.delete(String(from));
+      if (body !== undefined) v2StateFiles.set(path.basename(String(to)), body);
+    }) as never);
+    vi.mocked(rm).mockImplementation((async (p: unknown) => {
+      v2TmpWrites.delete(String(p));
+      v2StateFiles.delete(path.basename(String(p)));
+    }) as never);
   });
 
   function call(
@@ -2888,5 +2913,185 @@ describe('WebChannel HTTP — Projects Board v2 routes', () => {
     );
     expect(JSON.parse(res.body)).toEqual({ ok: true, started: true });
     expect(vi.mocked(updateTask)).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Vera follow-up round ───────────────────────────────────────────────────
+
+  // SF3 — the request file must not outlive a failed poke, or the board reports
+  // running:true for 30 minutes with nothing actually running.
+  it('regen: a failed poke rolls the request file back and 500s', async () => {
+    vi.mocked(getTaskById).mockReturnValue({ id: V2_TASK_ID } as never);
+    vi.mocked(updateTask).mockImplementation(() => {
+      throw new Error('SQLITE_BUSY /home/ubuntu/nanoclaw.db');
+    });
+    const res = await call(
+      'POST',
+      `/widget/insights-regen/${V2_ID}`,
+      '{"mode":"full"}',
+    );
+    expect(res.status).toBe(500);
+    expect(res.body).not.toContain('ubuntu');
+    // The request file was written, then removed again.
+    expect(vi.mocked(rename)).toHaveBeenCalled();
+    const removed = vi
+      .mocked(rm)
+      .mock.calls.map(([p]) => String(p))
+      .filter((p) => p.endsWith('regen-request.json'));
+    expect(removed).toHaveLength(1);
+  });
+
+  it('regen: the rollback leaves a CONCURRENT request file alone', async () => {
+    vi.mocked(getTaskById).mockReturnValue({ id: V2_TASK_ID } as never);
+    const otherRequest = JSON.stringify({
+      mode: 'new-only',
+      requestedAt: new Date(Date.now() + 1_000).toISOString(),
+    });
+    // Model the race: a second POST's request lands (and its poke succeeds)
+    // just as this one's poke throws.
+    vi.mocked(updateTask).mockImplementation(() => {
+      v2StateFiles.set('regen-request.json', otherRequest);
+      throw new Error('SQLITE_BUSY');
+    });
+    const res = await call(
+      'POST',
+      `/widget/insights-regen/${V2_ID}`,
+      '{"mode":"full"}',
+    );
+    expect(res.status).toBe(500);
+    // The other request must survive — deleting it would report idle mid-run.
+    expect(v2StateFiles.get('regen-request.json')).toBe(otherRequest);
+    expect(
+      vi
+        .mocked(rm)
+        .mock.calls.map(([p]) => String(p))
+        .filter((p) => p.endsWith('regen-request.json')),
+    ).toEqual([]);
+  });
+
+  // Vera round-3 SF1 — stat must precede the content read, so the worst race
+  // outcome is fresh-items-still-"updating…" rather than a stale list stamped
+  // done.
+  it('GET: insights.json is STATted before its content is read', async () => {
+    v2StateFiles.set(
+      'insights.json',
+      JSON.stringify({ asOf: '2026-08-18T11:00:00.000Z', items: [] }),
+    );
+    await call('GET', `/widget/data/${V2_ID}`);
+
+    const statCalls = vi.mocked(stat).mock.calls.map(([p]) => String(p));
+    expect(statCalls.some((p) => p.endsWith('insights.json'))).toBe(true);
+
+    const readIdx = vi
+      .mocked(readFile)
+      .mock.calls.findIndex(([p]) => String(p).endsWith('insights.json'));
+    expect(readIdx).toBeGreaterThanOrEqual(0);
+    expect(vi.mocked(stat).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(readFile).mock.invocationCallOrder[readIdx],
+    );
+  });
+
+  // SF1 — a pid+timestamp tmp name collides when two devices save in the same
+  // millisecond; a UUID cannot.
+  it('state: the tmp filename carries a UUID and differs across saves', async () => {
+    await call('POST', `/widget/state/${V2_ID}`, JSON.stringify(OVERLAY));
+    await call('POST', `/widget/state/${V2_ID}`, JSON.stringify(OVERLAY));
+    const tmps = vi.mocked(writeFile).mock.calls.map(([p]) => String(p));
+    expect(tmps).toHaveLength(2);
+    for (const tmp of tmps) {
+      expect(tmp).toMatch(
+        /\.overlay\.json\.tmp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+    }
+    expect(tmps[0]).not.toBe(tmps[1]);
+  });
+
+  // SF2 — a mid-write failure must not litter the state dir the agent reads.
+  it('state: a writeFile failure unlinks the tmp file', async () => {
+    vi.mocked(writeFile).mockRejectedValue(new Error('ENOSPC'));
+    const res = await call(
+      'POST',
+      `/widget/state/${V2_ID}`,
+      JSON.stringify(OVERLAY),
+    );
+    expect(res.status).toBe(500);
+    const tmp = String(vi.mocked(writeFile).mock.calls[0][0]);
+    expect(vi.mocked(rm).mock.calls.map(([p]) => String(p))).toEqual([tmp]);
+    expect(vi.mocked(rename)).not.toHaveBeenCalled();
+  });
+
+  it('state: a rename failure also unlinks the tmp file', async () => {
+    vi.mocked(rename).mockRejectedValue(new Error('EXDEV'));
+    const res = await call(
+      'POST',
+      `/widget/state/${V2_ID}`,
+      JSON.stringify(OVERLAY),
+    );
+    expect(res.status).toBe(500);
+    const tmp = String(vi.mocked(writeFile).mock.calls[0][0]);
+    expect(vi.mocked(rm).mock.calls.map(([p]) => String(p))).toEqual([tmp]);
+  });
+
+  // Vera named gap — prototype-pollution shape. JSON.parse makes `__proto__` an
+  // OWN property, so it reaches the validator; pinning the behaviour so a
+  // future refactor can't turn "silently dropped" into "written through".
+  it('state: a nested __proto__ key is accepted and silently dropped', async () => {
+    const body = JSON.stringify({
+      schemaVersion: 1,
+      placements: { __proto__: 'active', 'daystrom␟Path to v3': 'active' },
+      expanded: { __proto__: true },
+    });
+    const res = await call('POST', `/widget/state/${V2_ID}`, body);
+    expect(res.status).toBe(200);
+    const written = JSON.parse(
+      String(vi.mocked(writeFile).mock.calls[0][1]),
+    ) as {
+      placements: Record<string, string>;
+      expanded: Record<string, boolean>;
+    };
+    expect(Object.keys(written.placements)).toEqual(['daystrom␟Path to v3']);
+    expect(Object.keys(written.expanded)).toEqual([]);
+    // …and nothing was polluted along the way.
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype);
+  });
+
+  it('state: a TOP-LEVEL __proto__ key is rejected as an unknown field', async () => {
+    const res = await call(
+      'POST',
+      `/widget/state/${V2_ID}`,
+      '{"schemaVersion":1,"__proto__":{"polluted":true}}',
+    );
+    expect(res.status).toBe(400);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  // Vera named gap — the shared failed-auth throttle must cover the two new
+  // POST routes, not just the v1 GET/feedback ones.
+  it.each([
+    ['state', `/widget/state/${V2_ID}`],
+    ['insights-regen', `/widget/insights-regen/${V2_ID}`],
+  ])('%s: 429 after 5 failed auth attempts from one IP', async (_n, route) => {
+    // Dedicated channel so the rate-limit state is isolated from other tests.
+    const rl = new WebChannel(makeOpts());
+    await rl.connect();
+    const rlPort = (
+      (rl as unknown as { server: http.Server }).server.address() as AddressInfo
+    ).port;
+    try {
+      const opts = {
+        method: 'POST',
+        path: route,
+        headers: { Authorization: 'Bearer wrong', Origin: WIDGET_ORIGIN },
+      };
+      for (let i = 0; i < 5; i++) {
+        expect((await req(rlPort, opts, '{}')).status).toBe(401);
+      }
+      const r6 = await req(rlPort, opts, '{}');
+      expect(r6.status).toBe(429);
+      expect(r6.headers['retry-after']).toBe('60');
+      expect(r6.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
+    } finally {
+      await rl.disconnect();
+    }
   });
 });

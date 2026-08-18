@@ -17,6 +17,7 @@ import {
   deriveInsightsBlock,
   readInsightsBlock,
   readOverlay,
+  rollbackRegenRequest,
   validateOverlay,
   writeOverlay,
   writeRegenRequest,
@@ -122,12 +123,13 @@ describe('buildBoardV2Snapshot', () => {
 
 describe('deriveInsightsBlock', () => {
   const now = Date.parse('2026-08-18T12:00:00.000Z');
+  const at = (iso: string) => Date.parse(iso);
   const items = [
     { id: 'v2-001', text: 'See [[notes/x]]', projects: ['daystrom'] },
   ];
 
   it('no files → empty, idle', () => {
-    expect(deriveInsightsBlock(null, null, now)).toEqual({
+    expect(deriveInsightsBlock(null, null, null, now)).toEqual({
       asOf: null,
       running: false,
       stale: false,
@@ -139,6 +141,7 @@ describe('deriveInsightsBlock', () => {
     const block = deriveInsightsBlock(
       { asOf: '2026-08-18T11:00:00.000Z', items },
       null,
+      at('2026-08-18T11:00:00.000Z'),
       now,
     );
     expect(block.asOf).toBe('2026-08-18T11:00:00.000Z');
@@ -149,28 +152,31 @@ describe('deriveInsightsBlock', () => {
     });
   });
 
-  it('a regen requested after the last result, inside the window → running', () => {
+  it('a regen newer than the file mtime, inside the window → running', () => {
     const block = deriveInsightsBlock(
       { asOf: '2026-08-18T11:00:00.000Z', items },
       { mode: 'new-only', requestedAt: '2026-08-18T11:50:00.000Z' },
+      at('2026-08-18T11:00:00.000Z'),
       now,
     );
     expect(block).toMatchObject({ running: true, stale: false });
   });
 
-  it('a regen older than 30 min with no newer result → stale, not running', () => {
+  it('a regen older than 30 min with no newer file → stale, not running', () => {
     const block = deriveInsightsBlock(
       { asOf: '2026-08-18T11:00:00.000Z', items },
       { mode: 'full', requestedAt: '2026-08-18T11:20:00.000Z' },
+      at('2026-08-18T11:00:00.000Z'),
       now,
     );
     expect(block).toMatchObject({ running: false, stale: true });
   });
 
-  it('a result newer than the request → idle (the run landed)', () => {
+  it('a file mtime newer than the request → idle (the run landed)', () => {
     const block = deriveInsightsBlock(
       { asOf: '2026-08-18T11:55:00.000Z', items },
       { mode: 'full', requestedAt: '2026-08-18T11:50:00.000Z' },
+      at('2026-08-18T11:55:00.000Z'),
       now,
     );
     expect(block).toMatchObject({ running: false, stale: false });
@@ -180,6 +186,7 @@ describe('deriveInsightsBlock', () => {
     const block = deriveInsightsBlock(
       null,
       { mode: 'new-only', requestedAt: '2026-08-18T11:59:00.000Z' },
+      null,
       now,
     );
     expect(block).toMatchObject({ asOf: null, running: true, stale: false });
@@ -192,9 +199,46 @@ describe('deriveInsightsBlock', () => {
         items: [{ id: 'v2-001' }, ...items] as never,
       },
       null,
+      at('2026-08-18T11:00:00.000Z'),
       now,
     );
     expect(block.items).toHaveLength(1);
+  });
+
+  // Vera SF4 — the whole point of switching off `asOf`: the clear must not
+  // depend on anything the skill writes.
+  it('a fresh mtime clears running even when asOf is GARBAGE', () => {
+    const block = deriveInsightsBlock(
+      { asOf: 'sometime last Tuesday', items },
+      { mode: 'full', requestedAt: '2026-08-18T11:50:00.000Z' },
+      at('2026-08-18T11:55:00.000Z'),
+      now,
+    );
+    expect(block).toMatchObject({ running: false, stale: false });
+    // …and the garbage still rides through for display only.
+    expect(block.asOf).toBe('sometime last Tuesday');
+  });
+
+  it('a fresh mtime clears running even when asOf is MISSING entirely', () => {
+    const block = deriveInsightsBlock(
+      { items } as never,
+      { mode: 'full', requestedAt: '2026-08-18T11:50:00.000Z' },
+      at('2026-08-18T11:55:00.000Z'),
+      now,
+    );
+    expect(block).toMatchObject({ asOf: null, running: false, stale: false });
+  });
+
+  it('a STALE mtime keeps running even when asOf claims a fresh result', () => {
+    // The inverse guard: an agent that stamped asOf but never moved the file
+    // must not be able to clear the indicator early.
+    const block = deriveInsightsBlock(
+      { asOf: '2026-08-18T11:59:00.000Z', items },
+      { mode: 'full', requestedAt: '2026-08-18T11:50:00.000Z' },
+      at('2026-08-18T11:00:00.000Z'),
+      now,
+    );
+    expect(block).toMatchObject({ running: true, stale: false });
   });
 });
 
@@ -232,6 +276,80 @@ describe('readInsightsBlock', () => {
       Date.parse('2026-08-18T12:01:00.000Z'),
     );
     expect(block.running).toBe(true);
+  });
+
+  // Vera SF8 — these flags ship inside a 200 body; the 500 path scrubs paths,
+  // so these must too.
+  it('degradation flags never leak a host path', async () => {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(path.join(stateDir, 'insights.json'), '{ not json');
+    const flags: string[] = [];
+    await readInsightsBlock(stateDir, flags);
+    expect(flags[0]).toBe('insights.json: unparseable JSON — ignored');
+    expect(flags[0]).not.toContain(stateDir);
+    expect(flags[0]).not.toContain(path.sep);
+  });
+
+  // Vera SF4, end to end against a real file's real mtime.
+  it('a real insights.json mtime clears running even with a garbage asOf', async () => {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      path.join(stateDir, 'insights.json'),
+      JSON.stringify({ asOf: 'sometime last Tuesday', items: [] }),
+    );
+    // Request predates the file the container just moved into place.
+    await writeRegenRequest(
+      stateDir,
+      'full',
+      new Date(Date.now() - 5_000).toISOString(),
+    );
+    const block = await readInsightsBlock(stateDir, []);
+    expect(block).toMatchObject({ running: false, stale: false });
+  });
+
+  it('a request newer than the real insights.json mtime → running', async () => {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      path.join(stateDir, 'insights.json'),
+      JSON.stringify({ asOf: '2099-01-01T00:00:00.000Z', items: [] }),
+    );
+    await writeRegenRequest(
+      stateDir,
+      'full',
+      new Date(Date.now() + 5_000).toISOString(),
+    );
+    const block = await readInsightsBlock(stateDir, []);
+    expect(block).toMatchObject({ running: true, stale: false });
+  });
+
+  it('rollbackRegenRequest clears its OWN request and no-ops when absent', async () => {
+    const mine = new Date().toISOString();
+    await writeRegenRequest(stateDir, 'full', mine);
+    expect((await readInsightsBlock(stateDir, [])).running).toBe(true);
+    await rollbackRegenRequest(stateDir, mine);
+    expect((await readInsightsBlock(stateDir, [])).running).toBe(false);
+    await expect(rollbackRegenRequest(stateDir, mine)).resolves.toBeUndefined();
+  });
+
+  // Vera round-3 SF2 — a concurrent POST's live request must survive.
+  it('rollbackRegenRequest leaves a request written by SOMEONE ELSE', async () => {
+    const theirs = new Date().toISOString();
+    await writeRegenRequest(stateDir, 'new-only', theirs);
+    await rollbackRegenRequest(stateDir, '2026-08-18T00:00:00.000Z');
+    const still = JSON.parse(
+      await readFile(path.join(stateDir, 'regen-request.json'), 'utf8'),
+    ) as { requestedAt: string };
+    expect(still.requestedAt).toBe(theirs);
+    expect((await readInsightsBlock(stateDir, [])).running).toBe(true);
+  });
+
+  it('rollbackRegenRequest leaves an unreadable request in place', async () => {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(path.join(stateDir, 'regen-request.json'), '{ corrupt');
+    await rollbackRegenRequest(stateDir, new Date().toISOString());
+    await expect(
+      readFile(path.join(stateDir, 'regen-request.json'), 'utf8'),
+    ).resolves.toBe('{ corrupt');
   });
 });
 
