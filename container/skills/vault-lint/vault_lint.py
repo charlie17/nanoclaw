@@ -207,6 +207,12 @@ def resolve_name(target, is_embed, idx):
         return hit
     if low.endswith(".md"):
         return idx["md_stems"].get(low[:-3]) or []
+    if "." in low:
+        # A bare link (not an embed) to an asset — `[[diagram.pdf]]` — is valid
+        # Obsidian. Only honoured when the target carries an extension: an
+        # extensionless name keeps preferring md, since an any-stem fallback
+        # would over-resolve and hide real rot.
+        return idx["any_names"].get(low) or []
     return []
 
 

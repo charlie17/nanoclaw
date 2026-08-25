@@ -33,3 +33,5 @@ Per Reply Discipline — executive summary, then what matters. **Drop every empt
 ## Known limits (state them if relevant, don't work around them)
 
 Links inside 4-space-indented code blocks are still scanned. Bare-basename links that match any file resolve, so a stale link pointing at a since-renamed note only surfaces when it carries a path.
+
+Inline code spans that wrap across a line break are not blanked (the scanner works line by line), so a wikilink sitting on the continuation line can be falsely reported. Reviewed and accepted: the shape is rare, the tool is report-only, and carrying backtick state across lines would risk silently swallowing real links — a worse failure than an occasional false positive.

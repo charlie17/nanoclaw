@@ -41,7 +41,7 @@ Read `regen-request.json`'s `mode` field before doing anything else. It selects 
 
 1. Read `regen-request.json` → resolve `mode` per the rule above (missing/corrupt ⇒ `full`).
 2. Read `insights.json` → prior items (missing/corrupt ⇒ `[]`).
-3. Read every `next.md` under `general/projects/*/` for context (skip folders with no file or an empty file
+3. Read every `next.md` under `projects/*/` for context (skip folders with no file or an empty file
    — that's normal, not an error).
 4. Read `overlay.json` for the current Active/On Deck arrangement (skip on missing/corrupt — proceed without
    arrangement context, do not error or block).
@@ -109,7 +109,7 @@ directly (eliminates partial-read races with the host's data route):
 
 ## Scope locks
 
-- **READ ONLY** from the vault (`general/projects/*/next.md`) — no vault writes, ever.
+- **READ ONLY** from the vault (`projects/*/next.md`) — no vault writes, ever.
 - **READ ONLY** from `overlay.json` and `regen-request.json` — never modify either.
 - **WRITE ONLY** to `/workspace/extra/board-cache/v2/insights.json`, and only via the temp+rename sequence
   above. Never write the target path directly. No other files, no other directories.
