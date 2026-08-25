@@ -28,6 +28,11 @@ STANCES = ("agree", "dispute", "surface")
 # root card and are exempt from chapter-range checks.
 OVERVIEW_IDX = -1
 
+# Furniture cards JT may rewrite; his wording is then projected verbatim.  The
+# unmatched-highlights bin is deliberately absent — it is regenerated from
+# unmatched state on every refresh, so an edit there cannot survive.
+EDITABLE_FURNITURE = ("root", "legend")
+
 # How a claim relates to its parent.  "supports" is the default and is left
 # unlabelled on the canvas; anything else labels the edge.
 REL_DEFAULT = "supports"
@@ -271,6 +276,25 @@ def validate(manifest):
                 and all(isinstance(v, int) and not isinstance(v, bool) for v in box),
                 "manifest.node_geometry[%r]: must be [x, y, width, height] integers"
                 % ident,
+            )
+
+    # Optional: JT's own wording for the root and legend cards.  His text wins
+    # and is projected verbatim from then on.
+    furniture = manifest.get("jt_furniture")
+    if furniture is not None:
+        _require(
+            isinstance(furniture, dict),
+            "manifest.jt_furniture: must be an object keyed by card name",
+        )
+        for key, value in furniture.items():
+            _require(
+                key in EDITABLE_FURNITURE,
+                "manifest.jt_furniture[%r]: only %s may be overridden"
+                % (key, " and ".join(EDITABLE_FURNITURE)),
+            )
+            _require(
+                isinstance(value, str),
+                "manifest.jt_furniture[%r]: must be a string" % key,
             )
 
     claims = manifest.get("claims")

@@ -6,6 +6,7 @@ Every arm/refresh run parses before it projects.  What comes back:
   pruned          claim ids whose card is gone — never recreated
   title_overrides card titles JT rewrote, kept verbatim
   body_overrides  source-section body text JT edited, kept verbatim
+  furniture_edits root/legend cards JT rewrote, kept verbatim
   moved           node geometry JT changed (fed back as ``existing``)
   alien_nodes     cards JT added himself — listed, never deleted
   warnings        anything flag-like or edit-like that could not be folded in
@@ -45,22 +46,34 @@ def _is_continuation(char):
     return _VARIATION[0] <= code <= _VARIATION[1] or code == _ZWJ
 
 
-def split_leading_flags(text):
-    """(flags, unknown_emoji, remainder) from the leading run of *text*.
+def _emoji_cluster(text, index):
+    end = index + 1
+    length = len(text)
+    while end < length and (
+        _is_continuation(text[end])
+        or (ord(text[end - 1]) == _ZWJ and _is_emoji(text[end]))
+    ):
+        end += 1
+    return text[index:end]
 
-    Flags are a leading run — that is where triage puts them and it is the
-    exact inverse of the projection.  Emoji later in a line are prose.
+
+def scan_leading_flags(text):
+    """Scan the leading run of *text* for triage flags.
+
+    Returns (tokens, unknown, offsets).  ``offsets[k]`` is the index at which
+    the text resumes after consuming k flag tokens, so a caller can try each
+    possible flag prefix.  An unrecognised glyph ends the run and is NOT
+    consumed — it stays in the remainder so that the ordinary title comparison
+    sees it and JT's wording is preserved rather than quietly deleted.
     """
-    flags = []
+    tokens = []
     unknown = []
+    offsets = [0]
     index = 0
     length = len(text)
     while index < length:
         char = text[index]
-        if char in (" ", "\t"):
-            index += 1
-            continue
-        if _is_continuation(char):
+        if char in (" ", "\t") or _is_continuation(char):
             index += 1
             continue
         matched = None
@@ -68,26 +81,59 @@ def split_leading_flags(text):
             if text.startswith(token, index):
                 matched = token
                 break
-        if matched is not None:
-            canonical = FLAG_CANON.get(matched, matched)
-            if canonical not in flags:
-                flags.append(canonical)
-            index += len(matched)
-            while index < length and _is_continuation(text[index]):
-                index += 1
-            continue
-        if _is_emoji(char):
-            end = index + 1
-            while end < length and (
-                _is_continuation(text[end])
-                or (ord(text[end - 1]) == _ZWJ and _is_emoji(text[end]))
-            ):
-                end += 1
-            unknown.append(text[index:end])
-            index = end
-            continue
-        break
-    return flags, unknown, text[index:]
+        if matched is None:
+            if _is_emoji(char):
+                unknown.append(_emoji_cluster(text, index))
+            break
+        index += len(matched)
+        while index < length and _is_continuation(text[index]):
+            index += 1
+        tokens.append(FLAG_CANON.get(matched, matched))
+        skip = index
+        while skip < length and text[skip] in (" ", "\t"):
+            skip += 1
+        offsets.append(skip)
+    return tokens, unknown, offsets
+
+
+def _dedupe(values):
+    out = []
+    for value in values:
+        if value not in out:
+            out.append(value)
+    return out
+
+
+def split_leading_flags(text):
+    """(flags, unknown_emoji, remainder) — the context-free reading.
+
+    Every leading flag token is taken as a flag.  Prefer ``resolve_flags``
+    when the expected text is known: it will not invent a flag out of a title
+    that genuinely begins with a flag glyph.
+    """
+    tokens, unknown, offsets = scan_leading_flags(text)
+    return _dedupe(tokens), unknown, text[offsets[len(tokens)]:]
+
+
+def resolve_flags(raw, expected):
+    """Split *raw* into (flags, unknown, remainder) against a known *expected*.
+
+    Flags are only read off the front when removing them makes the remainder
+    match what we projected.  A title or body that legitimately starts with ⭐
+    therefore yields no flags at all, which is what stops a fabricated flag
+    from becoming a real tagged highlight at arm time.
+    """
+    tokens, unknown, offsets = scan_leading_flags(raw)
+    if expected is None:
+        return _dedupe(tokens), unknown, raw[offsets[len(tokens)]:].strip()
+    target = expected.strip()
+    for count in range(len(tokens), -1, -1):
+        if raw[offsets[count]:].strip() == target:
+            return _dedupe(tokens[:count]), unknown, target
+    # The text itself changed, so no prefix can be confirmed.  Triage by
+    # prepending flags is the documented action, so read the run as flags and
+    # let the remainder be captured as JT's new wording.
+    return _dedupe(tokens), unknown, raw[offsets[len(tokens)]:].strip()
 
 
 # --------------------------------------------------------------------------
@@ -112,11 +158,47 @@ def _norm_block(text):
     return "\n".join(lines)
 
 
-def split_card(text):
+def _resolve_body(body, expected):
+    """(flags, body) — read second-line flags only when they explain a diff.
+
+    If the body already matches what we projected, nothing was prepended and
+    there is nothing to strip.  Only when it differs do we test whether
+    removing a leading flag run restores the expected text; if it does, JT
+    prepended flags to otherwise-untouched prose.  If it does not, the body is
+    his and is left exactly as written.
+    """
+    if expected is None:
+        return [], body
+    if _norm_block(body) == _norm_block(expected):
+        return [], body
+
+    lines = body.split("\n")
+    position = None
+    for index, line in enumerate(lines):
+        if line.strip():
+            position = index
+            break
+    if position is None:
+        return [], body
+
+    tokens, _unknown, offsets = scan_leading_flags(lines[position])
+    for count in range(len(tokens), 0, -1):
+        candidate = list(lines)
+        candidate[position] = lines[position][offsets[count]:]
+        joined = _trim_blank_edges("\n".join(candidate))
+        if _norm_block(joined) == _norm_block(expected):
+            return _dedupe(tokens[:count]), joined
+    return [], body
+
+
+def split_card(text, expected_title=None, expected_body=None):
     """Decompose a card's text into its parts.
 
     Returns a dict with: title (flags stripped), flags, unknown, body,
     cite, jt (the overlay block, verbatim), has_jt.
+
+    Pass the expected title and body whenever they are known — without them a
+    leading flag glyph that is genuinely part of the text is misread as triage.
     """
     text = text or ""
     head, separator, tail = text.rpartition(cb.JT_SEP)
@@ -140,7 +222,7 @@ def split_card(text):
     title_raw = lines[title_index].strip()
     while title_raw.startswith("#"):
         title_raw = title_raw[1:]
-    flags, unknown, title = split_leading_flags(title_raw)
+    flags, unknown, title = resolve_flags(title_raw, expected_title)
 
     cite_index = None
     for position in range(len(lines) - 1, title_index, -1):
@@ -151,25 +233,20 @@ def split_card(text):
     body_lines = lines[title_index + 1:cite_index] if cite_index is not None \
         else lines[title_index + 1:]
 
-    # Flags may also sit on the second non-empty line; strip them there so the
-    # body compares clean, but do not warn about prose emoji in the body.
-    for position, line in enumerate(body_lines):
-        if not line.strip():
-            continue
-        more, _unknown, remainder = split_leading_flags(line)
-        if more:
-            for flag in more:
-                if flag not in flags:
-                    flags.append(flag)
-            body_lines = list(body_lines)
-            body_lines[position] = remainder
-        break
+    # Flags may also sit on the second non-empty line.  Only read them there
+    # when removing them restores the body we projected — otherwise a body that
+    # simply starts with ⭐ would fabricate a triage flag.
+    body = _trim_blank_edges("\n".join(body_lines))
+    more, body = _resolve_body(body, expected_body)
+    for flag in more:
+        if flag not in flags:
+            flags.append(flag)
 
     return {
         "title": title.strip(),
         "flags": flags,
         "unknown": unknown,
-        "body": _trim_blank_edges("\n".join(body_lines)),
+        "body": body,
         "cite": cite,
         "jt": jt,
         "has_jt": has_jt,
@@ -212,11 +289,39 @@ def parse_overlay(manifest, canvas_dict):
     flags = {}
     title_overrides = {}
     body_overrides = {}
+    furniture_edits = {}
     alien_nodes = []
+
+    # The root and legend cards are JT-editable furniture: his wording wins and
+    # is projected verbatim from then on.  The bin is regenerated from unmatched
+    # state every refresh, so an edit there cannot be kept — it is quoted back
+    # in full instead, so nothing he wrote is lost.
+    furniture = cb.furniture_text(manifest)
+    furniture_nodes = dict(
+        (cb.node_id(slug, key), key) for key in ("root", "legend", "bin")
+    )
 
     for ident, node in by_node.items():
         claim = claim_node.get(ident)
         if claim is None:
+            furniture_key = furniture_nodes.get(ident)
+            if furniture_key is not None:
+                text = node.get("text")
+                if not isinstance(text, str):
+                    warnings.append("%s card has no text; skipped" % furniture_key)
+                    continue
+                if _norm_block(text) == _norm_block(furniture[furniture_key]):
+                    continue
+                if furniture_key == "bin":
+                    warnings.append(
+                        "The unmatched-highlights card was edited on the canvas. That "
+                        "card is rebuilt from scratch on every refresh, so the edit "
+                        "cannot be kept. Here is exactly what it said, in full, so "
+                        "nothing is lost:\n%s" % text
+                    )
+                else:
+                    furniture_edits[furniture_key] = text
+                continue
             if ident not in known and node.get("type") == "text":
                 alien_nodes.append(node)
                 warnings.append(
@@ -231,25 +336,29 @@ def parse_overlay(manifest, canvas_dict):
             warnings.append("%s: card has no text; skipped" % claim_id)
             continue
 
-        parts = split_card(text)
-        flags[claim_id] = parts["flags"]
-        for glyph in parts["unknown"]:
-            warnings.append(
-                "%s: unrecognised marker %r in the title line; not read as a flag"
-                % (claim_id, glyph)
-            )
-
         expected_body = (claim.get("jt") or {}).get("body_override")
         if expected_body is None:
             expected_body = claim.get("body_md") or ""
-        if _norm_block(parts["body"]) != _norm_block(expected_body):
-            body_overrides[claim_id] = parts["body"]
-
         # A title JT rewrote is his material and is kept verbatim, exactly like
-        # a rewritten body.  Flags have already been stripped off the front.
+        # a rewritten body.
         expected_title = (claim.get("jt") or {}).get("title_override")
         if expected_title is None:
             expected_title = claim.get("title") or ""
+
+        parts = split_card(text, expected_title, expected_body)
+        flags[claim_id] = parts["flags"]
+        for glyph in parts["unknown"]:
+            # Once the glyph is part of the accepted title it is settled wording,
+            # not a mis-typed flag, so say it once and then stop.
+            if expected_title.strip().startswith(glyph):
+                continue
+            warnings.append(
+                "%s: unrecognised marker %r in the title line; not read as a flag "
+                "(kept as part of the title)" % (claim_id, glyph)
+            )
+
+        if _norm_block(parts["body"]) != _norm_block(expected_body):
+            body_overrides[claim_id] = parts["body"]
         if parts["title"] != expected_title.strip():
             title_overrides[claim_id] = parts["title"]
 
@@ -298,6 +407,7 @@ def parse_overlay(manifest, canvas_dict):
         "pruned": pruned,
         "title_overrides": title_overrides,
         "body_overrides": body_overrides,
+        "furniture_edits": furniture_edits,
         "moved": moved,
         "alien_nodes": alien_nodes,
         "warnings": warnings,
@@ -323,4 +433,10 @@ def apply_overlay(manifest, overlay):
         claim = by_id.get(claim_id)
         if claim is not None:
             claim.setdefault("jt", {})["body_override"] = body
+    edits = overlay.get("furniture_edits") or {}
+    if edits:
+        furniture = manifest.setdefault("jt_furniture", {})
+        for key, text in edits.items():
+            if key in cb.EDITABLE_FURNITURE:
+                furniture[key] = text
     return manifest

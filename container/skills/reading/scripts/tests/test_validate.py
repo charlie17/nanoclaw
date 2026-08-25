@@ -159,6 +159,65 @@ class OverlapTest(unittest.TestCase):
         self.assertEqual(only(validate_canvas(canvas), "overlap:"), [])
 
 
+class JtGeometryExemptionTest(unittest.TestCase):
+    """F4: geometry JT chose is exempt from the overlap check, nothing else."""
+
+    def overlapping(self):
+        canvas = clean_canvas()
+        canvas["nodes"][3]["x"] = canvas["nodes"][2]["x"]
+        canvas["nodes"][3]["y"] = canvas["nodes"][2]["y"]
+        return canvas
+
+    def test_overlap_fails_without_the_exemption(self):
+        violations = validate_canvas(self.overlapping())
+        self.assertEqual(len(only(violations, "overlap:")), 1)
+
+    def test_exempting_the_dragged_node_clears_the_overlap(self):
+        self.assertEqual(validate_canvas(self.overlapping(), {"n3"}), [])
+
+    def test_exempting_the_other_node_also_clears_it(self):
+        self.assertEqual(validate_canvas(self.overlapping(), {"n2"}), [])
+
+    def test_exempting_an_unrelated_node_does_not_clear_it(self):
+        violations = validate_canvas(self.overlapping(), {"n1"})
+        self.assertEqual(len(only(violations, "overlap:")), 1)
+
+    def test_two_exempt_nodes_may_overlap_each_other(self):
+        self.assertEqual(validate_canvas(self.overlapping(), {"n2", "n3"}), [])
+
+    def test_exempt_nodes_still_face_every_other_check(self):
+        canvas = self.overlapping()
+        canvas["nodes"][3]["color"] = "9"
+        canvas["nodes"][3]["text"] = "torn\\nnewline"
+        canvas["nodes"][3]["id"] = "n2"
+        violations = validate_canvas(canvas, {"n2", "n3"})
+        self.assertEqual(only(violations, "overlap:"), [])
+        self.assertTrue(only(violations, "is not a preset"))
+        self.assertTrue(only(violations, "literal backslash-n"))
+        self.assertTrue(only(violations, "duplicate id"))
+
+    def test_exempt_node_with_a_dangling_edge_still_fails(self):
+        canvas = self.overlapping()
+        canvas["edges"][0]["toNode"] = "ghost"
+        violations = validate_canvas(canvas, {"n2", "n3"})
+        self.assertTrue(only(violations, "resolves to no node"))
+
+    def test_default_and_empty_set_are_todays_behaviour(self):
+        self.assertEqual(len(only(validate_canvas(self.overlapping()), "overlap:")), 1)
+        self.assertEqual(
+            len(only(validate_canvas(self.overlapping(), set()), "overlap:")), 1)
+        self.assertEqual(
+            len(only(validate_canvas(self.overlapping(), None), "overlap:")), 1)
+
+    def test_assert_valid_passes_the_exemption_through(self):
+        with self.assertRaises(ValueError):
+            assert_valid(self.overlapping())
+        assert_valid(self.overlapping(), {"n3"})
+
+    def test_a_list_works_as_well_as_a_set(self):
+        self.assertEqual(validate_canvas(self.overlapping(), ["n3"]), [])
+
+
 class LiteralNewlineTest(unittest.TestCase):
     def test_backslash_n_in_node_text(self):
         canvas = clean_canvas()

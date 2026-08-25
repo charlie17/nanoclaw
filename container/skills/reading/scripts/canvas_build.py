@@ -265,7 +265,26 @@ def card_color(claim):
 # fixed cards
 # --------------------------------------------------------------------------
 
+EDITABLE_FURNITURE = manifest_mod.EDITABLE_FURNITURE
+
+
+def furniture_override(manifest, key):
+    """JT's own wording for a furniture card, if he has rewritten it."""
+    if key not in EDITABLE_FURNITURE:
+        return None
+    value = (manifest.get("jt_furniture") or {}).get(key)
+    return value if isinstance(value, str) else None
+
+
+def legend_text(manifest):
+    override = furniture_override(manifest, "legend")
+    return LEGEND_TEXT if override is None else override
+
+
 def root_text(manifest, live_count, chapter_count):
+    override = furniture_override(manifest, "root")
+    if override is not None:
+        return override
     source = manifest.get("source") or {}
     title = source.get("title") or manifest.get("slug") or "Reading map"
     lines = ["# " + title]
@@ -292,7 +311,11 @@ def root_text(manifest, live_count, chapter_count):
 def bin_text(manifest):
     unmatched = manifest.get("unmatched") or []
     lines = ["# Unmatched highlights", ""]
-    lines.append("Highlights that matched no card. Move the text onto a card, or leave it here.")
+    lines.append(
+        "Highlights that matched no card. **This card is rebuilt from scratch on "
+        "every refresh — don't write here, anything you type will be replaced.** "
+        "To keep something, copy it onto a claim card."
+    )
     lines.append("")
     for item in unmatched:
         text = (item.get("text") or "").strip()
@@ -582,7 +605,8 @@ def build_canvas(manifest, existing=None):
     root_x += o_offset_x
     root_y += o_offset_y
 
-    l_h = card_height(LEGEND_TEXT)
+    legend = legend_text(manifest)
+    l_h = card_height(legend)
     l_y = overview_y + overview_h + SIDE_GAP
 
     card_order = list(o_order) + chapter_order
@@ -601,7 +625,7 @@ def build_canvas(manifest, existing=None):
     root_ident = node_id(slug, "root")
     nodes.append(_text_node(root_ident, r_text, root_x, root_y, CARD_W, r_h, COLOR_ROOT))
     nodes.append(_text_node(
-        node_id(slug, "legend"), LEGEND_TEXT, SIDE_X, l_y, CARD_W, l_h, COLOR_LEGEND
+        node_id(slug, "legend"), legend, SIDE_X, l_y, CARD_W, l_h, COLOR_LEGEND
     ))
     if manifest.get("unmatched"):
         b_text = bin_text(manifest)
@@ -653,6 +677,60 @@ def build_canvas(manifest, existing=None):
         _carry_forward(manifest, canvas, existing)
 
     return canvas
+
+
+def furniture_text(manifest):
+    """The three furniture cards as they would be projected right now.
+
+    Cheaper than a full build, and it already reflects any wording of JT's that
+    has been folded in, so comparing a canvas against it is idempotent.
+    """
+    claims = manifest_mod.live_claims(manifest)
+    chapter_claims = [c for c in claims if not manifest_mod.is_overview(c)]
+    keys, _labels, _buckets = _chapter_buckets(manifest, chapter_claims)
+    return {
+        "root": root_text(manifest, len(claims), len(keys)),
+        "legend": legend_text(manifest),
+        "bin": bin_text(manifest),
+    }
+
+
+def jt_geometry_ids(manifest, existing):
+    """Node ids on *existing* whose geometry is JT's rather than the projection's.
+
+    Pass the result to ``validate.validate_canvas`` as ``jt_geometry_ids``: once
+    he drags a card over another, that overlap is his choice, and a strict gate
+    should not fail on it forever.
+    """
+    if not existing:
+        return set()
+    snapshot = manifest.get("node_geometry")
+    ours = known_ids(manifest)
+    touched = set()
+    for node in existing.get("nodes") or []:
+        ident = node.get("id")
+        if ident is None:
+            continue
+        if ident not in ours:
+            touched.add(ident)      # a card he added himself
+            continue
+        geometry = _node_geometry(node)
+        if not geometry:
+            continue
+        if snapshot is None:
+            touched.add(ident)
+            continue
+        previous = snapshot.get(ident)
+        if previous is None:
+            continue
+        if len(previous) != 4:
+            touched.add(ident)
+            continue
+        if (geometry.get("x") != previous[0] or geometry.get("y") != previous[1]
+                or geometry.get("width") != previous[2]
+                or geometry.get("height") != previous[3]):
+            touched.add(ident)
+    return touched
 
 
 def _node_geometry(node):

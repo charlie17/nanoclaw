@@ -58,11 +58,19 @@ def _overlaps(a, b):
     )
 
 
-def validate_canvas(canvas):
-    """Return a list of violation strings.  Empty list = valid canvas."""
+def validate_canvas(canvas, jt_geometry_ids=None):
+    """Return a list of violation strings.  Empty list = valid canvas.
+
+    ``jt_geometry_ids`` — node ids whose position and size came from JT rather
+    than from the projection (see ``canvas_build.jt_geometry_ids``).  Those are
+    exempt from the overlap check ONLY: if he drags one card on top of another
+    that is his call, and a strict gate should not fail on it for ever.  Every
+    other check still applies to them.
+    """
     violations = []
     if not isinstance(canvas, dict):
         return ["canvas: expected a JSON object"]
+    exempt = set(jt_geometry_ids or ())
 
     nodes = canvas.get("nodes")
     edges = canvas.get("edges")
@@ -134,7 +142,7 @@ def validate_canvas(canvas):
 
         _check_color(node.get("color"), label, violations)
 
-        if geometry_ok and node_type != "group":
+        if geometry_ok and node_type != "group" and ident not in exempt:
             rects.append((
                 label,
                 (node["x"], node["y"], node["width"], node["height"]),
@@ -190,9 +198,9 @@ def validate_canvas(canvas):
     return violations
 
 
-def assert_valid(canvas):
+def assert_valid(canvas, jt_geometry_ids=None):
     """Raise ValueError listing every violation.  Convenience for scripts."""
-    violations = validate_canvas(canvas)
+    violations = validate_canvas(canvas, jt_geometry_ids)
     if violations:
         raise ValueError(
             "canvas failed validation (%d):\n  %s"

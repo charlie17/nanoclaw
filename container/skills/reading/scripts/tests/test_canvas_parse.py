@@ -510,6 +510,242 @@ class OverviewOverlayTest(unittest.TestCase):
             self.assertIn(edge["id"], known)
 
 
+class UntouchedCanvasInvariantTest(unittest.TestCase):
+    """A freshly projected canvas must always parse to nothing at all.
+
+    Anything else is fabrication: a made-up flag becomes a real tagged
+    highlight in Readwise at arm time, which is not recoverable.
+    """
+
+    def glyph_manifest(self):
+        m = M.new_manifest(
+            SLUG, {"title": "Glyph Source", "author": "A. Writer"},
+            [{"idx": 0, "title": "⭐ Chapter One", "block_start": 0, "block_end": 50}],
+        )
+        m["claims"] = [
+            M.new_claim("c-0001", "⭐ Star-led title stays a title", 0, "root", 0,
+                        locator="Ch 1", block_range=[1, 3], anchor_block=1,
+                        anchor_phrase="star", body_md="⭐ A body that opens with a star."),
+            M.new_claim("c-0002", "\U0001f525 Fire-led title", 0, "c-0001", 0,
+                        locator="Ch 1 §2", block_range=[4, 6], anchor_block=4,
+                        anchor_phrase="fire",
+                        body_md="\U0001f525 Burning through the argument here."),
+            M.new_claim("c-0003", "❓ Question-led title", 0, "c-0001", 1,
+                        locator="Ch 1 §3", block_range=[7, 9], anchor_block=7,
+                        anchor_phrase="question",
+                        body_md="❓ Is this really what the author means?"),
+            M.new_claim("c-0004", "⏭️ Skip-led title", 0, "c-0001", 2,
+                        locator="Ch 1 §4", block_range=[10, 12], anchor_block=10,
+                        anchor_phrase="skip", body_md="⏭️ Fast-forward past this part."),
+            M.new_claim("o-0001", "⭐ Overview that opens with a star", -1, "root", 0,
+                        body_md="⭐ The whole book in one line."),
+        ]
+        M.validate(m)
+        return m
+
+    def test_untouched_canvas_parses_to_zero_flags_and_zero_overrides(self):
+        m = self.glyph_manifest()
+        overlay = cp.parse_overlay(m, cb.build_canvas(m))
+        self.assertEqual(overlay["body_overrides"], {})
+        self.assertEqual(overlay["title_overrides"], {})
+        self.assertEqual(overlay["furniture_edits"], {})
+        self.assertEqual(overlay["pruned"], [])
+        self.assertEqual(overlay["alien_nodes"], [])
+        self.assertEqual(overlay["warnings"], [])
+        for claim_id, values in overlay["flags"].items():
+            self.assertEqual(values, [], "fabricated a flag on %s" % claim_id)
+
+    def test_invariant_holds_after_apply_and_rebuild(self):
+        m = self.glyph_manifest()
+        canvas = cb.build_canvas(m)
+        cp.apply_overlay(m, cp.parse_overlay(m, canvas))
+        M.validate(m)
+        for claim in m["claims"]:
+            self.assertEqual(claim["jt"]["flags"], [])
+            self.assertIsNone(claim["jt"]["title_override"])
+            self.assertIsNone(claim["jt"]["body_override"])
+        self.assertEqual(cb.dumps_canvas(cb.build_canvas(m)), cb.dumps_canvas(canvas))
+
+    def test_a_real_flag_on_a_glyph_led_title_is_still_read(self):
+        m = self.glyph_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        # JT prepends a fire flag to a title that already begins with a star
+        node["text"] = node["text"].replace(
+            "# ⭐ Star-led title", "# \U0001f525 ⭐ Star-led title", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["flags"]["c-0001"], ["\U0001f525"])
+        self.assertEqual(overlay["title_overrides"], {})
+
+    def test_a_real_flag_on_a_glyph_led_body_is_still_read(self):
+        m = self.glyph_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0002")
+        node["text"] = node["text"].replace(
+            "\U0001f525 Burning through", "❓ \U0001f525 Burning through", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["flags"]["c-0002"], ["❓"])
+        self.assertEqual(overlay["body_overrides"], {})
+
+    def test_editing_a_glyph_led_body_captures_it_without_inventing_a_flag(self):
+        m = self.glyph_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0003")
+        node["text"] = node["text"].replace(
+            "❓ Is this really what the author means?",
+            "❓ Is this really what he means? I don't think so.", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["flags"]["c-0003"], [])
+        self.assertEqual(overlay["body_overrides"],
+                         {"c-0003": "❓ Is this really what he means? I don't think so."})
+
+
+class UnknownGlyphTest(unittest.TestCase):
+    """F2: an unrecognised leading glyph is JT's wording, not a bad flag."""
+
+    def test_unknown_glyph_is_preserved_not_deleted(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        node["text"] = node["text"].replace("# Retirement", "# ❗ Retirement", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["flags"]["c-0001"], [])
+        self.assertEqual(overlay["title_overrides"],
+                         {"c-0001": "❗ Retirement is a cash-flow problem"})
+        self.assertTrue(any("not read as a flag" in w for w in overlay["warnings"]))
+
+    def test_unknown_glyph_survives_a_rebuild(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        node["text"] = node["text"].replace("# Retirement", "# ❗ Retirement", 1)
+        cp.apply_overlay(m, cp.parse_overlay(m, canvas))
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        text = [n for n in rebuilt["nodes"]
+                if n["id"] == cb.claim_node_id(SLUG, "c-0001")][0]["text"]
+        self.assertTrue(text.startswith("# ❗ Retirement is a cash-flow problem\n"))
+
+    def test_warning_stops_once_the_glyph_is_settled_wording(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        node["text"] = node["text"].replace("# Retirement", "# ❗ Retirement", 1)
+        cp.apply_overlay(m, cp.parse_overlay(m, canvas))
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        again = cp.parse_overlay(m, rebuilt)
+        self.assertEqual(again["warnings"], [])
+        self.assertEqual(again["title_overrides"], {})
+        self.assertEqual(again["flags"]["c-0001"], [])
+
+    def test_flag_alongside_an_unknown_glyph(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0002")
+        node["text"] = node["text"].replace("# Sequence", "# ⭐❗ Sequence", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["flags"]["c-0002"], ["⭐"])
+        self.assertEqual(overlay["title_overrides"],
+                         {"c-0002": "❗ Sequence risk dominates early years"})
+
+
+class FurnitureTest(unittest.TestCase):
+    """F1: root and legend are JT-editable; the bin is machine-owned."""
+
+    def test_root_edit_is_captured_and_projected_verbatim(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        root_id = cb.node_id(SLUG, "root")
+        mine = "# My framing of this book\n\nWhat I actually want out of it."
+        for node in canvas["nodes"]:
+            if node["id"] == root_id:
+                node["text"] = mine
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["furniture_edits"], {"root": mine})
+        self.assertEqual(overlay["warnings"], [])
+
+        cp.apply_overlay(m, overlay)
+        M.validate(m)
+        self.assertEqual(m["jt_furniture"]["root"], mine)
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        text = [n for n in rebuilt["nodes"] if n["id"] == root_id][0]["text"]
+        self.assertEqual(text, mine)
+
+    def test_legend_edit_is_captured_and_projected_verbatim(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        legend_id = cb.node_id(SLUG, "legend")
+        mine = "# Legend\n\nMy own shorthand:\n⭐ = read twice"
+        for node in canvas["nodes"]:
+            if node["id"] == legend_id:
+                node["text"] = mine
+        cp.apply_overlay(m, cp.parse_overlay(m, canvas))
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        text = [n for n in rebuilt["nodes"] if n["id"] == legend_id][0]["text"]
+        self.assertEqual(text, mine)
+
+    def test_furniture_capture_is_idempotent(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        root_id = cb.node_id(SLUG, "root")
+        for node in canvas["nodes"]:
+            if node["id"] == root_id:
+                node["text"] = "# Mine now\n\nnothing else"
+        cp.apply_overlay(m, cp.parse_overlay(m, canvas))
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        again = cp.parse_overlay(m, rebuilt)
+        self.assertEqual(again["furniture_edits"], {})
+        self.assertEqual(again["warnings"], [])
+
+    def test_untouched_furniture_is_not_captured(self):
+        m = demo_manifest()
+        overlay = cp.parse_overlay(m, cb.build_canvas(m))
+        self.assertEqual(overlay["furniture_edits"], {})
+
+    def test_bin_edit_warns_loudly_quoting_the_full_text(self):
+        m = demo_manifest()
+        m["unmatched"] = [M.new_highlight("h-1", "u", "an orphan", "")]
+        canvas = clone(cb.build_canvas(m))
+        bin_id = cb.node_id(SLUG, "bin")
+        mine = ("# Unmatched highlights\n\nNOTE TO SELF: the orphan below is about "
+                "Roth conversions —\nask the CPA before the end of the year.")
+        for node in canvas["nodes"]:
+            if node["id"] == bin_id:
+                node["text"] = mine
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["furniture_edits"], {})
+        loud = [w for w in overlay["warnings"] if "unmatched-highlights card" in w]
+        self.assertEqual(len(loud), 1)
+        # the whole of what he wrote is quoted back, not a summary
+        self.assertIn(mine, loud[0])
+        self.assertIn("ask the CPA before the end of the year.", loud[0])
+
+    def test_bin_is_never_written_into_the_manifest(self):
+        m = demo_manifest()
+        m["unmatched"] = [M.new_highlight("h-1", "u", "an orphan", "")]
+        canvas = clone(cb.build_canvas(m))
+        bin_id = cb.node_id(SLUG, "bin")
+        for node in canvas["nodes"]:
+            if node["id"] == bin_id:
+                node["text"] = "# my own bin heading"
+        cp.apply_overlay(m, cp.parse_overlay(m, canvas))
+        self.assertNotIn("bin", m.get("jt_furniture") or {})
+        M.validate(m)
+
+    def test_bin_card_warns_against_writing_in_it(self):
+        m = demo_manifest()
+        m["unmatched"] = [M.new_highlight("h-1", "u", "an orphan", "")]
+        text = cb.bin_text(m)
+        self.assertIn("rebuilt from scratch on every refresh", text)
+        self.assertIn("don't write here", text)
+        self.assertNotIn("leave it here", text)
+
+    def test_apply_overlay_ignores_a_bin_key_if_one_is_forged(self):
+        m = demo_manifest()
+        cp.apply_overlay(m, {"furniture_edits": {"bin": "nope", "root": "yes"}})
+        self.assertEqual(m["jt_furniture"], {"root": "yes"})
+        M.validate(m)
+
+
 class SplitCardTest(unittest.TestCase):
     def test_card_with_no_body(self):
         claim = M.new_claim("c-9", "Bare claim", 0, "root", 0,

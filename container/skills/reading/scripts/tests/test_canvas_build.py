@@ -364,6 +364,44 @@ class GeometrySnapshotTest(unittest.TestCase):
         rebuilt = cb.build_canvas(m, existing=working)
         self.assertIn(alien, rebuilt["nodes"])
 
+    def test_dragging_a_card_onto_another_does_not_fail_validation_forever(self):
+        m, canvas = self.written()
+        working = json.loads(json.dumps(canvas))
+        victim = [n for n in working["nodes"]
+                  if n["id"] == cb.node_id(SLUG, "c-0002")][0]
+        dragged_id = cb.node_id(SLUG, "c-0004")
+        for node in working["nodes"]:
+            if node["id"] == dragged_id:
+                node["x"], node["y"] = victim["x"], victim["y"]
+
+        rebuilt = cb.build_canvas(m, existing=working)
+        # strict: the overlap he created is a real violation
+        strict = validate_canvas(rebuilt)
+        self.assertTrue([v for v in strict if v.startswith("overlap:")])
+        # with his geometry exempted, the map is clean again
+        exempt = cb.jt_geometry_ids(m, working)
+        self.assertIn(dragged_id, exempt)
+        self.assertEqual(validate_canvas(rebuilt, exempt), [])
+
+    def test_jt_geometry_ids_is_empty_for_an_untouched_canvas(self):
+        m, canvas = self.written()
+        self.assertEqual(cb.jt_geometry_ids(m, canvas), set())
+        self.assertEqual(cb.jt_geometry_ids(m, None), set())
+
+    def test_jt_geometry_ids_includes_alien_cards(self):
+        m, canvas = self.written()
+        working = json.loads(json.dumps(canvas))
+        alien = {"id": "cafecafecafecafe", "type": "text", "text": "# mine",
+                 "x": 0, "y": 0, "width": 340, "height": 220}
+        working["nodes"].append(alien)
+        self.assertEqual(cb.jt_geometry_ids(m, working), {alien["id"]})
+
+    def test_jt_geometry_ids_without_a_snapshot_claims_everything(self):
+        m, canvas = self.written()
+        del m["node_geometry"]
+        self.assertEqual(cb.jt_geometry_ids(m, canvas),
+                         set(n["id"] for n in canvas["nodes"]))
+
     def test_moved_report_uses_the_snapshot_not_a_reflowed_projection(self):
         import canvas_parse as cp
         m, canvas = self.written()
