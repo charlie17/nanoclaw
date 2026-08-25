@@ -562,10 +562,16 @@ def build_canvas(manifest, existing=None):
     overview_h = o_content_h + 2 * GROUP_PAD
     chapter_x = SIDE_X + overview_w + GROUP_GAP_X
 
+    # Chapter groups sit on a horizontal shelf: top-aligned at y = 0, advancing
+    # left to right in chapter order.  Stacking them vertically instead makes a
+    # book-scale map absurdly tall — 987 claims over 15 chapters measured 1:112,
+    # unreadable at fit-to-view — whereas a shelf keeps the aspect workable and
+    # matches the left-to-right reading direction the tree already uses.
     groups = []
     placed = {}          # claim id -> (x, y)
     chapter_order = []
-    cursor_y = 0
+    cursor_x = chapter_x
+    tallest = 0
     for key in keys:
         bucket_claims = buckets[key]
         bucket_ids = set(c["id"] for c in bucket_claims)
@@ -576,22 +582,23 @@ def build_canvas(manifest, existing=None):
         )
         group_w = content_w + 2 * GROUP_PAD
         group_h = content_h + 2 * GROUP_PAD
-        offset_x = chapter_x + GROUP_PAD
-        offset_y = cursor_y + GROUP_PAD
+        offset_x = cursor_x + GROUP_PAD
+        offset_y = GROUP_PAD
         for claim_id, (x, y) in positions.items():
             placed[claim_id] = (x + offset_x, y + offset_y)
         chapter_order.extend(order)
         groups.append({
             "key": key,
             "label": labels.get(key, str(key)),
-            "x": chapter_x,
-            "y": cursor_y,
+            "x": cursor_x,
+            "y": 0,
             "width": group_w,
             "height": group_h,
         })
-        cursor_y += group_h + GROUP_GAP
+        cursor_x += group_w + GROUP_GAP
+        tallest = max(tallest, group_h)
 
-    map_height = max(0, cursor_y - GROUP_GAP)
+    map_height = tallest
 
     # --- far-left column: Overview group, then legend, then bin -----------
     overview_y = (map_height - overview_h) // 2

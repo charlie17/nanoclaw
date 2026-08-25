@@ -662,6 +662,97 @@ class RelationshipEdgeTest(unittest.TestCase):
         self.assertEqual(validate_canvas(canvas), [])
 
 
+class ShelfLayoutTest(unittest.TestCase):
+    """Chapter groups sit on a horizontal shelf, not a vertical stack.
+
+    Stacking made a book-scale map ~1:112 and unusable at fit-to-view.
+    """
+
+    @staticmethod
+    def chapter_groups(canvas, slug=SLUG):
+        overview = cb.node_id(slug, "group:-1")
+        return [n for n in canvas["nodes"]
+                if n["type"] == "group" and n["id"] != overview]
+
+    def test_all_chapter_groups_are_top_aligned_at_zero(self):
+        for m in (small_manifest(), small_manifest(with_overview=True), big_manifest()):
+            canvas = cb.build_canvas(m)
+            groups = self.chapter_groups(canvas, m["slug"])
+            self.assertTrue(groups)
+            for group in groups:
+                self.assertEqual(group["y"], 0, "group %r is not top-aligned"
+                                 % group["label"])
+
+    def test_chapter_groups_run_strictly_left_to_right_without_overlap(self):
+        m = big_manifest()
+        groups = self.chapter_groups(cb.build_canvas(m), m["slug"])
+        self.assertEqual([g["label"] for g in groups],
+                         ["Chapter 1", "Chapter 2", "Chapter 3"])
+        for earlier, later in zip(groups, groups[1:]):
+            self.assertGreaterEqual(
+                later["x"], earlier["x"] + earlier["width"],
+                "%r overlaps %r in x" % (later["label"], earlier["label"]))
+            self.assertEqual(later["x"] - (earlier["x"] + earlier["width"]),
+                             cb.GROUP_GAP)
+
+    def test_overview_group_precedes_the_first_chapter_group(self):
+        m = small_manifest(with_overview=True)
+        canvas = cb.build_canvas(m)
+        overview = [n for n in canvas["nodes"]
+                    if n["id"] == cb.node_id(SLUG, "group:-1")][0]
+        first = self.chapter_groups(canvas)[0]
+        self.assertGreaterEqual(first["x"], overview["x"] + overview["width"])
+
+    def test_overview_is_centred_against_the_tallest_chapter_group(self):
+        m = big_manifest()
+        canvas = cb.build_canvas(m)
+        overview = [n for n in canvas["nodes"]
+                    if n["id"] == cb.node_id(m["slug"], "group:-1")][0]
+        tallest = max(g["height"] for g in self.chapter_groups(canvas, m["slug"]))
+        self.assertLessEqual(
+            abs((overview["y"] + overview["height"] / 2.0) - tallest / 2.0), 1.0)
+
+    def test_legend_and_bin_stay_below_the_overview_group(self):
+        m = small_manifest(with_unmatched=True, with_overview=True)
+        canvas = cb.build_canvas(m)
+        by_id = {n["id"]: n for n in canvas["nodes"]}
+        overview = by_id[cb.node_id(SLUG, "group:-1")]
+        legend = by_id[cb.node_id(SLUG, "legend")]
+        bin_node = by_id[cb.node_id(SLUG, "bin")]
+        self.assertEqual(legend["y"], overview["y"] + overview["height"] + cb.SIDE_GAP)
+        self.assertEqual(bin_node["y"], legend["y"] + legend["height"] + cb.SIDE_GAP)
+        self.assertEqual(legend["x"], cb.SIDE_X)
+        self.assertEqual(bin_node["x"], cb.SIDE_X)
+
+    def test_a_book_scale_map_has_a_workable_aspect_ratio(self):
+        m = big_manifest(claim_count=300, chapters=10)
+        canvas = cb.build_canvas(m)
+        self.assertEqual(validate_canvas(canvas), [])
+        left = min(n["x"] for n in canvas["nodes"])
+        right = max(n["x"] + n["width"] for n in canvas["nodes"])
+        top = min(n["y"] for n in canvas["nodes"])
+        bottom = max(n["y"] + n["height"] for n in canvas["nodes"])
+        width, height = right - left, bottom - top
+        # a shelf is wider than it is tall; the old stack was ~1:112
+        self.assertGreater(width, height)
+        self.assertLess(height / float(width), 2.0)
+
+    def test_adding_a_chapter_widens_rather_than_lengthens_the_map(self):
+        four = cb.build_canvas(big_manifest(claim_count=80, chapters=4))
+        eight = cb.build_canvas(big_manifest(claim_count=160, chapters=8))
+
+        def extent(canvas):
+            return (max(n["x"] + n["width"] for n in canvas["nodes"])
+                    - min(n["x"] for n in canvas["nodes"]),
+                    max(n["y"] + n["height"] for n in canvas["nodes"])
+                    - min(n["y"] for n in canvas["nodes"]))
+
+        w4, h4 = extent(four)
+        w8, h8 = extent(eight)
+        self.assertGreater(w8, w4)
+        self.assertEqual(h8, h4, "chapter count must not drive map height")
+
+
 class EdgeTest(unittest.TestCase):
     def test_edges_run_right_to_left_with_an_arrow(self):
         m = small_manifest()
