@@ -23,6 +23,14 @@ CATEGORIES = ("epub", "pdf", "article", "email", "tweet", "rss", "note")
 FLAGS = ("⭐", "\U0001f525", "⏭️", "❓")  # key / dig in / skip / clarify
 STANCES = ("agree", "dispute", "surface")
 
+# Triage glyphs as they may appear at the FRONT of a card, including the bare
+# U+23ED that Obsidian sometimes writes without its variation selector.  An
+# authored title or body must never begin with one: canvas_parse reads a
+# leading glyph run as JT's triage, so an authored card that opens with ⭐
+# either fabricates a flag or has its flag silently swallowed.  Non-fatal —
+# validate() reports it as a warning, never an error.
+TRIAGE_GLYPHS = ("⭐", "\U0001f525", "⏭️", "⏭", "❓")
+
 # chapter_idx -1 marks a book-level overview card: the source's overall thesis
 # in a handful of cards.  Overview claims live in their own group beside the
 # root card and are exempt from chapter-range checks.
@@ -204,8 +212,28 @@ def _require(condition, message):
         raise ManifestError(message)
 
 
+def _leading_triage_glyph(text):
+    """The triage glyph *text* starts with, or None.
+
+    Leading whitespace is ignored; a glyph anywhere but the front is ordinary
+    prose and is not reported.
+    """
+    if not isinstance(text, str):
+        return None
+    stripped = text.lstrip()
+    for glyph in TRIAGE_GLYPHS:
+        if stripped.startswith(glyph):
+            return glyph
+    return None
+
+
 def validate(manifest):
-    """Raise ManifestError on a structurally invalid manifest.  Returns None."""
+    """Raise ManifestError on a structurally invalid manifest.
+
+    Returns a list of non-fatal warning strings (empty when clean).  Callers
+    that only care about validity may ignore the return value.
+    """
+    warnings = []
     _require(isinstance(manifest, dict), "manifest: expected a JSON object")
     version = manifest.get("version")
     _require(
@@ -361,6 +389,16 @@ def validate(manifest):
         _require(isinstance(claim.get("jt"), dict), "claims[%d] (%s).jt: must be an object"
                  % (position, claim.get("id")))
 
+        # Non-fatal guardrail: authored text must not open with a triage glyph.
+        for field in ("title", "body_md"):
+            glyph = _leading_triage_glyph(claim.get(field))
+            if glyph is not None:
+                warnings.append(
+                    "claims[%d] (%s).%s: begins with the triage glyph %r; an authored "
+                    "card must never start with one (it is read as JT's triage flag)"
+                    % (position, claim.get("id"), field, glyph)
+                )
+
     # cycle check: a parent chain must terminate at "root".
     by_id = {claim["id"]: claim for claim in claims}
     for claim in claims:
@@ -375,6 +413,8 @@ def validate(manifest):
             cursor = by_id.get(cursor["parent"])
             if cursor is None:
                 break
+
+    return warnings
 
 
 # --------------------------------------------------------------------------
