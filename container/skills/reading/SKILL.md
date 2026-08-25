@@ -51,7 +51,19 @@ The map is comprehensive only when every substantive part of the source has a cl
 
 ## Canvas conventions
 
-Single canvas per source — the full universe of the book in one view. Portrait text nodes only; chapter/part groups; left-to-right tree with generous breathing room; edges carry labels only when the relationship isn't obvious from structure. Node ids are deterministic (derived from claim ids). Layout, sizing, validation, and all mechanical rules live in `scripts/` — never hand-place nodes or hand-write canvas JSON.
+Single canvas per source — the full universe of the book in one view. Portrait text nodes only; left-to-right tree with generous breathing room. Structure reads without opening a single card:
+
+- **Overview group (far left, the entry point):** the root card plus a handful of book-level summary cards — the whole thesis at a glance before any chapter detail. Legend card below it; unmatched bin below that.
+- **Chapter/part groups** left-to-right after the overview, each holding its claim tree.
+- **Connectors:** every parent→child relationship is a drawn edge (arrowed, left-to-right). Support/decomposition edges are unlabeled — that's the default relationship and labels would be noise at 200+ edges. Non-default relationships carry the relationship word as the edge label: `objection`, `reply`, `qualifies`, `contrasts`, `example`, `consequence`. Argumentative turns are visible on the map itself.
+- **Color doctrine — color belongs to JT, not the author.** Source cards are neutral; author-side structure is expressed through position, groups, and edges only. Color appears exactly where JT's overlay lands: stance recolors a card (✅ green · ❌ red · 💡 purple), the machine furniture (root/legend cyan, bin orange) is fixed, and edges are never colored. One glance separates "the book" from "what JT thinks of it."
+
+Node ids are deterministic (derived from claim ids). Layout, sizing, validation, and all mechanical rules live in `scripts/` — never hand-place nodes or hand-write canvas JSON.
+
+## Execution — who runs what
+
+- **Build** runs on the Claude Code surface: the lead session orchestrates, fanning per-chapter claim extraction out to Opus subagents (card prose is user-facing — high-taste models only), then performs consolidation, tree design, and reconciliation itself before the scripts project the canvas. Not a Daystrom-container job: a book-scale build exceeds the container's context economics by design.
+- **Arm and refresh** are light mechanical sweeps: any surface, container Sonnet included. Follow this SKILL.md and call the scripts; no model escalation needed.
 
 ## Mechanics
 
