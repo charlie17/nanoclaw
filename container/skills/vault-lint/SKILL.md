@@ -11,7 +11,7 @@ description: Audit the WHOLE vault for dead wikilinks and link rot. Fires on `/v
 python3 /home/node/.claude/skills/vault-lint/vault_lint.py
 ```
 
-Defaults to `/workspace/extra/vault` (= host `~/vault/general/`). Pass `--root PATH` to scope it narrower. Output is a single JSON object on stdout — parse it, don't re-read the vault yourself. All resolution, code-block exclusion, and classification is already done; your job is only to summarize.
+Defaults to `/workspace/extra/vault` (= host `~/vault/general/`). Pass `--root PATH` to scope it narrower. Output is a single JSON object on stdout — parse it, don't re-read the vault yourself. All **file-level** resolution, code-block exclusion, and classification is already done; your job is only to summarize. Read the limits below before claiming a clean bill of health.
 
 Exit 1 with `{"error": ...}` means the root is missing — report that and stop.
 
@@ -32,6 +32,10 @@ Per Reply Discipline — executive summary, then what matters. **Drop every empt
 
 ## Known limits (state them if relevant, don't work around them)
 
-Links inside 4-space-indented code blocks are still scanned. Bare-basename links that match any file resolve, so a stale link pointing at a since-renamed note only surfaces when it carries a path.
+**Anchors are not validated.** `[[note#heading]]` and `[[note#^block]]` are checked at file level only — the subref is stripped before resolution, so a link to a heading that no longer exists reads as fine. A clean run means every link finds its *file*, not its *anchor*.
+
+Bare-basename links that match any file resolve, so a stale link pointing at a since-renamed note only surfaces when it carries a path.
+
+Fence detection allows any indentation, so fences nested under list items are handled. The accepted cost: a 4-space-indented code block whose content happens to include a ```` ``` ````-like line will toggle fence state and hide what follows. Rare-on-rare, and far better than the alternative — missing list-nested fences meant every example link inside one came back a false positive.
 
 Inline code spans that wrap across a line break are not blanked (the scanner works line by line), so a wikilink sitting on the continuation line can be falsely reported. Reviewed and accepted: the shape is rare, the tool is report-only, and carrying backtick state across lines would risk silently swallowing real links — a worse failure than an occasional false positive.

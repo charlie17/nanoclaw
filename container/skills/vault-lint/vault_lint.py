@@ -29,7 +29,12 @@ CLASSES = (
     "broken_ref",
 )
 
-FENCE_RE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+# Arbitrary leading whitespace, not CommonMark's 3-space cap: fences nested
+# under list items are indented 4+ spaces and were previously missed entirely,
+# so every link in a list-nested code block came back a false positive. The
+# accepted cost is that a 4-space-indented code block whose content happens to
+# contain a ```-like line now toggles fence state.
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 QUOTE_RE = re.compile(r"^(?:[ \t]{0,3}>[ \t]?)+")
 LINK_RE = re.compile(r"(!?)\[\[([^\[\]\n]+)\]\]")
 
@@ -163,10 +168,12 @@ def build_index(all_files):
         "md_stems": {},
         "any_names": {},
         "any_stems": {},
+        "all_lower": [],
     }
     for rel in all_files:
         idx["by_path"][rel] = rel
         idx["by_path_ci"].setdefault(rel.lower(), rel)
+        idx["all_lower"].append((rel.lower(), rel))
         name = rel.rsplit("/", 1)[-1]
         stem, ext = os.path.splitext(name)
         idx["any_names"].setdefault(name.lower(), []).append(rel)
@@ -187,7 +194,19 @@ def resolve_path(target, idx):
     for cand in (t.lower(), t.lower() + ".md"):
         if cand in idx["by_path_ci"]:
             return idx["by_path_ci"][cand]
-    return None
+
+    # Obsidian suffix resolution: a partial path resolves if exactly one file
+    # in the vault ends with it. Two or more candidates is genuinely
+    # ambiguous — leave it unresolved and let classify() bucket it.
+    low = t.lower()
+    tails = ("/" + low, "/" + low + ".md")
+    match = None
+    for lower_rel, rel in idx["all_lower"]:
+        if lower_rel.endswith(tails):
+            if match is not None:
+                return None
+            match = rel
+    return match
 
 
 def resolve_name(target, is_embed, idx):
@@ -232,6 +251,10 @@ def extract_links(lines):
         for m in LINK_RE.finditer(line):
             bang, inner = m.group(1), m.group(2)
             target = inner.split("|", 1)[0]
+            # `[[Note\|alias]]` — the pipe must be escaped inside a markdown
+            # table cell. Without this the target keeps a trailing backslash
+            # and every table wikilink reads as broken.
+            target = target.rstrip("\\")
             target = target.split("#", 1)[0].strip()
             if not target:
                 # [[#heading]] / [[#^block]] — same-file anchor, not a file ref.
