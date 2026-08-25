@@ -44,3 +44,4 @@ groups/worf/*
 .nanoclaw/
 
 agents-sdk-docs
+__pycache__/
