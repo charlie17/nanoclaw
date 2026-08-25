@@ -11,6 +11,7 @@ Python 3 stdlib only (container base is node:22-slim: no jq, no pip packages).
 import argparse
 import json
 import os
+import posixpath
 import re
 import sys
 
@@ -262,10 +263,45 @@ def extract_links(lines):
             yield n, m.group(0), bang == "!", target
 
 
-def resolves(target, is_embed, idx):
+def is_relative_target(target):
+    """True for targets Obsidian resolves against the SOURCE file's directory."""
+    return (
+        target.startswith("../")
+        or target.startswith("./")
+        or "/../" in target
+        or "/./" in target
+    )
+
+
+def normalize_relative(target, source_rel):
+    """Vault-root-relative form of a source-relative target.
+
+    Returns None if the target climbs above the vault root — that is
+    unresolvable by definition, not something to guess at.
+    """
+    src_dir = source_rel.rsplit("/", 1)[0] if "/" in source_rel else ""
+    norm = posixpath.normpath(posixpath.join(src_dir, target) if src_dir else target)
+    if norm == ".." or norm.startswith("../") or norm == ".":
+        return None
+    return norm.lstrip("/")
+
+
+def resolve_link(target, is_embed, idx, source_rel):
+    """Resolve one link. Returns (resolved, effective_target).
+
+    `effective_target` is what classification should use — for a relative link
+    that is the vault-root-relative normalization, so any `suggested` repoint
+    comes out sane instead of echoing a `../` fragment.
+    """
+    if is_relative_target(target):
+        norm = normalize_relative(target, source_rel)
+        if norm is None:
+            # Escapes the vault root — leave the raw target for the report.
+            return False, target
+        return resolve_path(norm, idx) is not None, norm
     if "/" in target:
-        return resolve_path(target, idx) is not None
-    return len(resolve_name(target, is_embed, idx)) > 0
+        return resolve_path(target, idx) is not None, target
+    return len(resolve_name(target, is_embed, idx)) > 0, target
 
 
 def classify(target, is_embed, idx):
@@ -329,10 +365,11 @@ def lint(root):
         lines = strip_code(text)
         for line_no, raw, is_embed, target in extract_links(lines):
             links_checked += 1
-            if resolves(target, is_embed, idx):
+            ok, eff = resolve_link(target, is_embed, idx, rel)
+            if ok:
                 continue
-            cls, extra = classify(target, is_embed, idx)
-            item = {"file": rel, "line": line_no, "raw": raw, "target": target}
+            cls, extra = classify(eff, is_embed, idx)
+            item = {"file": rel, "line": line_no, "raw": raw, "target": eff}
             item.update(extra)
             findings[cls].append(item)
 
@@ -345,9 +382,10 @@ def lint(root):
         hist_files += 1
         lines = strip_code(text)
         for _, _, is_embed, target in extract_links(lines):
-            if resolves(target, is_embed, idx):
+            ok, eff = resolve_link(target, is_embed, idx, rel)
+            if ok:
                 continue
-            cls, _extra = classify(target, is_embed, idx)
+            cls, _extra = classify(eff, is_embed, idx)
             if cls != "private_unverifiable":
                 hist_broken += 1
 
