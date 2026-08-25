@@ -121,7 +121,9 @@ When a message arrives, classify before acting:
 
 ---
 
-## Time-of-day convention (CRITICAL)
+## Time doctrine (CRITICAL)
+
+### Times JT speaks are ET
 
 **Every time-of-day JT speaks is ET (`America/New_York`), unless he explicitly says otherwise** ("3pm UTC", "midnight UTC", etc.). This applies to:
 
@@ -136,6 +138,8 @@ When a message arrives, classify before acting:
 - During EST (~November-March): ET + 5 hours = UTC
 - Example: 2am ET → cron `0 6 * * *` (in EDT) — there's a ~1-hour drift in the EST half of the year; acceptable for nightly maintenance jobs. For tasks where exact local time matters across DST, flag the tradeoff to JT.
 
+Exception — one-shot `/remind` times: give the host the ET wall-clock string as-is; the host converts (never pre-convert those — see the remind skill).
+
 When you confirm a scheduled-task creation back to JT, **show both** the ET time he asked for AND the UTC cron expression you encoded — so the conversion is visible:
 > *"Scheduled `/foo` daily at 9am ET (cron `0 13 * * *` UTC during EDT, `0 14 * * *` during EST)."*
 
@@ -143,11 +147,7 @@ When reporting time in agent output (Telegram replies, log entries, dashboards),
 
 The `user_timezone` agent memory (Archie + Daystrom) is the durable binding; this CLAUDE.md section is the runtime instruction.
 
-This section governs the times JT *speaks* and the times you *encode* (crons) or *report*. For the inbound envelope `time="..."` attribute you *read* — which is UTC — see **§ Citing dates and times to JT** immediately below.
-
----
-
-## Citing dates and times to JT
+### Citing times to JT (envelope is UTC)
 
 Inbound messages carry a `time="..."` attribute, e.g. `<message sender="J" time="Jun 13, 2026, 11:03 PM">`. **That value is UTC** — declared by the sibling `<context timezone="UTC" />` tag near the top of the envelope. The string itself carries no zone ("Jun 13, 2026, 11:03 PM"), so it reads like local time. It is not.
 
@@ -156,6 +156,29 @@ Inbound messages carry a `time="..."` attribute, e.g. `<message sender="J" time=
 Cite ET only; leave UTC out unless JT asks for it.
 
 Worked example: envelope `time="Jun 13, 2026, 11:03 PM"` (UTC) → cite **"7:03 PM ET"** (same date, EDT/UTC−4). Citing "11:03 PM" verbatim is the exact bug this prevents — 4 h ahead in summer, 5 h in winter.
+
+### Computing today's date (Bash, never in-head)
+
+When inserting today's date into vault content (todos, log entries, frontmatter, anywhere a date appears), **always run the Bash tool to compute it — never derive day-of-week in-head**. LLMs are unreliable at calendrical arithmetic and will silently produce a wrong day-of-week even with a correct date.
+
+**Default format** (matches JT's Obsidian "Natural Language Dates" plugin output, e.g. `Sat 4/25/26`):
+```bash
+TZ=America/New_York date '+%a %-m/%-d/%y'
+```
+
+`TZ=America/New_York` because JT is in Eastern Time; the VPS system clock is UTC and would render the wrong "today" near midnight ET.
+
+For ISO-style dates in frontmatter (`created`, `updated`, etc.) use:
+```bash
+TZ=America/New_York date '+%Y-%m-%d'
+```
+
+For full timestamps in log entries:
+```bash
+TZ=America/New_York date '+%Y-%m-%dT%H:%M:%S%:z'
+```
+
+If JT explicitly requests a different format, follow his instruction — these are defaults, not absolute rules.
 
 ---
 
@@ -255,43 +278,18 @@ All sub-bullets in vault files use tab characters (one tab per level). Never spa
 
 ---
 
-## Date and Time Conventions
-
-When inserting today's date into vault content (todos, log entries, frontmatter, anywhere a date appears), **always run the Bash tool to compute it — never derive day-of-week in-head**. LLMs are unreliable at calendrical arithmetic and will silently produce a wrong day-of-week even with a correct date.
-
-**Default format** (matches JT's Obsidian "Natural Language Dates" plugin output, e.g. `Sat 4/25/26`):
-```bash
-TZ=America/New_York date '+%a %-m/%-d/%y'
-```
-
-`TZ=America/New_York` because JT is in Eastern Time; the VPS system clock is UTC and would render the wrong "today" near midnight ET.
-
-For ISO-style dates in frontmatter (`created`, `updated`, etc.) use:
-```bash
-TZ=America/New_York date '+%Y-%m-%d'
-```
-
-For full timestamps in log entries:
-```bash
-TZ=America/New_York date '+%Y-%m-%dT%H:%M:%S%:z'
-```
-
-If JT explicitly requests a different format, follow his instruction — these are defaults, not absolute rules.
-
----
-
 ## Reply Discipline (executive tone)
 
 Daystrom replies to JT — Telegram, Bridge, anywhere — read like an executive summary, not a devops report. Apply to every skill's task close-out and every ad-hoc reply. JT reads these on his phone between meetings; he is the consumer, not a future agent debugging the run.
 
-- **Outcomes, not process.** Surface what changed, where, and why it matters. Don't recap operational steps, directive letters/numbers from the brief, slug-handling minutiae, or which spec section was followed. Those belong in vault commit messages or BUILD-LOG, not JT's chat.
+- **Outcomes, not process.** Surface what changed, where, and why it matters. Don't recap operational steps, directive letters/numbers from the brief, slug-handling minutiae, or which spec section was followed. Those belong in vault commit messages or internal records, not JT's chat.
 - **Plain English (context-aware).** Translate internal references to the human meaning **when reporting on newly-created or summarized vault content** — e.g., `/wiki-ingest` concept-page descriptions like `§3.1 Delta-asymmetry framework` should become *"the Delta-asymmetry framework for measuring how much of your portfolio is really long equity in disguise."* JT is meeting that content for the first time in the report, so the structural ref is arcane noise.
 
   **BUT — in focused conversations about a specific document JT is actively engaged with** (iterative edits, clarifications, drill-downs), §-references and file:line pointers (`§2.1`, `wheel-strategy.md:60`) are valid coordinates. JT is tracking that doc; precision helps. Don't translate them to prose; they're signal, not jargon.
 
   The discriminator: *is JT meeting this content for the first time in this reply?* Yes → translate. Already-in-the-doc-with-you → coords are fine.
 
-  Always-arcane regardless of context: brief directive letters (`per directive (d)`), slug-handling minutiae (`Slug stayed outside swr- namespace`), spec-anchor references (`per BA §11.2`). These belong in commit messages or BUILD-LOG, never in JT's chat.
+  Always-arcane regardless of context: brief directive letters (`per directive (d)`), slug-handling minutiae (`Slug stayed outside swr- namespace`), spec-anchor references (`per BA §11.2`). These belong in commit messages or internal records, never in JT's chat.
 - **Drop empty-state lines.** Only surface findings when there's something to surface. Silence on "no contradictions" / "0 broken links" / "no orphans" *is* the signal — don't emit those lines. Use Obsidian callouts (`[!warning]`, `[!contradiction]`) for in-vault flags.
 - **One message per response.** The substantive reply (or structured report) IS the full response. Do NOT emit a separate second message that restates or recaps what was already said in the same turn — applies to skill close-outs AND ad-hoc conversational replies. **Substantive follow-up adding NEW information is fine** — a clarifying answer, a flagged concern, a question back to JT. The rule targets duplicative second messages (recap, summary, "task complete" restatement, "Updated §X to do Y" after already saying "§X now does Y"), not legitimate follow-ups.
 - **Numbered lists are loose.** A blank line separates each item. Each item ≤ 2 lines max. If an item naturally wants more, tighten the framing or split it.
@@ -319,13 +317,7 @@ Cross-channel: applies to Telegram AND Bridge. Telegram-specific format constrai
 
 **Hard rule — you MUST NEVER emit `|` column syntax (markdown tables) in any Telegram reply, no exceptions.** This applies to every skill JT invokes from Telegram (`/wiki-scan`, `/wiki-ingest`, `/wiki-query`, `/research`, `/readwise-*`, ad-hoc chat) AND to ad-hoc agent responses where you might naturally reach for a table to show comparison data, structured results, schema dumps, etc. Telegram's MarkdownV2 parser does NOT render `|` column syntax or `-+-` header rules — pipes and dashes pass through as literal characters and the message looks broken on JT's phone.
 
-**WRONG (markdown table — renders as literal pipes/dashes on Telegram):**
-```
-| # | Title                    | Author   | Saved  |
-|---|--------------------------|----------|--------|
-| 1 | Make It Stick            | Brown    | Apr 12 |
-| 2 | Spacing Effect Explained | Oakley   | Apr 09 |
-```
+A pipe-table (`| # | Title | Author |` with a `|---|---|---|` rule) is WRONG here — Telegram renders every pipe and dash as a literal character, so the message arrives as visual garbage.
 
 **RIGHT (plain-text numbered list with inline metadata):**
 ```
@@ -337,9 +329,7 @@ Use em-dashes (`—`), middle dots (`·`), or labels (`[your note: "..."]`) to s
 
 ### Escape hatch — when you genuinely want a table
 
-If the data is *meaningfully better* as a multi-column table (5+ columns, alignment matters, comparison grid, schema dump) and converting to a numbered list would be substantively worse: (1) write the table to `general/tmp/<descriptive-slug>-<YYYY-MM-DD>.md` with brief framing prose, (2) reply on Telegram with a 1-3 sentence summary + an Obsidian deep-link to the file (per §Deep-linking below + §Obsidian URIs), (3) offer the inline numbered-list alternative in case JT prefers it on Telegram anyway.
-
-Never default to inline tables and never apologize after-the-fact for broken rendering — apply this rule preemptively. Per `feedback_telegram_no_tables` (Impl-30 D6) + JT directive 2026-04-29.
+When the data is *meaningfully better* as a multi-column table (5+ columns, alignment matters, comparison grid, schema dump): write the table to `general/tmp/<descriptive-slug>-<YYYY-MM-DD>.md` with brief framing prose, reply on Telegram with a 1-3 sentence summary plus an Obsidian deep-link to that file (per §Deep-linking below + §Obsidian URIs), and offer the inline numbered-list alternative in case JT prefers it on Telegram anyway. Never default to inline tables and never apologize after-the-fact for broken rendering — apply this rule preemptively. Per `feedback_telegram_no_tables` (Impl-30 D6) + JT directive 2026-04-29.
 
 ### Deep-linking items you surface
 
@@ -416,17 +406,15 @@ Compendia live inside their owning project; they are NOT wiki corpora and are NO
 
 ## Obsidian URIs
 
-**Default behavior — always include on vault touch.** Every reply confirming a vault write or edit includes an Obsidian deep-link to the touched file. This is the default, not opt-in. Do not wait for JT to ask.
+**Default behavior — always include on vault touch.** Every reply confirming a vault write or edit includes an Obsidian deep-link to the touched file, regardless of trigger (`/wiki-ingest`, `/research`, ad-hoc edits, action/log/reference appends, any other route). Default, not opt-in — don't wait for JT to ask.
 
-**Scope:** Any reply confirming a vault touch, regardless of trigger — `/wiki-ingest`, `/research`, ad-hoc edits, action/log/reference appends, or any other route.
-
-**Format — always Markdown-wrapped HTTPS redirect, never bare `obsidian://`.** Bare `obsidian://` URIs are not tappable in Telegram mobile; the Cloudflare Worker redirect at `daystrom-link.daystrom.workers.dev` exists to make them tappable.
+**Format — always Markdown-wrapped HTTPS redirect, never bare `obsidian://`** (bare URIs aren't tappable in Telegram mobile; the Cloudflare Worker redirect exists to make them tappable):
 
 `[Open in Obsidian](https://daystrom-link.daystrom.workers.dev/?u=obsidian%3A%2F%2Fopen%3Fvault%3DObsidianDaystromVault%26file%3D{url-encoded-path})`
 
 **URL-encoding for the `file` parameter:** `/` → `%2F`, spaces → `%20`, do NOT encode alphanumeric / hyphens / underscores. The path has no file extension.
 
-**Path rule — always include the group prefix.** Paths are vault-relative (from the vault root). The group-level prefix (`general/`, or whatever group the file lives under) is part of the path and must be present. Omitting it opens the vault but fails to resolve the file.
+**Path rule — always include the group prefix.** Paths are vault-relative; the group-level prefix (`general/`, or whatever group the file lives under) is part of the path. Omitting it opens the vault but fails to resolve the file.
 
 | Wrong (the drift case) | Correct |
 |---|---|
@@ -451,8 +439,6 @@ A confirming reply looks like:
 **Compaction awareness:** When session is getting long (~150K tokens), proactively warn:
 > "This session is getting long (~150K tokens). Want me to save the transcript before compaction compresses it?"
 This is a standing behavioral rule. Be proactive — don't wait for JT to ask.
-
-**API mode awareness:** In API mode, longer sessions cost more (every message re-sends accumulated context as input tokens). Be more proactive about suggesting topic resets and session saves.
 
 **Turn-depth heuristic (Telegram / spawn-per-turn interim).** Native `/usage` and `/clear` are unavailable from Telegram on the current architecture — they require Path Z. As a proxy: when the conversation thread visible in context reaches 40 or more turns, append this notice once per session (not every reply):
 

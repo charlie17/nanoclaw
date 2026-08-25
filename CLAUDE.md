@@ -1,76 +1,77 @@
-# NanoClaw
+# NanoClaw — daystrom fork
 
-Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
+Customized fork of NanoClaw (branch `custom/daystrom`) running JT's assistant **Daystrom** on a VPS. Upstream docs describe a generic multi-channel install; this file describes what is actually here. Where the two disagree, this file wins.
 
 ## Quick Context
 
-Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to Claude Agent SDK running in containers (Linux VMs). Each group has isolated filesystem and memory.
+Single Node.js process. Messages route to the Claude Agent SDK running in Docker containers; each group gets an isolated filesystem and memory.
+
+**Two channels exist and both are live:** `telegram` (grammy) and `web` — the native **Bridge** web channel (`src/channels/web.ts`, ~3160 lines, authored per D-91). Bridge also serves `/widget/*` (Projects Board v2) and reverse-proxies `/dash/*` to claude-usage and Open WebUI. `src/channels/index.ts` lists WhatsApp, Slack, Discord, and Gmail as commented placeholders — **no files, no imports, not available.**
+
+Groups: `daystrom` (main, elevated), `global`, `worf`.
 
 ## Key Files
 
-| File                       | Purpose                                                             |
-| -------------------------- | ------------------------------------------------------------------- |
-| `src/index.ts`             | Orchestrator: state, message loop, agent invocation                 |
-| `src/channels/registry.ts` | Channel registry (self-registration at startup)                     |
-| `src/ipc.ts`               | IPC watcher and task processing                                     |
-| `src/router.ts`            | Message formatting and outbound routing                             |
-| `src/config.ts`            | Trigger pattern, paths, intervals                                   |
-| `src/container-runner.ts`  | Spawns agent containers with mounts                                 |
-| `src/task-scheduler.ts`    | Runs scheduled tasks                                                |
-| `src/db.ts`                | SQLite operations                                                   |
-| `groups/{name}/CLAUDE.md`  | Per-group memory (isolated)                                         |
-| `container/skills/`        | Skills loaded inside agent containers (browser, status, formatting) |
+| File                       | Purpose                                                        |
+| -------------------------- | -------------------------------------------------------------- |
+| `src/index.ts`             | Orchestrator: state, message loop, agent invocation            |
+| `src/channels/registry.ts` | Channel registry (self-registration at startup)                |
+| `src/channels/telegram.ts` | Telegram channel                                               |
+| `src/channels/web.ts`      | **Bridge** web channel + `/widget/*` + `/dash/*` proxy         |
+| `src/credential-proxy.ts`  | Header-rewriting Anthropic credential proxy (see Secrets)      |
+| `src/env.ts`               | `readEnvFile()` — reads `.env` without touching `process.env`  |
+| `src/ipc.ts`               | IPC watcher and task processing                                |
+| `src/router.ts`            | Message formatting and outbound routing                        |
+| `src/config.ts`            | Trigger pattern, paths, intervals, proxy port                  |
+| `src/container-runner.ts`  | Spawns agent containers with mounts                            |
+| `src/task-scheduler.ts`    | Runs scheduled tasks                                           |
+| `src/db.ts`                | SQLite operations                                              |
+| `src/widget/board-v2/`     | Projects Board v2 data plane (parser, tokenize, snapshot)      |
+| `groups/{name}/CLAUDE.md`  | Per-group memory (isolated)                                    |
+| `container/skills/`        | Skills loaded inside agent containers (24 dirs)                |
 
-## Secrets / Credentials / Proxy (OneCLI)
+## Secrets / Credentials / Proxy
 
-API keys, secret keys, OAuth tokens, and auth credentials are managed by the OneCLI gateway — which handles secret injection into containers at request time, so no keys or tokens are ever passed to containers directly. Run `onecli --help`.
+Container Anthropic auth flows through the fork's own **native credential proxy**, `src/credential-proxy.ts` — `startCredentialProxy(port, host)`, listening on `CREDENTIAL_PROXY_PORT` (default **3001**).
+
+Containers receive `ANTHROPIC_BASE_URL` pointed at the proxy plus a **literal placeholder token** (`ANTHROPIC_API_KEY=placeholder` in api-key mode, `CLAUDE_CODE_OAUTH_TOKEN=placeholder` in OAuth mode — `container-runner.ts`). Real credentials never enter a container. The proxy reads them host-side and rewrites headers before forwarding: api-key mode re-injects `x-api-key`; OAuth mode swaps the placeholder `Authorization: Bearer` for the real token on the CLI's key-exchange request. It also strips hop-by-hop headers, caps bodies at 4 MB, and rejects `web_search_*` tool use with 403 (D-90).
+
+**`readEnvFile()` (`src/env.ts`) deliberately does NOT populate `process.env`** — it returns only the requested keys, so secrets don't leak into child processes. Code that needs a `.env` value must call it explicitly; reading `process.env` will come back empty. (Parent repo: `learnings/env-file-not-process-env.md`.)
+
+nanoclaw's own secrets live in `.env` at the project root. Sibling host services on the VPS use service-scoped `/etc/<svc>/secrets.env` (root:root, `600`) wired via a systemd drop-in `EnvironmentFile=`; nanoclaw's unit has no `EnvironmentFile` directive.
 
 ## Skills
 
-Four types of skills exist in NanoClaw. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxonomy and guidelines.
+`.claude/skills/` holds the upstream install/customize skills (`/setup`, `/customize`, `/debug`, `/update-nanoclaw`, plus many `add-*` channel skills that are **not** installed here) and two that matter for this fork:
 
-- **Feature skills** — merge a `skill/*` branch to add capabilities (e.g. `/add-telegram`, `/add-slack`)
-- **Utility skills** — ship code files alongside SKILL.md (e.g. `/claw`)
-- **Operational skills** — instruction-only workflows, always on `main` (e.g. `/setup`, `/debug`)
-- **Container skills** — loaded inside agent containers at runtime (`container/skills/`)
+| Skill                           | When to Use                                              |
+| ------------------------------- | -------------------------------------------------------- |
+| `/debug`                        | Container issues, logs, troubleshooting                  |
+| `/update-nanoclaw`              | Bring upstream updates into this customized install      |
+| `/use-native-credential-proxy`  | The credential path this fork actually runs              |
 
-| Skill               | When to Use                                                       |
-| ------------------- | ----------------------------------------------------------------- |
-| `/setup`            | First-time installation, authentication, service configuration    |
-| `/customize`        | Adding channels, integrations, changing behavior                  |
-| `/debug`            | Container issues, logs, troubleshooting                           |
-| `/update-nanoclaw`  | Bring upstream NanoClaw updates into a customized install         |
-| `/init-onecli`      | Install OneCLI Agent Vault and migrate `.env` credentials to it   |
-| `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch     |
-| `/get-qodo-rules`   | Load org- and repo-level coding rules from Qodo before code tasks |
-
-## Contributing
-
-Before creating a PR, adding a skill, or preparing any contribution, you MUST read [CONTRIBUTING.md](CONTRIBUTING.md). It covers accepted change types, the four skill types and their guidelines, SKILL.md format rules, PR requirements, and the pre-submission checklist (searching for existing PRs/issues, testing, description format).
+`container/skills/` (24 dirs) is where Daystrom's real capability lives — heavily vault/wiki/board oriented: `wiki`, `wiki-lint`, `wiki-query`, `wiki-scan`, `research`, `remind`, `qmd`, `moc-refresh`, `weekly-review`, `nightly-report`, `board-synth-v2`, `widget`, `obsidian-bases`, `obsidian-markdown`, `import-chat`, `agent-browser`, `security-audit`, and others.
 
 ## Development
 
-Run commands directly—don't tell the user to run them.
+Run commands directly — don't tell the user to run them.
 
 ```bash
-npm run dev          # Run with hot reload
-npm run build        # Compile TypeScript
+npm run dev          # tsx src/index.ts (runs from source; NOT hot reload)
+npm run build        # tsc
+npm test             # vitest run
 ./container/build.sh # Rebuild agent container
 ```
 
-Service management:
+**Service management on the VPS:** `nanoclaw.service` is a **SYSTEM unit**.
 
 ```bash
-# macOS (launchd)
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
-
-# Linux (systemd)
-systemctl --user start nanoclaw
-systemctl --user stop nanoclaw
-systemctl --user restart nanoclaw
+sudo systemctl restart nanoclaw
 ```
+
+Upstream docs (and `setup/service.ts` when installing as non-root) say `systemctl --user restart nanoclaw`. **That is wrong for this box** — documented trap, parent repo `deploy/VPS-FACTS.md`.
+
+**Deploy:** see the parent repo's `AGENTS.md` §Commands — push `custom/daystrom` → VPS `git pull --ff-only` → `rm -rf dist && npm run build` → clear sessions → `sudo systemctl restart nanoclaw`. Skill/`CLAUDE.md`-only changes are zero-restart (they sync per agent spawn) but **still need the session clear**, since agents resume long-lived sessions from the DB.
 
 ## Container Build Cache
 
