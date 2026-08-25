@@ -9,9 +9,8 @@ Triggered by `daystrom-board-synth-v2` (`schedule_type='once'`), poked by the wi
 `POST /widget/insights-regen/projects-board-v2` route setting `next_run = now`. Runs in an `isolated` agent
 context. Produces one cache file — `insights.json` — that the host's board-v2 data route reads on every GET.
 
-Leaner than v1's `board-synth`: no Log synthesis, no GitHub mirror reads, no priorities.md, no ledger
-reconcile machinery. Just: read the vault + the arrangement + the prior insight list, write a fresh insight
-list.
+Deliberately narrow: no Log synthesis, no GitHub mirror reads, no priorities.md, no ledger reconcile
+machinery. Just: read the vault + the arrangement + the prior insight list, write a fresh insight list.
 
 ## Inputs (all container-side reads)
 
@@ -118,7 +117,7 @@ directly (eliminates partial-read races with the host's data route):
 ## Completion reporting (silent success, loud error)
 
 The scheduled-task runner forwards your FINAL message to JT's Telegram. An empty final message sends
-nothing. Mirrors v1 `board-synth`'s pattern exactly:
+nothing. The pattern is silence on success, detail on failure:
 
 - **On success** — after `insights.json` is written atomically, **END YOUR TURN WITH NO FINAL MESSAGE.** Do
   not summarize, confirm, count items, or list what you found. Emit zero output text. The board itself is

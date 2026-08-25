@@ -1,9 +1,0 @@
-- Mon 6/8/26: Simplified Ann ROI = (net / collateral) × (365 / DTE)
-	- net = all credits in − all debits out
-	- collateral = strike × shares
-- Fri 5/22/26 - sample position
-	- ![[Pasted image 20260525171123.png]]
-- Wed 5/20/26: A neutral provider note and a placeholder contact address sample@example.com
-- Tue 5/12/26: Nailed down the sample dashboard. Also built out story panels
-- Mon 5/4/26: Built out a `/sample` command in the sample repo
-- Note: A neutral closing note about a data quirk

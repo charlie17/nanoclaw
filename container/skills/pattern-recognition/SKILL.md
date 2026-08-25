@@ -17,7 +17,7 @@ The caller passes a context bundle as plain text in the invocation prompt. Expec
 - Component 7 (Vault Hygiene) summary: vault size, orphan count, frontmatter coverage
 - Component 10 (Observation Extraction) summary: key themes from conversation excerpts
 - Component 1 summary: accomplishments this window (or "[stub — convention not adopted]")
-- Component 4 summary: open project runway (or "[stub — convention not adopted]")
+- Component 4 summary: open items (or "[stub — convention not adopted]")
 - Review window: `window_start` and `window_end` ISO timestamps
 - Review count: integer
 

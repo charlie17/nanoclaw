@@ -47,14 +47,8 @@ import {
 import type { ChatInfo } from '../db.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
 import { logger } from '../logger.js';
-// Impl-73 Step 4a — Projects Board read plane (GET /widget/data/projects-board).
-import { buildProjectsBoardSnapshot } from '../widget/snapshot.js';
-// Impl-73 Step 4b-Log — tokenize plain-text cache strings to TextField for the API response.
-import { tokenize } from '../widget/wikilink.js';
-import type { Insight } from '../widget/types.js';
-import { overlayLogCache, type LogsCache } from '../widget/log-overlay.js';
-// Projects Board v2 (SPEC §4) — data / state / insights-regen plane. Entirely
-// separate module tree from v1's widget/*.ts; v1 behaviour is unchanged.
+// Projects Board v2 (SPEC §4) — data / state / insights-regen plane. The only
+// board served by /widget/*; the retired v1 board and its modules are gone.
 import {
   boardV2StateDir,
   buildBoardV2Snapshot,
@@ -1836,12 +1830,11 @@ export class WebChannel implements Channel {
       .end(JSON.stringify({ ok: true, id: msgId }));
   }
 
-  // Impl-73 Step 4a — GET /widget/data/<id>: the deployed Projects Board fetches
-  // its snapshot here on load/refresh. Read-only (clone of the /dash/* C13
-  // posture — no FS writes, no onMessage, no agent invoke); the Bridge parses
-  // priorities.md + each project's next-file/log live on each GET (D-4a.1).
-  // Same cross-origin CORS + WIDGET_FEEDBACK_TOKEN auth ladder as feedback.
-  // Pilot: only `projects-board` is valid.
+  // GET /widget/data/<id>: the deployed Projects Board fetches its snapshot
+  // here on load/refresh. Read-only (clone of the /dash/* C13 posture — no FS
+  // writes, no onMessage, no agent invoke); the Bridge parses the vault live on
+  // each GET. Same cross-origin CORS + WIDGET_FEEDBACK_TOKEN auth ladder as
+  // feedback. Serves board-v2 only — every other id 404s.
   private async handleWidgetData(
     req: IncomingMessage,
     res: ServerResponse,
@@ -1885,95 +1878,22 @@ export class WebChannel implements Channel {
       return;
     }
 
-    // /widget/data/<id> — id charset-validated (kebab ASCII ≤64). Pilot serves
-    // only the Projects Board; anything else 404s.
+    // /widget/data/<id> — id charset-validated (kebab ASCII ≤64). Board v2 is
+    // the only served board; anything else 404s.
     const id = urlPath.slice('/widget/data/'.length);
     if (!/^[a-zA-Z0-9._-]{1,64}$/.test(id)) {
       res.writeHead(400).end('Invalid id');
       return;
     }
-    // Board v2 (SPEC §4.1) — a different snapshot, a different state dir, and
-    // it returns the overlay in the same round-trip. v1's path below is
-    // untouched; the two boards run side by side through the trial (D10).
+    // Board v2 (SPEC §4.1) — returns the snapshot and the overlay in the same
+    // round-trip.
     if (id === BOARD_V2_WIDGET_ID) {
       await this.serveBoardV2Data(res);
       return;
     }
-    if (id !== 'projects-board') {
-      res.writeHead(404).end('Not Found');
-      return;
-    }
-
-    try {
-      const vaultRoot = path.join(os.homedir(), 'vault'); // D-S3.9 — same as /dash/vault-stats
-      const snapshot = await buildProjectsBoardSnapshot(vaultRoot);
-
-      // 4b-Log: best-effort cache overlay — missing/unparseable cache degrades
-      // gracefully to the synthesized:false stub + empty insights already in snapshot.
-      const boardCache = path.join(
-        os.homedir(),
-        'daystrom-ops',
-        'state',
-        'board-cache',
-      );
-
-      try {
-        const logsText = await readFile(
-          path.join(boardCache, 'logs.json'),
-          'utf8',
-        );
-        // 4b-Log Must-Fix: overlay keyed by entry.folder (NOT slug) — see
-        // overlayLogCache. Best-effort + shape-guarded; mutates snapshot in place.
-        const logsData = JSON.parse(logsText) as LogsCache;
-        overlayLogCache(snapshot, logsData);
-      } catch {
-        // Cache absent or unparseable — synthesized:false stub already in place.
-      }
-
-      try {
-        const ledgerText = await readFile(
-          path.join(boardCache, 'insights-ledger.json'),
-          'utf8',
-        );
-        const ledger = JSON.parse(ledgerText) as {
-          insights: {
-            id: string;
-            text: string;
-            projects: string[];
-            firstSurfaced: string;
-            bucket: 'standing' | 'new';
-            status: 'active' | 'resolved';
-          }[];
-        };
-        const active = ledger.insights.filter((i) => i.status === 'active');
-        const toInsight = (i: {
-          id: string;
-          text: string;
-          projects: string[];
-          firstSurfaced: string;
-        }): Insight => ({
-          id: i.id,
-          text: tokenize(i.text),
-          projects: i.projects,
-          firstSurfaced: i.firstSurfaced,
-        });
-        snapshot.insights = {
-          standing: active
-            .filter((i) => i.bucket === 'standing')
-            .map(toInsight),
-          new: active.filter((i) => i.bucket === 'new').map(toInsight),
-        };
-      } catch {
-        // Cache absent or unparseable — empty insights already in place.
-      }
-
-      res
-        .writeHead(200, { 'Content-Type': 'application/json' })
-        .end(JSON.stringify(snapshot));
-    } catch (err) {
-      logger.error({ err: String(err) }, '[widget-data] snapshot build failed');
-      res.writeHead(500).end('Internal Server Error');
-    }
+    res
+      .writeHead(404, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify({ error: 'unknown widget id' }));
   }
 
   // ── Projects Board v2 (SPEC §4) ───────────────────────────────────────────

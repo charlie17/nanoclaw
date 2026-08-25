@@ -1,14 +1,11 @@
 // Projects Board v2 — next.md → cards (SPEC §2.1, D14).
 //
-// v2 is a DIFFERENT contract from v1's `next-parser.ts`, which stays untouched:
-// v1 is lossless (every node keeps its verbatim source line for a write-back
-// plane that is now dead) and treats `####` as group structure. v2 is
-// render-oriented — one flat list of cards per project, `####` dropped as
-// structure (REQ "things dropped"), children accepted on SPACE indentation as
-// well as tabs (v1's tab-only gap), checkboxes recognized (E5).
+// Render-oriented, not lossless: one flat list of cards per project, `####`
+// dropped as structure (REQ "things dropped"), children accepted on SPACE
+// indentation as well as tabs, checkboxes recognized (E5).
 //
-// Tolerance posture is inherited verbatim: an unclassifiable column-0 line is
-// KEPT as an `unparsed` card + a parse flag, never silently dropped.
+// Tolerance posture: an unclassifiable column-0 line is KEPT as an `unparsed`
+// card + a parse flag, never silently dropped.
 
 import crypto from 'node:crypto';
 

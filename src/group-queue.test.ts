@@ -897,7 +897,7 @@ describe('GroupQueue', () => {
     let resolveTask: () => void = () => {};
     queue.enqueueTask(
       'A@g.us',
-      'daystrom-board-synth-v1',
+      'daystrom-board-synth-v2',
       () =>
         new Promise<void>((resolve) => {
           resolveTask = resolve;

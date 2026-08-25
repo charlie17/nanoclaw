@@ -1,6 +1,6 @@
 ---
 name: /weekly-review
-description: Saturday weekly digest — 8 sections + appendix (Pattern Recognition, Accomplishments, Logs, Actions, Planning, Runway, Learning, Big 5). Writes vault report + Telegram summary + updates review state.
+description: Saturday weekly digest — 8 sections + appendix (Pattern Recognition, Accomplishments, Logs, Actions, Planning, Open Items, Learning, Big 5). Writes vault report + Telegram summary + updates review state.
 ---
 
 ## Invocation
@@ -68,7 +68,7 @@ Body: H1 + one H2 per section in order 1–8, then `---` separator + `# Appendix
 ## 5. Structured Planning
 ...
 
-## 6. Projects Runway
+## 6. Open Items
 ...
 
 ## 7. Learning Review
@@ -215,7 +215,7 @@ Empty-state (no action files): "No action files found in vault."
 ### 5. Structured Planning
 
 Based on the review above:
-1. Propose priorities for the coming week, grounded in open actions (§4) and project runway (§6 data). Propose only data-grounded priorities — open actions with dates, natural forcing functions, or dated deadlines. Do not manufacture priorities from Pattern Recognition observations alone.
+1. Propose priorities for the coming week, grounded in open actions (§4) and open items (§6 data). Propose only data-grounded priorities — open actions with dates, natural forcing functions, or dated deadlines. Do not manufacture priorities from Pattern Recognition observations alone.
 2. Flag any todos that appear stale (old dates, no progress signal in the window).
 3. Ask JT about available time to enable time-budget calibration.
 
@@ -228,17 +228,17 @@ Based on the review above:
 
 **Stale-item flags:** list items stale beyond the window under a "Stale-item flags (FYI, no action implied):" line. Do not re-list items already covered in a Priority.
 
-**Empty-state rule:** If §4 and §6 data provide no open actions or runway items, say so explicitly and skip priority proposals — do not manufacture priorities from message excerpts alone. Still ask JT about available time.
+**Empty-state rule:** If §4 and §6 data provide no open actions and no §6 open items, say so explicitly and skip priority proposals — do not manufacture priorities from message excerpts alone. Still ask JT about available time.
 
-### 6. Projects Runway
+### 6. Open Items
 
 Open-item counts by project — names link to each project's `next.md`.
 
 If `data.components['4'].convention_not_adopted` is true:
-> "No project runway surfaced (next.md convention not yet adopted in vault)."
+> "No open items surfaced (next.md convention not yet adopted in vault)."
 
 If `next_md_paths` present: Read each path at `/workspace/extra/vault/projects/<path>`. Count numbered open items. Render one line per project, sorted descending by open count:
-`- [[general/projects/<name>/next|<name>]] — N open`
+`- [[projects/<name>/next|<name>]] — N open`
 
 ### 7. Learning Review
 

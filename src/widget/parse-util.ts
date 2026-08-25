@@ -1,8 +1,5 @@
 // Impl-73 Step 4a — shared parser helpers.
 
-import { tokenize } from './wikilink.js';
-import type { TextField } from './types.js';
-
 // Strip a leading `---` … `---` YAML frontmatter block. Returns the body plus
 // `offset` = number of lines removed, so callers can report parse flags against
 // real (1-based) file line numbers. Tolerant: a block with no closing fence is
@@ -19,11 +16,4 @@ export function stripFrontmatter(text: string): {
     }
   }
   return { body: text, offset: 0 };
-}
-
-// Build a TextField: `raw` keeps the full verbatim source line (lossless, for
-// 4c round-trip); `tokens` are the marker-stripped content split into
-// text/link render segments (for 4b). — D-4a.5.
-export function textField(rawLine: string, content: string): TextField {
-  return { raw: rawLine, tokens: tokenize(content).tokens };
 }

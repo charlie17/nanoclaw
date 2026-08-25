@@ -2368,16 +2368,15 @@ describe('WebChannel HTTP — /widget/feedback (Plane C)', () => {
   });
 });
 
-// ── GET /widget/data/<id> — Plane C read (Impl-73 Step 4a) ────────────────────
+// ── GET /widget/data/<id> — auth ladder ───────────────────────────────────────
 //
-// The route's auth/CORS/validation/routing layer is what this suite covers; the
-// deep snapshot/schema correctness against the real fixture vault lives in
-// src/widget/snapshot.test.ts (which does not mock fs). Here node:fs/promises is
-// mocked, so the 200-wiring case uses readdir → [] (no project folders), making
-// every priorities entry lightweight — exercising the wired handler + serialized
-// schema + read-only posture without needing deep fs.
+// The shared gate in front of every /widget/data GET: CORS-absolute-first
+// preflight, fail-closed token, constant-time bearer, id charset validation,
+// and the 404 for any id that is not board-v2. Deliberately board-agnostic —
+// none of these cases reach a snapshot build, so no fs wiring is needed. The
+// v2 payload/routing cases live in the v2 suite below.
 
-describe('WebChannel HTTP — GET /widget/data (Plane C read)', () => {
+describe('WebChannel HTTP — GET /widget/data (auth ladder)', () => {
   let dataChannel: WebChannel;
   let dataOpts: ChannelOpts;
   let dataPort: number;
@@ -2400,12 +2399,6 @@ describe('WebChannel HTTP — GET /widget/data (Plane C read)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockConfig.WIDGET_FEEDBACK_TOKEN = 'test-widget-token';
-    // No project folders → every priorities entry is lightweight, so only
-    // priorities.md is read and no next/log reads occur.
-    vi.mocked(readdir).mockResolvedValue([] as never);
-    vi.mocked(readFile).mockResolvedValue(
-      '---\ntype: project\narea: priorities\n---\n- Active\n\t1. Alpha\n' as never,
-    );
   });
 
   function get(pathSuffix: string, headers?: Record<string, string>) {
@@ -2423,7 +2416,7 @@ describe('WebChannel HTTP — GET /widget/data (Plane C read)', () => {
   it('preflight OPTIONS → 204 with ACAO + GET in allow-methods', async () => {
     const res = await req(dataPort, {
       method: 'OPTIONS',
-      path: '/widget/data/projects-board',
+      path: `/widget/data/${V2_ID}`,
       headers: { Origin: WIDGET_ORIGIN },
     });
     expect(res.status).toBe(204);
@@ -2435,16 +2428,14 @@ describe('WebChannel HTTP — GET /widget/data (Plane C read)', () => {
   });
 
   it('no/bad bearer token → 401, still carries ACAO', async () => {
-    const res = await get('projects-board', {
-      Authorization: 'Bearer wrong-token',
-    });
+    const res = await get(V2_ID, { Authorization: 'Bearer wrong-token' });
     expect(res.status).toBe(401);
     expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
   });
 
   it('empty WIDGET_FEEDBACK_TOKEN → 503 (fail closed)', async () => {
     mockConfig.WIDGET_FEEDBACK_TOKEN = '';
-    const res = await get('projects-board');
+    const res = await get(V2_ID);
     expect(res.status).toBe(503);
     expect(res.headers['access-control-allow-origin']).toBe(WIDGET_ORIGIN);
   });
@@ -2454,47 +2445,23 @@ describe('WebChannel HTTP — GET /widget/data (Plane C read)', () => {
     expect(res.status).toBe(400);
   });
 
-  it('unknown (but valid-charset) id → 404 (pilot serves only projects-board)', async () => {
+  it('unknown (but valid-charset) id → 404 after auth', async () => {
     const res = await get('some-other-widget');
     expect(res.status).toBe(404);
   });
 
-  it('projects-board → 200 with the serialized snapshot; read-only (no onMessage)', async () => {
+  it('the retired v1 board id → 404 (board-v2 is the only served board)', async () => {
     const res = await get('projects-board');
-    expect(res.status).toBe(200);
-    expect(res.headers['content-type']).toContain('application/json');
-    const snap = JSON.parse(res.body) as {
-      version: number;
-      widgetId: string;
-      cacheGeneratedAt: null;
-      insights: { standing: unknown[]; new: unknown[] };
-      priorities: { active: { slug: string }[] };
-    };
-    expect(snap.version).toBe(2);
-    expect(snap.widgetId).toBe('projects-board');
-    // readFile mock returns priorities.md content → board-cache JSON.parse fails
-    // → cache overlay silently skipped → cacheGeneratedAt stays null + insights empty.
-    expect(snap.cacheGeneratedAt).toBeNull();
-    expect(snap.insights).toEqual({ standing: [], new: [] });
-    expect(snap.priorities.active[0].slug).toBe('alpha');
+    expect(res.status).toBe(404);
     expect(dataOpts.onMessage).not.toHaveBeenCalled();
-  });
-
-  it('a snapshot build failure surfaces a generic 500 (no raw error leak)', async () => {
-    vi.mocked(readFile).mockRejectedValue(
-      new Error('boom /home/ubuntu/secret'),
-    );
-    const res = await get('projects-board');
-    expect(res.status).toBe(500);
-    expect(res.body).not.toContain('secret');
   });
 });
 
 // ── Projects Board v2 — data / state / insights-regen (SPEC §4) ───────────────
 //
-// Same division of labour as the v1 read suite above: the auth/CORS/validation/
-// routing layer is covered here (node:fs/promises mocked), while the deep
-// parser/snapshot/overlay semantics live in src/widget/board-v2/*.test.ts
+// Same division of labour as the auth-ladder suite above: the auth/CORS/
+// validation/routing layer is covered here (node:fs/promises mocked), while the
+// deep parser/snapshot/overlay semantics live in src/widget/board-v2/*.test.ts
 // against real temp dirs.
 
 const V2_ID = 'projects-board-v2';

@@ -224,10 +224,9 @@ The vault is navigated via three tiers of MOC (Map of Content) files — separat
 Single-file vs folder is not permanent. Some areas start as `reference/{area}.md` and graduate to a per-domain folder when content volume grows or topic count multiplies (precedent: `learning/` is a folder by design; the 14 log domains were promoted wholesale 2026-05-10 in the vault dimension collapse — `arts`, `pops`, `mpm`, `dogs`, `family`, `gifts`, `slaters`, `sawyer`, `poker`, `coding`, `food`, `greece`, `house`, `travel` all moved from flat `logs/{domain}.md` (or `reference/{area}.md` / `reference/{area}/` for coding/food/greece/house/travel) into the unified `logs/<domain>/` shape). When you observe a single-file area becoming unwieldy (~50+ entries, ~10+ distinct subtopics, recurring grep difficulty, JT mentions "this file is getting too big"), **propose the split to JT explicitly** — name the area, the proposed sub-file naming convention, and the migration plan. Do NOT promote unilaterally — promoting creates a new directory, which violates the write-discipline rule above. JT approves; Archie ratifies the schema in this CLAUDE.md; then Daystrom executes the migration following Archie's authoritative routing entry.
 
 **Projects:**
-- `projects/priorities.md` — runway list
-- `projects/{name}/next.md` — project todos (default)
-- `projects/{name}/next-{discriminator}.md` — additional `next-*` files for projects that benefit from splitting their todo stream by axis. Recognized example: `projects/options/next-coding.md` (coding-task track for the options project, sibling to `projects/options/next.md` which holds the strategy/research/ops track). Discriminator is kebab-case, descriptive of the axis. Project authors decide whether to split — most projects use the default single `next.md`.
-- `projects/{name}/log.md` — project accomplishments + learnings (dated entries). Triggers: *"finished {project} task X"*, *"learned the following on {project}: …"*. Also receives smart-todo-lifecycle moves: when JT references completion of an item in any of the project's `next*.md` files (default `next.md`, plus discriminator variants like `next-coding.md`), Daystrom asks for one-line confirmation, then removes from the source `next*.md` file and appends to `log.md` with today's date. **Single `log.md` per project — there is no `log-{discriminator}.md` mirror, even where `next-{discriminator}.md` exists.** Do NOT maintain an in-file `**Log:**` section inside any `next*.md`; if you encounter one, route new completions to `log.md` and surface a migration suggestion to JT.
+- `projects/runway.md` — upcoming project ideas (no folder scaffolding yet)
+- `projects/{name}/next.md` — project todos
+- `projects/{name}/log.md` — project accomplishments + learnings (dated entries). Triggers: *"finished {project} task X"*, *"learned the following on {project}: …"*. Also receives smart-todo-lifecycle moves: when JT references completion of an item in the project's `next.md`, Daystrom asks for one-line confirmation, then removes it from `next.md` and appends to `log.md` with today's date. Do NOT maintain an in-file `**Log:**` section inside `next.md`; if you encounter one, route new completions to `log.md` and surface a migration suggestion to JT.
 - `projects/{name}/notes/{projectname}-{YYYY-MM-DD}-{topic}.md` — free-form notes
 
 **Research:** `research/research-{YYYY-MM-DD}-{topic}.md` — e.g., `research-2026-03-22-hiking-trails-az.md`
@@ -510,7 +509,7 @@ Replace N with the actual observed turn count. Emit once — do not repeat on su
 | "Figured out how to X" / "Tip:" / "Saw Y" | → `logs/coding/!log.md` |
 | "Add a closed trades chart" | → `projects/options/next.md` |
 | "options todo: X" | → `projects/options/next.md` |
-| "finished options task X" | → `projects/options/log.md`. If matching open item in any `projects/options/next*.md` file (`next.md`, `next-coding.md`, …), ask one-line confirmation and move-on-confirm. Single `log.md` regardless of source axis. |
+| "finished options task X" | → `projects/options/log.md`. If matching open item in `projects/options/next.md`, ask one-line confirmation and move-on-confirm. |
 | "learned the following on options: …" | → `projects/options/log.md` |
 | "Research X" | → invoke `/research` skill (sync or supplement path per message content) |
 | "Remind me on 4/21 to do X" | → Create NanoClaw scheduled task |

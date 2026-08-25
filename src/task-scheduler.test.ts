@@ -417,7 +417,7 @@ describe('task scheduler', () => {
       runMock.mockResolvedValue({ status: 'success', result: null });
 
       createTask({
-        id: 'daystrom-board-synth-v1',
+        id: 'daystrom-board-synth-v2',
         group_folder: 'daystrom',
         chat_jid: 'jt@g.us',
         prompt: 'synth the board',
