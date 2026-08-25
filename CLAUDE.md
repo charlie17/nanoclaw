@@ -28,7 +28,7 @@ Groups: `daystrom` (main, elevated), `global`, `worf`.
 | `src/db.ts`                | SQLite operations                                              |
 | `src/widget/board-v2/`     | Projects Board v2 data plane (parser, tokenize, snapshot)      |
 | `groups/{name}/CLAUDE.md`  | Per-group memory (isolated)                                    |
-| `container/skills/`        | Skills loaded inside agent containers (24 dirs)                |
+| `container/skills/`        | Skills loaded inside agent containers                          |
 
 ## Secrets / Credentials / Proxy
 
@@ -42,7 +42,7 @@ nanoclaw's own secrets live in `.env` at the project root. Sibling host services
 
 ## Skills
 
-`.claude/skills/` holds the upstream install/customize skills (`/setup`, `/customize`, `/debug`, `/update-nanoclaw`, plus many `add-*` channel skills that are **not** installed here) and two that matter for this fork:
+`.claude/skills/` holds the upstream install/customize skills (`/setup`, `/customize`, `/debug`, `/update-nanoclaw`, plus many `add-*` channel skills that are **not** installed here). The ones worth knowing:
 
 | Skill                           | When to Use                                              |
 | ------------------------------- | -------------------------------------------------------- |
@@ -50,7 +50,7 @@ nanoclaw's own secrets live in `.env` at the project root. Sibling host services
 | `/update-nanoclaw`              | Bring upstream updates into this customized install      |
 | `/use-native-credential-proxy`  | The credential path this fork actually runs              |
 
-`container/skills/` (24 dirs) is where Daystrom's real capability lives — heavily vault/wiki/board oriented: `wiki`, `wiki-lint`, `wiki-query`, `wiki-scan`, `research`, `remind`, `qmd`, `moc-refresh`, `weekly-review`, `nightly-report`, `board-synth-v2`, `widget`, `obsidian-bases`, `obsidian-markdown`, `import-chat`, `agent-browser`, `security-audit`, and others.
+`container/skills/` is where Daystrom's real capability lives — heavily vault/wiki/board oriented: `wiki`, `wiki-lint`, `wiki-query`, `wiki-scan`, `research`, `remind`, `qmd`, `moc-refresh`, `vault-lint`, `weekly-review`, `nightly-report`, `board-synth-v2`, `widget`, `obsidian-bases`, `obsidian-markdown`, `import-chat`, `agent-browser`, `security-audit`, and others.
 
 ## Development
 

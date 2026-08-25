@@ -127,7 +127,7 @@ Cross-check `container-inspect.json`: for each running container, check `.Config
 
 | Key                       | Allowed in group(s) | Binding spec reference                                                                                                                                                                                                              |
 |---------------------------|---------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | any                 | NanoClaw runtime placeholder injection — the value is literal `placeholder`; actual Anthropic auth flows through OneCLI at request time per daystrom-nanoclaw `CLAUDE.md` "Secrets / Credentials / Proxy (OneCLI)"                  |
+| `CLAUDE_CODE_OAUTH_TOKEN` | any                 | NanoClaw runtime placeholder injection — the value is literal `placeholder`; actual Anthropic auth flows through the native credential proxy (`src/credential-proxy.ts`) at request time per daystrom-nanoclaw `CLAUDE.md` §"Secrets / Credentials / Proxy"                  |
 | `READWISE_ACCESS_TOKEN`   | `daystrom` only     | BA §8.4 + D-98 — Readwise MCP-direct transport via `mcp2.readwise.io` requires this env var in the Daystrom container; egress filtered to `readwise.io` only by tinyproxy at `172.29.0.1:3128`                                     |
 
 **Step B — emit exactly one line per `*_TOKEN`/`*_KEY` match, choosing one of two forms:**

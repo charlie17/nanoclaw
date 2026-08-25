@@ -14,7 +14,7 @@ machinery. Just: read the vault + the arrangement + the prior insight list, writ
 
 ## Inputs (all container-side reads)
 
-- **Per-project next-files:** `/workspace/extra/vault/general/projects/*/next.md`
+- **Per-project next-files:** `/workspace/extra/vault/projects/*/next.md`
 - **Board arrangement (RO):** `/workspace/extra/board-cache/v2/overlay.json` — JT's current Active/On Deck
   placements. Absent or corrupt → treat as no arrangement (proceed without it; do not error).
 - **Regen request (RO):** `/workspace/extra/board-cache/v2/regen-request.json` — `{ mode, requestedAt }`.
