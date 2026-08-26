@@ -34,7 +34,12 @@ CLUSTER_GAP = 240                   # overview cluster -> first chapter
 # Filmstrip: the map is consumed as a horizontal pan, so a chapter may never
 # grow taller than this.  A wing that would stack past it spills sideways into
 # further columns instead — width is cheap, vertical scrolling is not.
-CHAPTER_HEIGHT_CAP = 3200
+#
+# 3400 is chosen against the nominal card: five 620-high cards plus four 60
+# gaps come to 3340 and fit, a sixth would reach 4020 and spill.  This is the
+# width lever — column capacity is the cap divided by card pitch, so the cap
+# (not the safety margin) is what decides how wide the ribbon runs.
+CHAPTER_HEIGHT_CAP = 3400
 
 SIDE_X = 0                          # overview cluster / legend / bin column, far left
 SIDE_GAP = 60
@@ -56,9 +61,10 @@ TITLE_CHARS_PER_LINE = 36           # headings render larger, so they wrap soone
 TITLE_LINE_WEIGHT = 2               # ...and each heading line is ~2 body lines tall
 BASE_H = 48                         # padding and chrome
 LINE_H = 24
-# 1.15 still produced small scrolls in Obsidian: the renderer is hungrier than
-# the model.  Over-tall costs whitespace; too short costs a claim.
-SAFETY_MARGIN = 1.25
+# Calibrated against a screenshot of the real Obsidian render: 1.25 left 25-30%
+# dead space at card bottoms.  1.05 still clears the text with the nominal
+# height doing most of the work.
+SAFETY_MARGIN = 1.05
 H_MIN = 620                         # nominal card, roughly 8.5x11 portrait
 H_MAX = 2400                        # tall enough for a legacy 1400-char body
 H_ROUND = 10
@@ -70,8 +76,13 @@ UNASSIGNED = "unassigned"
 _MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 
 # JSON Canvas preset colors: 1 red, 2 orange, 3 yellow, 4 green, 5 cyan, 6 purple.
-COLOR_ROOT = "5"
-COLOR_LEGEND = "5"
+# Preset "5" (teal) is the machine creation-time colour: everything the builder
+# authors as furniture wears it, so JT can tell furniture from claim at a
+# glance.  Yellow ("3") is deliberately left unused, reserved as a highlighter.
+COLOR_FURNITURE = "5"
+COLOR_ROOT = COLOR_FURNITURE
+COLOR_LEGEND = COLOR_FURNITURE
+COLOR_HUB = COLOR_FURNITURE
 COLOR_BIN = "2"
 STANCE_COLOR = {"agree": "4", "dispute": "1", "surface": "6"}
 STANCE_GLYPH = {
@@ -86,6 +97,7 @@ STANCE_ALIASES = {
 }
 
 CITE_PREFIX = "↳ cite:"
+CITE_WRAP = "*"                     # the cite line renders italic
 JT_SEP = "\n\n---\n— JT —\n"
 
 LEGEND_TEXT = "\n".join([
@@ -99,7 +111,8 @@ LEGEND_TEXT = "\n".join([
     "",
     "**Card colors**",
     "green = agree · red = dispute · purple = surface",
-    "cyan = root and legend · orange = unmatched highlights",
+    "teal = root, legend, and chapter hubs — machine-authored furniture",
+    "orange = unmatched highlights",
     "Source cards stay uncolored.",
     "",
     "**Map structure** — the Overview group holds the root card and the",
@@ -193,7 +206,11 @@ def flag_prefix(claim):
 
 
 def cite_line(claim):
-    """The ``↳ cite:`` line, or '' when there is nothing to cite."""
+    """The ``↳ cite:`` line, or '' when there is nothing to cite.
+
+    The whole line renders italic, quote included, so provenance reads as an
+    aside rather than as part of the claim.
+    """
     locator = claim.get("locator") or ""
     phrase = claim.get("anchor_phrase") or ""
     url = (claim.get("cite") or {}).get("url")
@@ -206,7 +223,7 @@ def cite_line(claim):
         parts.append(" — “%s”" % phrase)
     if url:
         parts.append(" [link](%s)" % url)
-    return "".join(parts)
+    return CITE_WRAP + "".join(parts) + CITE_WRAP
 
 
 def title_text(claim):
@@ -564,7 +581,7 @@ def _column_height(column, heights):
     return sum(heights[c] for c in column) + SIB_GAP * (len(column) - 1)
 
 
-def _layout_chapter(hub_height, roots, children, heights, cap=CHAPTER_HEIGHT_CAP):
+def _layout_chapter(hub_height, roots, children, heights, cap=None):
     """Filmstrip layout: hub in the middle, capped columns fanning both ways.
 
     Each depth level is packed into as many columns as the height cap requires,
@@ -575,6 +592,8 @@ def _layout_chapter(hub_height, roots, children, heights, cap=CHAPTER_HEIGHT_CAP
     Columns occupy distinct x positions and cards within a column are stacked
     with a gap, so nothing can overlap by construction.
     """
+    if cap is None:
+        cap = CHAPTER_HEIGHT_CAP
     cache = {}
     weights = dict(
         (c["id"], _subtree_height(c["id"], children, heights, cache)) for c in roots
@@ -831,9 +850,13 @@ def build_canvas(manifest, existing=None):
     root_x += o_offset_x
     root_y += o_offset_y
 
+    # The legend sits immediately left of the root card, centred against it —
+    # the key to the map reads before the map.  The unmatched bin drops below
+    # the root card, in the root's own column, clear of the overview claims.
     legend = legend_text(manifest)
     l_h = card_height(legend)
-    l_y = overview_y + overview_h + SIDE_GAP
+    l_x = root_x - COL_GAP - CARD_W
+    l_y = root_y + (r_h - l_h) // 2
 
     card_order = list(o_order) + chapter_order
 
@@ -841,20 +864,20 @@ def build_canvas(manifest, existing=None):
     root_ident = node_id(slug, "root")
     nodes.append(_text_node(root_ident, r_text, root_x, root_y, CARD_W, r_h, COLOR_ROOT))
     nodes.append(_text_node(
-        node_id(slug, "legend"), legend, SIDE_X, l_y, CARD_W, l_h, COLOR_LEGEND
+        node_id(slug, "legend"), legend, l_x, l_y, CARD_W, l_h, COLOR_LEGEND
     ))
     if manifest.get("unmatched"):
         b_text = bin_text(manifest)
         b_h = card_height(b_text)
-        b_y = l_y + l_h + SIDE_GAP
+        b_y = root_y + r_h + SIDE_GAP
         nodes.append(_text_node(
-            node_id(slug, "bin"), b_text, SIDE_X, b_y, CARD_W, b_h, COLOR_BIN
+            node_id(slug, "bin"), b_text, root_x, b_y, CARD_W, b_h, COLOR_BIN
         ))
 
     for hub in hubs:
         nodes.append(_text_node(
             node_id(slug, hub_key(hub["key"])), hub["text"],
-            hub["x"], hub["y"], CARD_W, hub["height"],
+            hub["x"], hub["y"], CARD_W, hub["height"], COLOR_HUB,
         ))
 
     by_id = manifest_mod.claims_by_id(manifest)

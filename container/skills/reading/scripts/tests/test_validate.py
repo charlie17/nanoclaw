@@ -268,6 +268,26 @@ class OverflowTest(unittest.TestCase):
         self.assertLessEqual(height, canvas_build.H_MAX)
         self.assertGreaterEqual(height, canvas_build.estimate_height(text))
 
+    def test_margin_is_the_calibrated_one_and_still_clears_text(self):
+        self.assertEqual(canvas_build.SAFETY_MARGIN, 1.05)
+        # a body in the tightened 150-550 range still gets a card that fits
+        for length in (150, 300, 450, 550):
+            body = (self.LONG * 3)[:length]
+            text = "# A v4 card\n\n" + body + "\n\n*↳ cite: Ch 1 — “anchor”*"
+            self.assertGreaterEqual(canvas_build.card_height(text),
+                                    canvas_build.estimate_height(text))
+
+    def test_typical_v4_cards_sit_at_the_nominal_height(self):
+        body = (self.LONG * 3)[:450]
+        text = "# A v4 card\n\n" + body + "\n\n*↳ cite: Ch 1 — “anchor”*"
+        self.assertEqual(canvas_build.card_height(text), canvas_build.H_MIN)
+
+    def test_an_italic_cite_does_not_change_sizing_materially(self):
+        plain = "# T\n\nbody here\n\n↳ cite: Ch 1 — “anchor”"
+        italic = "# T\n\nbody here\n\n*↳ cite: Ch 1 — “anchor”*"
+        self.assertEqual(canvas_build.card_height(plain),
+                         canvas_build.card_height(italic))
+
     def test_a_450_char_body_fits_well_inside_the_cap(self):
         body = (self.LONG * 2)[:450]
         text = "# A typical v2 card\n\n" + body + "\n\n↳ cite: Ch 2 — “anchor”"

@@ -602,6 +602,63 @@ class UntouchedCanvasInvariantTest(unittest.TestCase):
                          {"c-0003": "❓ Is this really what he means? I don't think so."})
 
 
+class ItalicCiteTest(unittest.TestCase):
+    """The cite line renders italic; that must not read as an edit."""
+
+    def test_projected_cite_is_italic(self):
+        m = demo_manifest()
+        node = node_of(clone(cb.build_canvas(m)), "c-0001")
+        cite = [ln for ln in node["text"].split("\n") if "↳ cite:" in ln][0]
+        self.assertTrue(cite.startswith("*") and cite.endswith("*"))
+
+    def test_untouched_italic_card_round_trips_clean(self):
+        m = demo_manifest()
+        canvas = cb.build_canvas(m)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["warnings"], [])
+        self.assertEqual(overlay["body_overrides"], {})
+        self.assertEqual(overlay["title_overrides"], {})
+        self.assertTrue(all(v == [] for v in overlay["flags"].values()))
+        # applying changes nothing, and the rebuild is byte-identical
+        cp.apply_overlay(m, overlay)
+        self.assertEqual(cb.dumps_canvas(cb.build_canvas(m)),
+                         cb.dumps_canvas(canvas))
+
+    def test_cite_is_not_swallowed_into_the_body(self):
+        m = demo_manifest()
+        node = node_of(clone(cb.build_canvas(m)), "c-0001")
+        parts = cp.split_card(node["text"], "Retirement is a cash-flow problem", BODY_A)
+        self.assertEqual(parts["body"], BODY_A)
+        self.assertIn("↳ cite:", parts["cite"])
+
+    def test_a_legacy_non_italic_cite_still_matches(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        # a card written before italics existed
+        node["text"] = node["text"].replace(
+            "*↳ cite: Ch 1 — “cash flow, not a number”*",
+            "↳ cite: Ch 1 — “cash flow, not a number”", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["warnings"], [])
+        self.assertEqual(overlay["body_overrides"], {})
+
+    def test_a_real_cite_edit_is_still_surfaced(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        node["text"] = node["text"].replace("↳ cite: Ch 1", "↳ cite: Chapter One", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertTrue(any("cite line edited" in w for w in overlay["warnings"]))
+
+    def test_strip_emphasis_handles_bold_and_bare(self):
+        self.assertEqual(cp.strip_emphasis("*a*"), "a")
+        self.assertEqual(cp.strip_emphasis("**a**"), "a")
+        self.assertEqual(cp.strip_emphasis("a"), "a")
+        self.assertEqual(cp.strip_emphasis("*a"), "*a")
+        self.assertEqual(cp.strip_emphasis("**"), "**")
+
+
 class UnknownGlyphTest(unittest.TestCase):
     """F2: an unrecognised leading glyph is JT's wording, not a bad flag."""
 
@@ -802,7 +859,7 @@ class SplitCardTest(unittest.TestCase):
         parts = cp.split_card(cb.card_text(claim))
         self.assertEqual(parts["title"], "Bare claim")
         self.assertEqual(parts["body"], "")
-        self.assertTrue(parts["cite"].startswith("↳ cite: Ch 9"))
+        self.assertTrue(cp.strip_emphasis(parts["cite"]).startswith("↳ cite: Ch 9"))
 
     def test_card_with_no_cite(self):
         claim = M.new_claim("c-9", "No cite", 0, "root", 0, body_md="Some body.")

@@ -395,16 +395,25 @@ class GeometrySnapshotTest(unittest.TestCase):
 
     @staticmethod
     def add_overlay(claim):
+        """Enough overlay to push the card clear of the nominal 620 height."""
         claim["jt"]["stance"] = "agree"
         claim["jt"]["notes"] = [
-            "This is the part that actually changed how I think about the drawdown.",
-            "Cross-check against the 2019 spreadsheet before acting on it.",
+            "This is the part that actually changed how I think about the drawdown, "
+            "and it is worth coming back to before the next rebalance.",
+            "Cross-check against the 2019 spreadsheet before acting on any of it, "
+            "because the assumptions there were built for a different tax regime.",
+            "Ask the CPA whether the Roth conversion window changes the ordering.",
         ]
         claim["jt"]["highlights"] = [
             M.new_highlight("hl-1", "https://readwise.io/x/1",
-                            "the order of returns matters more than the average", "✅"),
+                            "the order of returns matters far more than the average "
+                            "return over the whole retirement horizon", "✅ exactly this"),
             M.new_highlight("hl-2", "https://readwise.io/x/2",
-                            "a bad first decade is not recoverable by saving more", ""),
+                            "a bad first decade is not recoverable by saving more "
+                            "once the contributions have stopped", ""),
+            M.new_highlight("hl-3", "https://readwise.io/x/3",
+                            "the sequence of withdrawals is a decision, not an outcome",
+                            "worth a second read"),
         ]
 
     def test_write_records_a_snapshot_of_every_node(self):
@@ -662,8 +671,7 @@ class LayoutTest(unittest.TestCase):
         overview = overview_extent(m, canvas)
 
         self.assertEqual(root["x"], cb.SIDE_X)
-        self.assertEqual(legend["x"], cb.SIDE_X)
-        self.assertEqual(legend["y"], overview["y1"] + cb.SIDE_GAP)
+        self.assertEqual(legend["x"], cb.SIDE_X - cb.COL_GAP - cb.CARD_W)
 
         chapters = chapter_extents(m, canvas)
         for chapter in chapters:
@@ -853,17 +861,30 @@ class ShelfLayoutTest(unittest.TestCase):
         middle = (overview["y0"] + overview["y1"]) / 2.0
         self.assertLessEqual(abs(middle - tallest / 2.0), 2.0)
 
-    def test_legend_and_bin_stay_below_the_overview_cluster(self):
+    def test_legend_sits_immediately_left_of_root_and_bin_below_it(self):
         m = small_manifest(with_unmatched=True, with_overview=True)
         canvas = cb.build_canvas(m)
         by_id = nodes_by_id(canvas)
-        overview = overview_extent(m, canvas)
+        root = by_id[cb.node_id(SLUG, "root")]
         legend = by_id[cb.node_id(SLUG, "legend")]
         bin_node = by_id[cb.node_id(SLUG, "bin")]
-        self.assertEqual(legend["y"], overview["y1"] + cb.SIDE_GAP)
-        self.assertEqual(bin_node["y"], legend["y"] + legend["height"] + cb.SIDE_GAP)
-        self.assertEqual(legend["x"], cb.SIDE_X)
-        self.assertEqual(bin_node["x"], cb.SIDE_X)
+
+        # immediately left of root, one COL_GAP away
+        self.assertEqual(root["x"] - (legend["x"] + legend["width"]), cb.COL_GAP)
+        # vertically centred against root
+        legend_mid = legend["y"] + legend["height"] / 2.0
+        root_mid = root["y"] + root["height"] / 2.0
+        self.assertLessEqual(abs(legend_mid - root_mid), 1.0)
+        # the bin drops below root, in root's own column
+        self.assertEqual(bin_node["x"], root["x"])
+        self.assertEqual(bin_node["y"], root["y"] + root["height"] + cb.SIDE_GAP)
+        self.assertEqual(validate_canvas(canvas), [])
+
+    def test_legend_is_the_leftmost_thing_on_the_map(self):
+        m = small_manifest(with_unmatched=True, with_overview=True)
+        canvas = cb.build_canvas(m)
+        legend = nodes_by_id(canvas)[cb.node_id(SLUG, "legend")]
+        self.assertEqual(legend["x"], min(n["x"] for n in canvas["nodes"]))
 
     def test_hub_card_per_chapter_carrying_its_title(self):
         m = small_manifest()
@@ -873,7 +894,26 @@ class ShelfLayoutTest(unittest.TestCase):
             hub = by_id[cb.node_id(SLUG, cb.hub_key(idx))]
             self.assertEqual(hub["type"], "text")
             self.assertEqual(hub["text"], "# " + title)
-            self.assertNotIn("color", hub, "a hub card is presentational, not stance")
+            # teal is the machine creation-time colour, shared with root/legend
+            self.assertEqual(hub["color"], "5")
+
+    def test_furniture_shares_one_machine_colour(self):
+        m = small_manifest(with_unmatched=True)
+        by_id = nodes_by_id(cb.build_canvas(m))
+        for key in ("root", "legend", cb.hub_key(0), cb.hub_key(1)):
+            self.assertEqual(by_id[cb.node_id(SLUG, key)]["color"], "5",
+                             "%s should wear the furniture colour" % key)
+        self.assertEqual(by_id[cb.node_id(SLUG, "bin")]["color"], "2")
+
+    def test_legend_documents_the_furniture_colour(self):
+        self.assertIn("teal = root, legend, and chapter hubs", cb.LEGEND_TEXT)
+
+    def test_yellow_is_reserved_and_never_emitted(self):
+        for m in (small_manifest(with_unmatched=True, with_overview=True),
+                  big_manifest(), branching_manifest()):
+            for node in cb.build_canvas(m)["nodes"]:
+                self.assertNotEqual(node.get("color"), "3",
+                                    "yellow is reserved as a future highlighter")
 
     def test_hub_gloss_is_rendered_when_the_chapter_has_one(self):
         m = small_manifest()
@@ -1060,6 +1100,31 @@ class ShelfLayoutTest(unittest.TestCase):
         for x in columns:
             self.assertTrue(x + cb.CARD_W <= hub["x"] or x >= hub["x"] + cb.CARD_W)
 
+    def test_five_nominal_cards_fit_a_column_and_a_sixth_does_not(self):
+        pitch = cb.H_MIN + cb.SIB_GAP
+        five = 5 * cb.H_MIN + 4 * cb.SIB_GAP
+        six = 6 * cb.H_MIN + 5 * cb.SIB_GAP
+        self.assertLessEqual(five, cb.CHAPTER_HEIGHT_CAP)
+        self.assertGreater(six, cb.CHAPTER_HEIGHT_CAP)
+        self.assertEqual(pitch, 680)
+
+    def test_the_cap_constant_is_read_at_call_time(self):
+        """The cap must be the single lever — not frozen into a default arg."""
+        m = tall_manifest()
+        original = cb.CHAPTER_HEIGHT_CAP
+        try:
+            cb.CHAPTER_HEIGHT_CAP = 1400
+            tight = cb.build_canvas(m)
+        finally:
+            cb.CHAPTER_HEIGHT_CAP = original
+        loose = cb.build_canvas(m)
+        by_tight = nodes_by_id(tight)
+        by_loose = nodes_by_id(loose)
+        columns = lambda by: len(set(
+            by[cb.claim_node_id(m["slug"], c["id"])]["x"] for c in m["claims"]))
+        self.assertGreater(columns(by_tight), columns(by_loose),
+                           "lowering the cap must force more columns")
+
     def test_spill_keeps_no_overlap_and_is_deterministic(self):
         m = tall_manifest()
         first = cb.build_canvas(m)
@@ -1191,13 +1256,14 @@ class BinTest(unittest.TestCase):
         ids = [n["id"] for n in cb.build_canvas(m)["nodes"]]
         self.assertNotIn(cb.node_id(SLUG, "bin"), ids)
 
-    def test_bin_present_and_below_legend_when_non_empty(self):
+    def test_bin_present_and_below_root_when_non_empty(self):
         m = small_manifest(with_unmatched=True)
         canvas = cb.build_canvas(m)
         by_id = {n["id"]: n for n in canvas["nodes"]}
         bin_node = by_id[cb.node_id(SLUG, "bin")]
-        legend = by_id[cb.node_id(SLUG, "legend")]
-        self.assertEqual(bin_node["y"], legend["y"] + legend["height"] + cb.SIDE_GAP)
+        root = by_id[cb.node_id(SLUG, "root")]
+        self.assertEqual(bin_node["y"], root["y"] + root["height"] + cb.SIDE_GAP)
+        self.assertEqual(bin_node["x"], root["x"])
         self.assertIn("an orphan highlight", bin_node["text"])
         self.assertEqual(validate_canvas(canvas), [])
 
@@ -1208,8 +1274,16 @@ class CardTextTest(unittest.TestCase):
         claim = m["claims"][0]
         text = cb.card_text(claim)
         self.assertTrue(text.startswith("# Retirement is a cash-flow problem\n"))
-        self.assertIn("\n↳ cite: Ch 1 — “cash flow, not a number”", text)
+        # the whole cite line renders italic, quote included
+        self.assertIn("\n*↳ cite: Ch 1 — “cash flow, not a number”*", text)
         self.assertNotIn("— JT —", text)
+
+    def test_cite_line_is_wrapped_in_italics(self):
+        m = small_manifest()
+        line = cb.cite_line(m["claims"][0])
+        self.assertTrue(line.startswith("*"))
+        self.assertTrue(line.endswith("*"))
+        self.assertIn("↳ cite:", line)
 
     def test_flags_prefix_the_title(self):
         m = small_manifest()

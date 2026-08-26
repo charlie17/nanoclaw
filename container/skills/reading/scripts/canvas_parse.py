@@ -140,6 +140,22 @@ def resolve_flags(raw, expected):
 # card text decomposition
 # --------------------------------------------------------------------------
 
+def strip_emphasis(text):
+    """Drop balanced leading/trailing asterisks.
+
+    The cite line renders italic (``*↳ cite: ...*``).  Comparing with the
+    markers removed means a canvas written before italics, or one where JT
+    dropped the markers, still matches instead of raising a phantom edit.
+    """
+    stripped = (text or "").strip()
+    lead = len(stripped) - len(stripped.lstrip("*"))
+    trail = len(stripped) - len(stripped.rstrip("*"))
+    count = min(lead, trail)
+    if count and len(stripped) > 2 * count:
+        stripped = stripped[count:len(stripped) - count].strip()
+    return stripped
+
+
 def _trim_blank_edges(text):
     lines = text.split("\n")
     while lines and not lines[0].strip():
@@ -226,7 +242,7 @@ def split_card(text, expected_title=None, expected_body=None):
 
     cite_index = None
     for position in range(len(lines) - 1, title_index, -1):
-        if lines[position].strip().startswith(cb.CITE_PREFIX):
+        if strip_emphasis(lines[position]).startswith(cb.CITE_PREFIX):
             cite_index = position
             break
     cite = lines[cite_index].strip() if cite_index is not None else ""
@@ -364,8 +380,8 @@ def parse_overlay(manifest, canvas_dict):
 
         # The cite line is machine-owned — arming rewrites it — so a hand edit
         # there is surfaced rather than captured.
-        expected_cite = cb.cite_line(claim).strip()
-        if expected_cite and parts["cite"] != expected_cite:
+        expected_cite = strip_emphasis(cb.cite_line(claim))
+        if expected_cite and strip_emphasis(parts["cite"]) != expected_cite:
             warnings.append(
                 "%s: cite line edited on the canvas; the manifest cite is unchanged"
                 % claim_id
