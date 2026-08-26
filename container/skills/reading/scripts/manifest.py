@@ -43,13 +43,20 @@ OVERVIEW_IDX = -1
 # rewrites in his own words persists like the root and legend.
 EDITABLE_FURNITURE = ("root", "legend")
 HUB_PREFIX = "hub:"
+TOC_PREFIX = "toc:"
 
 
 def is_editable_furniture(key):
-    """True for a furniture key whose wording JT is allowed to own."""
+    """True for a furniture key whose wording JT is allowed to own.
+
+    Chapter hubs and heatmap table-of-contents cards follow the same rule as
+    the root and legend: his text wins and is projected verbatim thereafter.
+    """
     if not isinstance(key, str):
         return False
-    return key in EDITABLE_FURNITURE or key.startswith(HUB_PREFIX)
+    return (key in EDITABLE_FURNITURE
+            or key.startswith(HUB_PREFIX)
+            or key.startswith(TOC_PREFIX))
 
 # How a claim relates to its parent.  "supports" is the default and is left
 # unlabelled on the canvas; anything else labels the edge.
@@ -335,8 +342,9 @@ def validate(manifest):
         for key, value in furniture.items():
             _require(
                 is_editable_furniture(key),
-                "manifest.jt_furniture[%r]: only %s and hub:<chapter_idx> "
-                "may be overridden" % (key, " and ".join(EDITABLE_FURNITURE)),
+                "manifest.jt_furniture[%r]: only %s, hub:<chapter_idx> and "
+                "toc:<chapter_idx> may be overridden"
+                % (key, " and ".join(EDITABLE_FURNITURE)),
             )
             _require(
                 isinstance(value, str),

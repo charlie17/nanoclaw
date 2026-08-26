@@ -841,9 +841,10 @@ class FurnitureTest(unittest.TestCase):
         overlay = cp.parse_overlay(m, canvas)
         self.assertEqual(overlay["alien_nodes"], [])
         self.assertEqual(overlay["warnings"], [])
-        # and they are simply not re-emitted
+        # and they are simply not re-emitted; only the heatmap group remains
         rebuilt = cb.build_canvas(m, existing=canvas)
-        self.assertEqual([n for n in rebuilt["nodes"] if n["type"] == "group"], [])
+        self.assertEqual([n["id"] for n in rebuilt["nodes"] if n["type"] == "group"],
+                         [cb.node_id(SLUG, cb.TOC_GROUP_KEY)])
 
     def test_apply_overlay_ignores_a_bin_key_if_one_is_forged(self):
         m = demo_manifest()

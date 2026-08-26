@@ -186,8 +186,54 @@ def wide_family_manifest(kids=5):
     return m
 
 
+def mixed_sections_manifest():
+    """Sections sized so sequential banding strands a leaf in its own band.
+
+    Each wing ends up with spans [medium, huge, leaf].  Sequential closes the
+    medium band when the huge one will not fit, then cannot fit the leaf into
+    the huge band either — three bands.  Compact drops the leaf back into the
+    medium band, which had room all along — two bands, one column saved.
+    """
+    m = M.new_manifest(
+        "mixed", {"title": "Mixed", "author": "A. Writer"},
+        [{"idx": 0, "title": "The Only Chapter", "block_start": 0, "block_end": 400}],
+    )
+    claims = []
+    counter = 0
+    # kid counts per section, in book order, repeated once per wing
+    for order, kids in enumerate([3, 5, 0, 3, 5, 0]):
+        counter += 1
+        section = "c-%04d" % counter
+        claims.append(M.new_claim(
+            section, "Section %d" % order, 0, "root", order,
+            locator="Ch 1 §%d" % order,
+            block_range=[order * 20, order * 20 + 1], anchor_block=order * 20,
+            anchor_phrase="a", body_md=LOREM[:200]))
+        for kid in range(kids):
+            counter += 1
+            claims.append(M.new_claim(
+                "c-%04d" % counter, "Support %d.%d" % (order, kid), 0, section, kid,
+                locator="Ch 1 §%d.%d" % (order, kid),
+                block_range=[order * 20 + kid + 1, order * 20 + kid + 2],
+                anchor_block=order * 20 + kid + 1, anchor_phrase="b",
+                body_md=LOREM[:200]))
+    m["claims"] = claims
+    M.validate(m)
+    return m
+
+
 def nodes_by_id(canvas):
     return dict((n["id"], n) for n in canvas["nodes"])
+
+
+def toc_ids(m):
+    return set(cb.node_id(m["slug"], cb.toc_key(c["idx"])) for c in m["chapters"])
+
+
+def map_nodes(m, canvas):
+    """Everything except the heatmap table of contents."""
+    skip = toc_ids(m) | {cb.node_id(m["slug"], cb.TOC_GROUP_KEY)}
+    return [n for n in canvas["nodes"] if n["id"] not in skip]
 
 
 def chapter_extents(m, canvas):
@@ -615,10 +661,12 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(violations, [], "\n".join(violations))
         overlaps = [v for v in violations if v.startswith("overlap:")]
         self.assertEqual(overlaps, [])
-        cards = [n for n in canvas["nodes"] if n["type"] == "text"]
-        # 63 claims + root + legend + one hub per chapter, no bin, no groups
+        cards = [n for n in map_nodes(m, canvas) if n["type"] == "text"]
+        # 63 claims + root + legend + one hub per chapter, no bin
         self.assertEqual(len(cards), 63 + 2 + 3)
-        self.assertEqual([n for n in canvas["nodes"] if n["type"] == "group"], [])
+        # the heatmap group is the only group; chapters use whitespace
+        self.assertEqual([n["id"] for n in canvas["nodes"] if n["type"] == "group"],
+                         [cb.node_id(m["slug"], cb.TOC_GROUP_KEY)])
         self.assertEqual([c["label"] for c in chapter_extents(m, canvas)],
                          ["Chapter 1", "Chapter 2", "Chapter 3"])
 
@@ -647,7 +695,7 @@ class LayoutTest(unittest.TestCase):
     def test_every_node_is_a_card_and_chapters_are_named_by_hubs(self):
         m = small_manifest()
         canvas = cb.build_canvas(m)
-        self.assertEqual(set(n["type"] for n in canvas["nodes"]), {"text"})
+        self.assertEqual(set(n["type"] for n in map_nodes(m, canvas)), {"text"})
         by_id = nodes_by_id(canvas)
         self.assertEqual(by_id[cb.node_id(SLUG, cb.hub_key(0))]["text"],
                          "# Ch 1 — Cash Flow")
@@ -662,7 +710,7 @@ class LayoutTest(unittest.TestCase):
                  cb.node_id(m["slug"], "root")}
         overview_ids = set(cb.claim_node_id(m["slug"], c["id"])
                            for c in m["claims"] if c["chapter_idx"] == -1)
-        for card in canvas["nodes"]:
+        for card in map_nodes(m, canvas):
             if card["id"] in loose or card["id"] in overview_ids:
                 continue
             bands = [c for c in chapters
@@ -674,7 +722,7 @@ class LayoutTest(unittest.TestCase):
     def test_card_heights_are_clamped_and_rounded(self):
         m = big_manifest()
         canvas = cb.build_canvas(m)
-        for node in canvas["nodes"]:
+        for node in map_nodes(m, canvas):
             if node["type"] != "text":
                 continue
             self.assertEqual(node["width"], cb.CARD_W)
@@ -699,6 +747,144 @@ class LayoutTest(unittest.TestCase):
         tallest = max(c["y1"] for c in chapters)
         middle = (overview["y0"] + overview["y1"]) / 2.0
         self.assertLessEqual(abs(middle - tallest / 2.0), 2.0)
+
+
+class HeatmapTocTest(unittest.TestCase):
+    """The Heatmap Sections table of contents on the far left."""
+
+    def test_one_card_per_chapter_in_book_order(self):
+        m = big_manifest()
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        cards = [by_id[cb.node_id(m["slug"], cb.toc_key(c["idx"]))]
+                 for c in sorted(m["chapters"], key=lambda c: c["idx"])]
+        self.assertEqual([c["text"] for c in cards],
+                         ["# Chapter 1", "# Chapter 2", "# Chapter 3"])
+        # stacked vertically, in order, no overlap
+        for earlier, later in zip(cards, cards[1:]):
+            self.assertEqual(later["x"], earlier["x"])
+            self.assertGreaterEqual(later["y"], earlier["y"] + earlier["height"])
+
+    def test_cards_are_compact_title_only_and_uncoloured(self):
+        m = small_manifest()
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        for chapter in m["chapters"]:
+            card = by_id[cb.node_id(SLUG, cb.toc_key(chapter["idx"]))]
+            self.assertEqual(card["text"], "# " + chapter["title"])
+            self.assertNotIn("gloss", card["text"])
+            self.assertNotIn("↳ cite", card["text"])
+            self.assertEqual(card["width"], cb.TOC_CARD_W)
+            self.assertLess(card["height"], cb.H_MIN)
+            self.assertNotIn("color", card)
+
+    def test_group_wraps_the_cards_and_sits_below_the_rail(self):
+        m = small_manifest(with_unmatched=True, with_overview=True)
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        group = by_id[cb.node_id(SLUG, cb.TOC_GROUP_KEY)]
+        self.assertEqual(group["type"], "group")
+        self.assertEqual(group["label"], "Heatmap Sections")
+        root = by_id[cb.node_id(SLUG, "root")]
+        bin_node = by_id[cb.node_id(SLUG, "bin")]
+        self.assertGreater(group["y"], bin_node["y"] + bin_node["height"] - 1)
+        self.assertLess(group["x"], root["x"])
+        for chapter in m["chapters"]:
+            card = by_id[cb.node_id(SLUG, cb.toc_key(chapter["idx"]))]
+            self.assertGreaterEqual(card["x"], group["x"])
+            self.assertLessEqual(card["x"] + card["width"],
+                                 group["x"] + group["width"])
+            self.assertGreaterEqual(card["y"], group["y"])
+            self.assertLessEqual(card["y"] + card["height"],
+                                 group["y"] + group["height"])
+        self.assertEqual(validate_canvas(canvas), [])
+
+    def test_no_edges_touch_the_toc(self):
+        m = small_manifest()
+        canvas = cb.build_canvas(m)
+        ids = toc_ids(m) | {cb.node_id(SLUG, cb.TOC_GROUP_KEY)}
+        for edge in canvas["edges"]:
+            self.assertNotIn(edge["fromNode"], ids)
+            self.assertNotIn(edge["toNode"], ids)
+
+    def test_a_hand_applied_colour_is_carried_forward(self):
+        m = small_manifest()
+        canvas = json.loads(json.dumps(cb.build_canvas(m)))
+        target = cb.node_id(SLUG, cb.toc_key(0))
+        for node in canvas["nodes"]:
+            if node["id"] == target:
+                node["color"] = "1"          # JT heat-maps this chapter red
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        by_id = nodes_by_id(rebuilt)
+        self.assertEqual(by_id[target]["color"], "1")
+        # untouched siblings stay uncoloured
+        self.assertNotIn("color", by_id[cb.node_id(SLUG, cb.toc_key(1))])
+
+    def test_every_preset_colour_survives_a_rebuild(self):
+        m = big_manifest()
+        canvas = json.loads(json.dumps(cb.build_canvas(m)))
+        wanted = {}
+        for index, chapter in enumerate(m["chapters"]):
+            ident = cb.node_id(m["slug"], cb.toc_key(chapter["idx"]))
+            wanted[ident] = str((index % 6) + 1)
+        for node in canvas["nodes"]:
+            if node["id"] in wanted:
+                node["color"] = wanted[node["id"]]
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        by_id = nodes_by_id(rebuilt)
+        for ident, colour in wanted.items():
+            self.assertEqual(by_id[ident]["color"], colour)
+        self.assertEqual(validate_canvas(rebuilt), [])
+
+    def test_colour_survives_repeated_rebuilds(self):
+        m = small_manifest()
+        canvas = json.loads(json.dumps(cb.build_canvas(m)))
+        target = cb.node_id(SLUG, cb.toc_key(1))
+        for node in canvas["nodes"]:
+            if node["id"] == target:
+                node["color"] = "4"
+        for _ in range(3):
+            canvas = cb.build_canvas(m, existing=canvas)
+        self.assertEqual(nodes_by_id(canvas)[target]["color"], "4")
+
+    def test_claim_card_colour_is_not_taken_from_the_canvas(self):
+        """Only toc cards borrow colour; stance stays manifest-driven."""
+        m = small_manifest()
+        canvas = json.loads(json.dumps(cb.build_canvas(m)))
+        target = cb.claim_node_id(SLUG, "c-0001")
+        for node in canvas["nodes"]:
+            if node["id"] == target:
+                node["color"] = "6"
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        self.assertNotIn("color", nodes_by_id(rebuilt)[target])
+
+    def test_toc_text_edit_persists_like_other_furniture(self):
+        m = small_manifest()
+        canvas = json.loads(json.dumps(cb.build_canvas(m)))
+        target = cb.node_id(SLUG, cb.toc_key(0))
+        mine = "# Cash flow (the important one)"
+        for node in canvas["nodes"]:
+            if node["id"] == target:
+                node["text"] = mine
+        import canvas_parse as cp
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["furniture_edits"], {"toc:0": mine})
+        cp.apply_overlay(m, overlay)
+        M.validate(m)
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        self.assertEqual(nodes_by_id(rebuilt)[target]["text"], mine)
+
+    def test_a_colour_change_alone_raises_no_warning(self):
+        m = small_manifest()
+        canvas = json.loads(json.dumps(cb.build_canvas(m)))
+        for node in canvas["nodes"]:
+            if node["id"] in toc_ids(m):
+                node["color"] = "2"
+        import canvas_parse as cp
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["warnings"], [])
+        self.assertEqual(overlay["furniture_edits"], {})
+        self.assertEqual(overlay["alien_nodes"], [])
 
 
 class OverviewTest(unittest.TestCase):
@@ -841,10 +1027,16 @@ class ShelfLayoutTest(unittest.TestCase):
     Stacking made a book-scale map ~1:112 and unusable at fit-to-view.
     """
 
-    def test_no_group_nodes_are_emitted_at_all(self):
+    def test_the_only_group_is_the_heatmap_table_of_contents(self):
         for m in (small_manifest(), small_manifest(with_overview=True), big_manifest()):
             canvas = cb.build_canvas(m)
-            self.assertEqual([n for n in canvas["nodes"] if n["type"] == "group"], [])
+            groups = [n for n in canvas["nodes"] if n["type"] == "group"]
+            self.assertEqual([g["id"] for g in groups],
+                             [cb.node_id(m["slug"], cb.TOC_GROUP_KEY)])
+            self.assertEqual(groups[0]["label"], "Heatmap Sections")
+            # chapters themselves are still separated by whitespace alone
+            for node in map_nodes(m, canvas):
+                self.assertEqual(node["type"], "text")
 
     def test_every_chapter_is_top_aligned_at_zero(self):
         for m in (small_manifest(), small_manifest(with_overview=True), big_manifest()):
@@ -1077,7 +1269,7 @@ class ShelfLayoutTest(unittest.TestCase):
         canvas = cb.build_canvas(m)
         self.assertEqual(cb.CARD_W, 480)
         self.assertEqual(cb.H_MIN, 620)
-        for node in canvas["nodes"]:
+        for node in map_nodes(m, canvas):
             self.assertEqual(node["width"], 480)
             self.assertGreaterEqual(node["height"], 620)
 
@@ -1278,6 +1470,74 @@ class ShelfLayoutTest(unittest.TestCase):
             self.assertLessEqual(chapter["y1"] - chapter["y0"],
                                  cb.CHAPTER_HEIGHT_LIMIT)
 
+    def test_flag_off_is_exactly_the_v5_sequential_packer(self):
+        """v5 must stay recoverable: flag-off IS the old sequential greedy."""
+        units = [{"id": "u%d" % i} for i in range(9)]
+        spans = {"u0": 1300, "u1": 620, "u2": 3000, "u3": 620, "u4": 1300,
+                 "u5": 300, "u6": 2400, "u7": 620, "u8": 900}
+        widths = dict((u["id"], 1 + (index % 3)) for index, u in enumerate(units))
+        self.assertEqual(
+            cb._band_pack(units, spans, widths, cb.CHAPTER_HEIGHT_CAP, False),
+            cb._greedy_groups(units, lambda u: spans[u["id"]], cb.CHAPTER_HEIGHT_CAP),
+        )
+
+    def test_flag_off_map_geometry_is_stable_and_deterministic(self):
+        m = mixed_sections_manifest()
+        original = cb.BAND_FILL_COMPACT
+        try:
+            cb.BAND_FILL_COMPACT = False
+            first = cb.build_canvas(m)
+            second = cb.build_canvas(m)
+        finally:
+            cb.BAND_FILL_COMPACT = original
+        self.assertEqual(cb.dumps_canvas(first), cb.dumps_canvas(second))
+        self.assertEqual(validate_canvas(first), [])
+
+    def test_flag_on_packs_a_small_section_into_an_existing_band(self):
+        m = mixed_sections_manifest()
+        original = cb.BAND_FILL_COMPACT
+        try:
+            cb.BAND_FILL_COMPACT = False
+            loose = cb.build_canvas(m)
+            cb.BAND_FILL_COMPACT = True
+            tight = cb.build_canvas(m)
+        finally:
+            cb.BAND_FILL_COMPACT = original
+
+        def columns(canvas):
+            by_id = nodes_by_id(canvas)
+            return set(by_id[cb.claim_node_id(m["slug"], c["id"])]["x"]
+                       for c in m["claims"])
+
+        self.assertLess(len(columns(tight)), len(columns(loose)),
+                        "compact packing should save at least one column")
+        width = lambda c: (max(n["x"] + n["width"] for n in map_nodes(m, c))
+                           - min(n["x"] for n in map_nodes(m, c)))
+        self.assertLess(width(tight), width(loose))
+
+    def test_flag_on_keeps_every_invariant(self):
+        for m in (mixed_sections_manifest(), granular_manifest(),
+                  branching_manifest()):
+            canvas = cb.build_canvas(m)
+            self.assertEqual(validate_canvas(canvas), [])
+            by_id = nodes_by_id(canvas)
+            groups = {}
+            for claim in m["claims"]:
+                if claim["parent"] != "root" and claim["chapter_idx"] != -1:
+                    groups.setdefault(claim["parent"], []).append(claim["id"])
+            for parent_id, kids in groups.items():
+                parent = by_id[cb.claim_node_id(m["slug"], parent_id)]
+                kid_nodes = [by_id[cb.claim_node_id(m["slug"], k)] for k in kids]
+                distances = set(abs(n["x"] - parent["x"]) for n in kid_nodes)
+                self.assertIn(cb.COL_PITCH, distances)
+                top = min(n["y"] for n in kid_nodes)
+                bottom = max(n["y"] + n["height"] for n in kid_nodes)
+                middle = parent["y"] + parent["height"] / 2.0
+                self.assertTrue(top <= middle <= bottom)
+            for chapter in chapter_extents(m, canvas):
+                self.assertLessEqual(chapter["y1"] - chapter["y0"],
+                                     cb.CHAPTER_HEIGHT_LIMIT)
+
     def test_spill_keeps_no_overlap_and_is_deterministic(self):
         m = tall_manifest()
         first = cb.build_canvas(m)
@@ -1312,20 +1572,21 @@ class ShelfLayoutTest(unittest.TestCase):
         self.assertGreater(width, height)
         self.assertLess(height / float(width), 2.0)
 
-    def test_adding_a_chapter_widens_rather_than_lengthens_the_map(self):
-        four = cb.build_canvas(big_manifest(claim_count=80, chapters=4))
-        eight = cb.build_canvas(big_manifest(claim_count=160, chapters=8))
+    def test_adding_a_chapter_widens_rather_than_lengthens_the_shelf(self):
+        m4 = big_manifest(claim_count=80, chapters=4)
+        m8 = big_manifest(claim_count=160, chapters=8)
+        four, eight = cb.build_canvas(m4), cb.build_canvas(m8)
 
-        def extent(canvas):
-            return (max(n["x"] + n["width"] for n in canvas["nodes"])
-                    - min(n["x"] for n in canvas["nodes"]),
-                    max(n["y"] + n["height"] for n in canvas["nodes"])
-                    - min(n["y"] for n in canvas["nodes"]))
+        def extent(m, canvas):
+            nodes = map_nodes(m, canvas)
+            return (max(n["x"] + n["width"] for n in nodes)
+                    - min(n["x"] for n in nodes),
+                    max(c["y1"] for c in chapter_extents(m, canvas)))
 
-        w4, h4 = extent(four)
-        w8, h8 = extent(eight)
+        w4, h4 = extent(m4, four)
+        w8, h8 = extent(m8, eight)
         self.assertGreater(w8, w4)
-        self.assertEqual(h8, h4, "chapter count must not drive map height")
+        self.assertEqual(h8, h4, "chapter count must not drive shelf height")
 
 
 class EdgeTest(unittest.TestCase):
