@@ -37,28 +37,29 @@ The map is comprehensive only when every substantive part of the source has a cl
 
 **Design the tree semantically.** Parent-child relationships express decomposition, support, dependency, qualification, objection-and-response, causal development, or branching consequence — not the source's outline where that outline obscures how claims relate. Keep siblings parallel in abstraction and wording. Preserve source order within branches when progression matters. One node = one coherent claim or one necessary argumentative move; split when the author develops claims independently; combine only when passages genuinely develop the same move. Never create a node merely because a page, paragraph, or heading changes.
 
-**No compression targets.** No fixed card count, no ratio, no per-chapter quota. Later and less prominent sections get the same fidelity as earlier ones.
+**Altitude (ratified by the pilot).** The map's unit is the developed idea, not the argumentative move. Target ≈ 1 card per 350–500 source words (a 120K-word book lands at 250–350 cards); tree depth ≤ 2 below each chapter hub. Build in two passes: extract per-move first (fine-grained, block-cited — this is the coverage instrument), then merge and distill move-clusters into idea-cards. Every merged move's full text is archived on its surviving card (`body_full` in the manifest) — display gets lighter, the record never does. Later and less prominent sections get the same fidelity as earlier ones.
 
 **Reconcile before reporting done.** Every ledger entry maps to a card, AND every card clears the depth bar — a body that collapses its assigned passages into a generic theme statement fails reconciliation even though it exists. Report any access, parsing, or coverage limitation honestly.
 
-## Card format
+## Card format — distilled essence (ratified by the pilot)
 
-- **Title:** concise, claim-based — states what the author asserts, readable at map zoom. Portrait card shape.
-- **Body sections, as applicable** (adapt to the source; delete empty headings, never stub them): **Claim** (faithful, direct language) · **Meaning** (what it means in context, which problem it addresses) · **Reasoning** (premises, mechanism, intermediate steps) · **Support** (evidence, examples, definitions, comparisons, cases) · **Qualifications** (uncertainty, limits, exceptions, objections and replies, scope) · **Relationship** (how it supports, depends on, qualifies, or contrasts with its parent and key neighbors).
-- **Cite line:** locator (chapter/section) + short verbatim anchor phrase; becomes a live `↳ cite` link when armed.
-- Preserve the author's modality and certainty level. Restate faithfully — quotation only where exact phrasing is conceptually load-bearing; explanation is never replaced by quotation. No critique and no organizer opinion unless JT asks; if asked, label it and keep it separate.
-- **Root card:** the source's central question, thesis, structure of reasoning, conclusion, and the map's scope. **Legend card** beside it: flag emoji, stance emoji, color meanings, how to triage.
+- **Title:** the claim as a direct assertion, ≤ 80 chars, never starting with a flag glyph. The title carries the claim; the body must start where the title leaves off — **never restate it**.
+- **Body:** 150–550 chars, 2–4 SHORT paragraphs of 1–2 sentences each, blank line between every paragraph. Telegraphic register ("First move: get a good accountant."). Weave mechanism + strongest support; secondary examples and restatements drop from display (they live in the archive). Load-bearing numbers ALWAYS survive.
+- **No attributions or qualifiers.** No "the author argues", no named studies/institutions/products — findings state themselves ("Study: …", "Survey data shows…"). Surviving-name exceptions, exactly these classes: named-party disagreements where the dispute is the card; authorial belief/judgment markers where modality is content ("belief doesn't make it so"); client-case names; domain vocabulary; resource-locators when the card's point is "go here". The book itself carries the full detail — that is what it's for.
+- **Cite line, italic:** `*↳ cite: locator — "anchor phrase"*`; becomes a live link when armed.
+- Preserve the author's modality and certainty. No critique or organizer opinion unless JT asks; if included, label it and keep it separate.
+- **Root card** (labels allowed here only): central question, thesis, structure, scope. **Chapter hub cards:** chapter title + 2–3 sentence gloss (same no-attribution rules). **Legend card:** flags, stance, colors, edit-safety notes.
 
-## Canvas conventions
+## Canvas conventions (ratified by the pilot)
 
-Single canvas per source — the full universe of the book in one view. Portrait text nodes only; left-to-right tree with generous breathing room. Structure reads without opening a single card:
+Single canvas per source — a horizontal FILMSTRIP consumed by one left-to-right pan: chapters flow in book order as hub-centered rosettes, per-chapter content height capped (~3,400px, plus a soft one-card tolerance spent only to keep a subtree intact). Cards are wide-portrait (480×620 nominal, ~8.5×11 aspect), sized so every card reads fully while panning — no internal scrolling, enforced by the overflow validator.
 
-- **Overview group (far left, the entry point):** the root card plus a handful of book-level summary cards — the whole thesis at a glance before any chapter detail. Legend card below it; unmatched bin below that.
-- **Chapter/part groups** left-to-right after the overview, each holding its claim tree.
-- **Connectors:** every parent→child relationship is a drawn edge (arrowed, left-to-right). Support/decomposition edges are unlabeled — that's the default relationship and labels would be noise at 200+ edges. Non-default relationships carry the relationship word as the edge label: `objection`, `reply`, `qualifies`, `contrasts`, `example`, `consequence`. Argumentative turns are visible on the map itself.
-- **Color doctrine — color belongs to JT, not the author.** Source cards are neutral; author-side structure is expressed through position, groups, and edges only. Color appears exactly where JT's overlay lands: stance recolors a card (✅ green · ❌ red · 💡 purple), the machine furniture (root/legend cyan, bin orange) is fixed, and edges are never colored. One glance separates "the book" from "what JT thinks of it."
+- **Upper-left corner, the entry point:** the teal **"Heatmap Sections"** group — one title-only card per chapter (mirrors the hub set exactly, column-wrapped landscape block). Built for JT's heat-mapping: colors he applies persist across rebuilds. Below it: the Legend, then the root card with the book-level overview cards, then the unmatched bin.
+- **Chapter hubs** (teal; title + gloss) center each chapter; branches radiate left and right, **subtree-contiguous**: each section card sits beside its own children, subtrees are unbroken blocks, no interleaving — proximity outranks density (width is the accepted cost). No root→hub spokes; shelf order carries the sequence.
+- **Connectors:** parent→child edges only; support edges unlabeled; non-default relationships carry the word on the edge (`objection`, `reply`, `qualifies`, `contrasts`, `example`, `consequence`).
+- **Color doctrine:** teal = machine furniture (root, legend, hubs, TOC group). Stance recolors claim cards (✅ green · ❌ red · 💡 purple); bin orange; **yellow is RESERVED for JT's own highlighting — never emitted by the builder** (test-pinned). Source cards stay uncolored; edges never colored.
 
-Node ids are deterministic (derived from claim ids). Layout, sizing, validation, and all mechanical rules live in `scripts/` — never hand-place nodes or hand-write canvas JSON.
+Node ids are deterministic (derived from claim ids). Layout, sizing, validation, and all mechanical rules live in `scripts/` — never hand-place nodes or hand-write canvas JSON. `BAND_FILL_COMPACT` in `canvas_build.py` toggles the density packer (False reproduces the pure block layout).
 
 ## Execution — who runs what
 

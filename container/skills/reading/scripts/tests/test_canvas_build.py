@@ -753,23 +753,22 @@ class LayoutTest(unittest.TestCase):
             self.assertLessEqual(node["height"], cb.H_MAX)
             self.assertEqual(node["height"] % 10, 0)
 
-    def test_overview_cluster_is_far_left_and_vertically_centred(self):
+    def test_overview_cluster_is_far_left_and_below_the_heatmap(self):
         m = small_manifest()
         canvas = cb.build_canvas(m)
         by_id = nodes_by_id(canvas)
         root = by_id[cb.node_id(SLUG, "root")]
         legend = by_id[cb.node_id(SLUG, "legend")]
+        group = by_id[cb.node_id(SLUG, cb.TOC_GROUP_KEY)]
         overview = overview_extent(m, canvas)
 
         self.assertEqual(root["x"], cb.SIDE_X)
         self.assertEqual(legend["x"], cb.SIDE_X - cb.COL_GAP - cb.CARD_W)
+        # the rail hangs beneath the heatmap rather than centring on the shelf
+        self.assertGreaterEqual(overview["y0"], group["y"] + group["height"])
 
-        chapters = chapter_extents(m, canvas)
-        for chapter in chapters:
+        for chapter in chapter_extents(m, canvas):
             self.assertGreaterEqual(chapter["x0"], overview["x1"])
-        tallest = max(c["y1"] for c in chapters)
-        middle = (overview["y0"] + overview["y1"]) / 2.0
-        self.assertLessEqual(abs(middle - tallest / 2.0), 2.0)
 
 
 class HeatmapTocTest(unittest.TestCase):
@@ -801,16 +800,27 @@ class HeatmapTocTest(unittest.TestCase):
             self.assertLess(card["height"], cb.H_MIN)
             self.assertNotIn("color", card)
 
-    def test_group_wraps_the_cards_and_sits_below_the_rail(self):
+    def test_group_anchors_the_upper_left_corner_above_the_rail(self):
         m = small_manifest(with_unmatched=True, with_overview=True)
         canvas = cb.build_canvas(m)
         by_id = nodes_by_id(canvas)
         group = by_id[cb.node_id(SLUG, cb.TOC_GROUP_KEY)]
         self.assertEqual(group["type"], "group")
         self.assertEqual(group["label"], "Heatmap Sections")
+
+        # the group's top-left IS the canvas's minimum-x / minimum-y corner
+        self.assertEqual(group["x"], min(n["x"] for n in canvas["nodes"]))
+        self.assertEqual(group["y"], min(n["y"] for n in canvas["nodes"]))
+
+        # and the whole left rail flows below it, in order
+        legend = by_id[cb.node_id(SLUG, "legend")]
         root = by_id[cb.node_id(SLUG, "root")]
         bin_node = by_id[cb.node_id(SLUG, "bin")]
-        self.assertGreater(group["y"], bin_node["y"] + bin_node["height"] - 1)
+        bottom = group["y"] + group["height"]
+        for card in (legend, root, bin_node):
+            self.assertGreaterEqual(card["y"], bottom)
+        self.assertEqual(legend["y"] + legend["height"] + cb.SIDE_GAP
+                         <= bin_node["y"] + bin_node["height"], True)
         self.assertLess(group["x"], root["x"])
         for chapter in m["chapters"]:
             card = by_id[cb.node_id(SLUG, cb.toc_key(chapter["idx"]))]
@@ -1154,13 +1164,18 @@ class ShelfLayoutTest(unittest.TestCase):
         first = chapter_extents(m, canvas)[0]
         self.assertGreaterEqual(first["x0"], overview["x1"])
 
-    def test_overview_is_centred_against_the_tallest_chapter(self):
+    def test_the_left_rail_hangs_below_the_heatmap_group(self):
         m = big_manifest()
         canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        group = by_id[cb.node_id(m["slug"], cb.TOC_GROUP_KEY)]
         overview = overview_extent(m, canvas)
-        tallest = max(c["y1"] for c in chapter_extents(m, canvas))
-        middle = (overview["y0"] + overview["y1"]) / 2.0
-        self.assertLessEqual(abs(middle - tallest / 2.0), 2.0)
+        legend = by_id[cb.node_id(m["slug"], "legend")]
+        bottom = group["y"] + group["height"]
+        self.assertGreaterEqual(overview["y0"], bottom)
+        self.assertGreaterEqual(legend["y"], bottom)
+        # chapters still start at the very top of the shelf
+        self.assertEqual(min(c["y0"] for c in chapter_extents(m, canvas)), 0)
 
     def test_legend_sits_immediately_left_of_root_and_bin_below_it(self):
         m = small_manifest(with_unmatched=True, with_overview=True)

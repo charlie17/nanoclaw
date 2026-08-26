@@ -1049,61 +1049,23 @@ def build_canvas(manifest, existing=None):
         cursor_x += layout["content_w"] + CHAPTER_GAP
         tallest = max(tallest, layout["content_h"])
 
-    map_height = tallest
-
-    # --- far-left cluster: root + overview claims, then legend, then bin ---
-    overview_y = (map_height - overview_h) // 2
-    o_offset_x = SIDE_X
-    o_offset_y = overview_y
-    for claim_id, (x, y) in o_positions.items():
-        if claim_id == ROOT_SLOT:
-            continue
-        placed[claim_id] = (x + o_offset_x, y + o_offset_y)
-    root_x, root_y = o_positions[ROOT_SLOT]
-    root_x += o_offset_x
-    root_y += o_offset_y
-
-    # The legend sits immediately left of the root card, centred against it —
-    # the key to the map reads before the map.  The unmatched bin drops below
-    # the root card, in the root's own column, clear of the overview claims.
-    legend = legend_text(manifest)
-    l_h = card_height(legend)
-    l_x = root_x - COL_GAP - CARD_W
-    l_y = root_y + (r_h - l_h) // 2
-
-    card_order = list(o_order) + chapter_order
-
-    rail_bottom = max(
-        root_y + r_h,
-        l_y + l_h,
-        max([y + heights[c] for c, (x, y) in placed.items()
-             if c in set(o_order)] or [0]),
-    )
-
+    # --- Heatmap Sections: the map's index, in the top-left corner ----------
+    # It reads before the map does, so it anchors the canvas's minimum-x,
+    # minimum-y corner and the rest of the left rail flows down beneath it.
     nodes = []
-    root_ident = node_id(slug, "root")
-    bin_node = None
-    if manifest.get("unmatched"):
-        b_text = bin_text(manifest)
-        b_h = card_height(b_text)
-        b_y = root_y + r_h + SIDE_GAP
-        bin_node = _text_node(
-            node_id(slug, "bin"), b_text, root_x, b_y, CARD_W, b_h, COLOR_BIN
-        )
-        rail_bottom = max(rail_bottom, b_y + b_h)
-
-    # --- Heatmap Sections: a title-only table of contents under the rail -----
     toc_cards = []
     # Exactly the chapters that render a hub, in the same order — the heatmap
     # is an index of the map, so it must not list front matter the map omits.
     entries = [(key, labels.get(key, str(key))) for key in keys]
+    l_x = SIDE_X - COL_GAP - CARD_W
+    rail_top = 0
     if entries:
-        toc_top = rail_bottom + SIDE_GAP
+        toc_top = 0
         inner_x = l_x + TOC_PAD
         inner_y = toc_top + TOC_PAD
         column_bottom = {}
         for index, (key, label) in enumerate(entries):
-            column, row = divmod(index, TOC_ROWS)
+            column, _row = divmod(index, TOC_ROWS)
             text = toc_text(manifest, key, label)
             height = toc_card_height(text)
             x = inner_x + column * (TOC_CARD_W + TOC_GAP)
@@ -1115,18 +1077,53 @@ def build_canvas(manifest, existing=None):
         columns_used = max(column_bottom) + 1
         toc_width = (columns_used * TOC_CARD_W
                      + (columns_used - 1) * TOC_GAP + 2 * TOC_PAD)
-        tallest = max(column_bottom.values()) - TOC_GAP
+        toc_bottom = max(column_bottom.values()) - TOC_GAP + TOC_PAD
         nodes.append(_group_node(
             node_id(slug, TOC_GROUP_KEY), TOC_LABEL,
-            l_x, toc_top, toc_width, tallest - toc_top + TOC_PAD, TOC_COLOR,
+            l_x, toc_top, toc_width, toc_bottom - toc_top, TOC_COLOR,
         ))
+        rail_top = toc_bottom + SIDE_GAP
 
+    # --- far-left rail below it: legend, root + overview claims, then bin ---
+    # The legend is centred on the root card and is usually the taller of the
+    # two, so it reaches above the root.  Push the whole cluster down by that
+    # overhang, or the legend would ride up into the heatmap above it.
+    legend = legend_text(manifest)
+    l_h = card_height(legend)
+    o_offset_x = SIDE_X
+    o_offset_y = rail_top
+    overhang = rail_top - ((o_positions[ROOT_SLOT][1] + rail_top)
+                           + (r_h - l_h) // 2)
+    if overhang > 0:
+        o_offset_y += overhang
+
+    for claim_id, (x, y) in o_positions.items():
+        if claim_id == ROOT_SLOT:
+            continue
+        placed[claim_id] = (x + o_offset_x, y + o_offset_y)
+    root_x, root_y = o_positions[ROOT_SLOT]
+    root_x += o_offset_x
+    root_y += o_offset_y
+
+    # The legend sits immediately left of the root card, centred against it —
+    # the key to the map reads before the map.  The unmatched bin drops below
+    # the root card, in the root's own column, clear of the overview claims.
+    l_y = root_y + (r_h - l_h) // 2
+
+    card_order = list(o_order) + chapter_order
+
+    root_ident = node_id(slug, "root")
     nodes.append(_text_node(root_ident, r_text, root_x, root_y, CARD_W, r_h, COLOR_ROOT))
     nodes.append(_text_node(
         node_id(slug, "legend"), legend, l_x, l_y, CARD_W, l_h, COLOR_LEGEND
     ))
-    if bin_node is not None:
-        nodes.append(bin_node)
+    if manifest.get("unmatched"):
+        b_text = bin_text(manifest)
+        b_h = card_height(b_text)
+        nodes.append(_text_node(
+            node_id(slug, "bin"), b_text, root_x, root_y + r_h + SIDE_GAP,
+            CARD_W, b_h, COLOR_BIN
+        ))
     nodes.extend(toc_cards)
 
     for hub in hubs:
