@@ -283,7 +283,7 @@ def refresh(manifest, doc_id, vault_dir, token=None):
 
     try:
         payload = readerapi.get_document_highlights(doc_id, token=token)
-    except Exception as exc:
+    except readerapi.ReaderAPIError as exc:
         report["warnings"].append("could not read highlights for %s: %s" % (doc_id, exc))
         return report
 

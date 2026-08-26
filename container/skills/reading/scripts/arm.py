@@ -467,7 +467,7 @@ def reconcile_attempts(targets, doc_id, html, blocks, token=None):
 
     try:
         payload = readerapi.get_document_highlights(doc_id, token=token)
-    except Exception as exc:                      # the lookup itself failed
+    except readerapi.ReaderAPIError as exc:        # the lookup itself failed
         reason = (
             "a previous run may already have created this highlight, and the "
             "document's highlights could not be read to find out (%s); no "
@@ -647,7 +647,7 @@ def arm(manifest, doc_id, vault_dir, dry_run=False, token=None):
             payload = readerapi.create_highlight(
                 doc_id, block_source, tags=[CLAIM_TAG], token=token
             )
-        except Exception as exc:                      # keep going: one bad card
+        except readerapi.ReaderAPIError as exc:        # keep going: one bad card
             report["failed"].append({"claim_id": claim_id, "error": str(exc)})
             continue
 

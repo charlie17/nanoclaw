@@ -649,5 +649,29 @@ class TriageGlyphGuardrailTest(unittest.TestCase):
         self.assertEqual(M.load(path)["claims"][0]["title"], "⭐ Leading")
 
 
+class ReaderAPIErrorNarrowingTest(RefreshTestCase):
+    """Only readerapi.ReaderAPIError is a handled failure when reading a
+    document's highlights.  Anything else is a programming error and must
+    propagate instead of being folded into a silent warning."""
+
+    def test_a_reader_api_error_becomes_a_warning_not_a_crash(self):
+        with mock.patch.object(
+            readerapi, "get_document_highlights",
+            side_effect=readerapi.ReaderAPIError("no answer"),
+        ):
+            report = R.refresh(self.manifest, DOC_ID, self.vault)
+        self.assertEqual(len(report["warnings"]), 1)
+        self.assertIn("could not read highlights", report["warnings"][0])
+        self.assertIn("no answer", report["warnings"][0])
+
+    def test_a_non_reader_api_error_propagates(self):
+        with mock.patch.object(
+            readerapi, "get_document_highlights",
+            side_effect=AttributeError("unexpected payload shape"),
+        ):
+            with self.assertRaises(AttributeError):
+                R.refresh(self.manifest, DOC_ID, self.vault)
+
+
 if __name__ == "__main__":
     unittest.main()

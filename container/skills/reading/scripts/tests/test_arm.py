@@ -655,6 +655,33 @@ class DerivedCiteUrlTest(ArmTestCase):
                       self.node_by_claim("a1")["text"])
 
 
+class ReaderAPIErrorNarrowingTest(ArmTestCase):
+    """Only readerapi.ReaderAPIError is a handled failure at either readerapi
+    call site.  Anything else (an AttributeError from an unexpected payload
+    shape, a TypeError, ...) is a programming error and must propagate
+    instead of being folded into a per-card "failed" entry."""
+
+    def test_a_non_reader_api_error_from_create_propagates(self):
+        with mock.patch.object(
+            readerapi, "create_highlight",
+            side_effect=AttributeError("unexpected payload shape"),
+        ):
+            with self.assertRaises(AttributeError):
+                ARM.arm(self.manifest, DOC_ID, self.vault)
+
+    def test_a_non_reader_api_error_from_the_lookup_propagates(self):
+        # Put a5 into the ambiguous "attempted" state first, so the rerun
+        # takes the reconcile_attempts path that calls get_document_highlights.
+        self.fail_a5()
+        resumed = M.load(ARM.manifest_path(self.manifest, self.vault))
+        with mock.patch.object(
+            readerapi, "get_document_highlights",
+            side_effect=TypeError("unexpected payload shape"),
+        ):
+            with self.assertRaises(TypeError):
+                ARM.arm(resumed, DOC_ID, self.vault)
+
+
 class HighlightFieldsTest(unittest.TestCase):
     def test_reads_the_ordinary_shape(self):
         self.assertEqual(
