@@ -1,6 +1,6 @@
 ---
 name: reading
-description: Use when JT asks to build a claim map / pre-read map of a source in Readwise Reader ("map this book", "build the reading map"), to arm a triaged map with cite links, or to refresh a map with his reading highlights ("refresh the map"). Covers the full pre-read → triage → arm → read → refresh loop.
+description: Use when JT asks to build a claim map / pre-read map of a source in Readwise Reader ("map this book", "build the reading map", "book mind map"), to arm a triaged map with cite links, or to refresh a map with his reading highlights ("refresh the map"). Covers the full pre-read → triage → arm → read → refresh loop.
 ---
 
 # Reading — Comprehensive Claim Map
@@ -9,7 +9,7 @@ Transform a complete source in Readwise Reader (book-scale EPUB, PDF, or article
 
 ## The loop
 
-1. **Build** (heavy, Claude Code surface) — source → claim map: canvas + manifest. No highlights created.
+1. **Build** (heavy, Claude Code surface ONLY) — source → claim map: canvas + manifest. No highlights created. **If JT asks for a build from the Daystrom container: do NOT attempt it** — a book-scale build exceeds the container by design. Tell him plainly: "Map builds run on Claude Code — ask Archie there. I can arm or refresh an existing map from here." Arm and refresh (steps 3/5) ARE container jobs.
 2. **Triage** (JT, Obsidian) — flags prepended to card titles: ⭐ key · 🔥 dig in · ⏭️ skip · ❓ clarify.
 3. **Arm** (either surface) — every ⭐/🔥/❓ card gets one tagged (`daystrom-claim`) anchor highlight; its URL becomes the card's live `↳ cite` link. Never re-arm a card that has a highlight id.
 4. **Read** (JT, Reader) — normal reading and highlighting. Stance shorthand goes in the highlight note: ✅/❌/💡 or `agree`/`dispute`/`surface` prefix.
