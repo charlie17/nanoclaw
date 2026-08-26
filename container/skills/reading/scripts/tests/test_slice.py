@@ -293,7 +293,7 @@ class ChapterTextTests(unittest.TestCase):
 
     def test_multiline_block_collapses_to_one_paragraph(self):
         text = slicer.chapter_text(self.html, self.blocks, self.chapters[1])
-        line = [l for l in text.split("\n\n") if l.startswith("[0009]")][0]
+        line = next(para for para in text.split("\n\n") if para.startswith("[0009]"))
         self.assertEqual(
             line,
             "[0009] This paragraph runs across several lines of the source file, "

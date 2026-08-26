@@ -76,7 +76,7 @@ class NormalizeTest(unittest.TestCase):
         )
 
     def test_non_breaking_space_is_ordinary_space(self):
-        self.assertEqual(MATCH.normalize("a b"), "a b")
+        self.assertEqual(MATCH.normalize("a\u00a0b"), "a b")
 
     def test_a_bare_less_than_in_prose_is_not_a_tag(self):
         # [28] "<[^>]*>" reads all of "< 5 and y >" as one tag and deletes it.

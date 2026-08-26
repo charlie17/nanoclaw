@@ -4,7 +4,7 @@ A reading map turns a book in Readwise Reader into a one-canvas visual of its en
 
 ## The loop, from your side
 
-1. **Ask for a map.** "Build a reading map for `<book>`" — the book must be in Reader (EPUB is the happy path; PDF works). The heavy build runs on Claude Code; expect a fan-out of agents and a validated canvas landing in the vault at `general/reference/learning/<slug>.canvas` (with `<slug>-manifest.json` beside it).
+1. **Ask for a map.** "Build a reading map for `<book>`" — the book must be in Reader (EPUB is the happy path; PDF works). The heavy build runs on Claude Code; expect a fan-out of agents and a validated canvas landing at `reference/learning/<slug>.canvas` in the general vault (with `<slug>-manifest.json` beside it — surface-specific absolute paths are in SKILL.md §Mechanics).
 
 2. **Triage on the canvas.** Skim and prepend flags to card titles: ⭐ key · 🔥 dig in · ⏭️ skip · ❓ clarify. Move cards, edit any text, delete cards, recolor the Heatmap Sections tiles — every edit of yours is permanent. A deleted claim card is never recreated; your wording always wins. (The teal furniture — root, legend, hubs, section tiles — is machine-owned and comes back on the next pass.)
 
@@ -30,4 +30,4 @@ A reading map turns a book in Readwise Reader into a one-canvas visual of its en
 
 ## Under the hood (pointers, not reading assignments)
 
-`SKILL.md` carries the doctrine; `scripts/` carries the mechanics (fetch/slice → extract → distill → assemble → project → arm → refresh), all stdlib Python, ~500 tests. The manifest is the source of truth; the canvas is its projection. The map is a pre-read instrument — not a substitute for the book.
+`SKILL.md` carries the doctrine; `scripts/` carries the mechanics (fetch/slice → extract → distill → assemble → project → arm → refresh), all stdlib Python, with a ~740-test unittest suite (count as of the 2026-08 review close). The manifest is the source of truth; the canvas is its projection. The map is a pre-read instrument — not a substitute for the book.
