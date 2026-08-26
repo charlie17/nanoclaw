@@ -152,8 +152,9 @@ LEGEND_TEXT = "\n".join([
     "**1 · Before reading — triage.** Skim the map; prepend flags to card "
     "titles: ⭐ key · \U0001f525 dig in · ⏭️ skip · ❓ clarify. Move, edit, or "
     "delete anything — your edits are permanent and a deleted claim card never "
-    "comes back (teal furniture regrows). Your material always lands under a "
-    "card's — JT — rule; source text stays above it.",
+    "comes back (teal furniture regrows). Everything of yours collects at the "
+    "bottom of a card, below its — JT — divider line; the book's text stays "
+    "above it.",
     "",
     "**2 · Arm — say \"arm the map.\"** Do this once triage is done, "
     "before you start reading. Every ⭐/\U0001f525/❓ card gets a live cite link "

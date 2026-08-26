@@ -12,7 +12,7 @@ A reading map turns a book in Readwise Reader into a one-canvas visual of its en
 
 4. **Read in Reader, normally.** Highlight as you go. To attach a stance, start the highlight's note with shorthand: ✅ / ❌ / 💡 (or `agree` / `dispute` / `surface`). A bare highlight is just an attention flag — stance is never inferred.
 
-5. **Refresh.** Say "refresh the map" (works from Telegram or Claude Code). Your new highlights are matched to cards: matched ones appear under the card's `— JT —` rule with their own live links; stance recolors the card (green/red/purple); anything unmatchable lands visibly in the orange **Unmatched highlights** card, never dropped. Repeat as often as you like — refresh is idempotent.
+5. **Refresh.** Say "refresh the map" (works from Telegram or Claude Code). Your new highlights are matched to cards: matched ones appear below the card's `— JT —` divider line with their own live links; stance recolors the card (green/red/purple); anything unmatchable lands visibly in the orange **Unmatched highlights** card, never dropped. Repeat as often as you like — refresh is idempotent.
 
 ## Reading the map
 
