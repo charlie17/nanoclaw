@@ -166,6 +166,26 @@ def granular_manifest(total=330, chapters=15):
     return m
 
 
+def wide_family_manifest(kids=5):
+    """One section with *kids* nominal-height children — tunes the run height."""
+    m = M.new_manifest(
+        "family", {"title": "Family", "author": "A. Writer"},
+        [{"idx": 0, "title": "The Only Chapter", "block_start": 0, "block_end": 200}],
+    )
+    claims = [M.new_claim("c-0001", "The section claim", 0, "root", 0,
+                          locator="Ch 1", block_range=[0, 1], anchor_block=0,
+                          anchor_phrase="section", body_md=LOREM[:200])]
+    for index in range(kids):
+        claims.append(M.new_claim(
+            "c-%04d" % (index + 2), "Supporting claim %d" % (index + 1),
+            0, "c-0001", index,
+            locator="Ch 1 §%d" % index, block_range=[index + 1, index + 2],
+            anchor_block=index + 1, anchor_phrase="a", body_md=LOREM[:200]))
+    m["claims"] = claims
+    M.validate(m)
+    return m
+
+
 def nodes_by_id(canvas):
     return dict((n["id"], n) for n in canvas["nodes"])
 
@@ -1124,6 +1144,139 @@ class ShelfLayoutTest(unittest.TestCase):
             by[cb.claim_node_id(m["slug"], c["id"])]["x"] for c in m["claims"]))
         self.assertGreater(columns(by_tight), columns(by_loose),
                            "lowering the cap must force more columns")
+
+    def test_children_sit_outward_of_their_parent_on_the_same_side(self):
+        for m in (branching_manifest(), granular_manifest(), big_manifest()):
+            canvas = cb.build_canvas(m)
+            by_id = nodes_by_id(canvas)
+            hubs = dict((c["idx"], by_id[cb.node_id(m["slug"], cb.hub_key(c["idx"]))])
+                        for c in m["chapters"])
+            for claim in m["claims"]:
+                parent = claim["parent"]
+                if parent == "root" or claim["chapter_idx"] == -1:
+                    continue
+                child = by_id[cb.claim_node_id(m["slug"], claim["id"])]
+                parent_node = by_id[cb.claim_node_id(m["slug"], parent)]
+                hub = hubs[claim["chapter_idx"]]
+                outward = 1 if parent_node["x"] > hub["x"] else -1
+                self.assertGreater(
+                    (child["x"] - parent_node["x"]) * outward, 0,
+                    "%s is not outward of its parent %s" % (claim["id"], parent))
+
+    def test_each_parents_primary_run_is_immediately_beside_it(self):
+        """The first run of children is always in the very next column."""
+        for m in (branching_manifest(), granular_manifest(), big_manifest()):
+            canvas = cb.build_canvas(m)
+            by_id = nodes_by_id(canvas)
+            groups = {}
+            for claim in m["claims"]:
+                if claim["parent"] != "root" and claim["chapter_idx"] != -1:
+                    groups.setdefault(claim["parent"], []).append(claim["id"])
+            for parent_id, kids in groups.items():
+                parent = by_id[cb.claim_node_id(m["slug"], parent_id)]
+                distances = set(
+                    abs(by_id[cb.claim_node_id(m["slug"], k)]["x"] - parent["x"])
+                    for k in kids)
+                self.assertIn(
+                    cb.COL_PITCH, distances,
+                    "no child of %s sits in the adjacent column" % parent_id)
+
+    def test_a_parent_is_level_with_its_own_children(self):
+        """Adjacency: the run of children is centred on the parent."""
+        for m in (branching_manifest(), granular_manifest()):
+            canvas = cb.build_canvas(m)
+            by_id = nodes_by_id(canvas)
+            groups = {}
+            for claim in m["claims"]:
+                if claim["parent"] != "root" and claim["chapter_idx"] != -1:
+                    groups.setdefault(claim["parent"], []).append(claim["id"])
+            for parent_id, kids in groups.items():
+                parent = by_id[cb.claim_node_id(m["slug"], parent_id)]
+                kid_nodes = [by_id[cb.claim_node_id(m["slug"], k)] for k in kids]
+                top = min(n["y"] for n in kid_nodes)
+                bottom = max(n["y"] + n["height"] for n in kid_nodes)
+                middle = parent["y"] + parent["height"] / 2.0
+                self.assertTrue(
+                    top <= middle <= bottom,
+                    "parent %s is not level with its children" % parent_id)
+
+    def test_no_column_interleaves_two_parents_children(self):
+        """Subtree contiguity: a column run never mixes two parents' children."""
+        for m in (branching_manifest(), granular_manifest(), tall_manifest()):
+            canvas = cb.build_canvas(m)
+            by_id = nodes_by_id(canvas)
+            parent_of = dict((c["id"], c["parent"]) for c in m["claims"])
+            per_column = {}
+            for claim in m["claims"]:
+                if claim["chapter_idx"] == -1:
+                    continue
+                node = by_id[cb.claim_node_id(m["slug"], claim["id"])]
+                key = (claim["chapter_idx"], node["x"])
+                per_column.setdefault(key, []).append((node["y"], claim["id"]))
+            for key, entries in per_column.items():
+                entries.sort()
+                seen = []
+                for _y, claim_id in entries:
+                    parent = parent_of[claim_id]
+                    if not seen or seen[-1] != parent:
+                        self.assertNotIn(
+                            parent, seen,
+                            "column %r interleaves children of %s" % (key, parent))
+                        seen.append(parent)
+
+    def test_a_subtree_is_never_split_across_bands(self):
+        m = granular_manifest()
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        children = {}
+        for claim in m["claims"]:
+            if claim["parent"] != "root" and claim["chapter_idx"] != -1:
+                children.setdefault(claim["parent"], []).append(claim["id"])
+        for parent_id, kids in children.items():
+            columns = set(by_id[cb.claim_node_id(m["slug"], k)]["x"] for k in kids)
+            # one adjacent run, or an explicit spill into the next column out
+            self.assertLessEqual(len(columns), 2,
+                                 "children of %s scattered over %d columns"
+                                 % (parent_id, len(columns)))
+
+    def test_ordinary_content_never_drifts_above_the_cap(self):
+        """The tolerance is not a raised cap — it must stay unspent here."""
+        for m in (granular_manifest(), big_manifest(), branching_manifest(),
+                  tall_manifest(), small_manifest()):
+            canvas = cb.build_canvas(m)
+            for chapter in chapter_extents(m, canvas):
+                height = chapter["y1"] - chapter["y0"]
+                self.assertLessEqual(
+                    height, cb.CHAPTER_HEIGHT_CAP,
+                    "chapter %r drifted to %d without needing the tolerance"
+                    % (chapter["label"], height))
+
+    def test_the_tolerance_is_spent_only_to_avoid_a_split(self):
+        # six children whose run lands between the cap and the limit: keeping
+        # them in one adjacent run is worth the extra height
+        m = wide_family_manifest(kids=6)
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        kids = [c for c in m["claims"] if c["parent"] != "root"]
+        columns = set(by_id[cb.claim_node_id(m["slug"], c["id"])]["x"] for c in kids)
+        run = sum(by_id[cb.claim_node_id(m["slug"], c["id"])]["height"]
+                  for c in kids) + cb.SIB_GAP * (len(kids) - 1)
+        self.assertGreater(run, cb.CHAPTER_HEIGHT_CAP, "fixture must exceed the cap")
+        self.assertLessEqual(run, cb.CHAPTER_HEIGHT_LIMIT)
+        self.assertEqual(len(columns), 1, "tolerance should have kept one run")
+        height = chapter_extents(m, canvas)[0]["y1"]
+        self.assertLessEqual(height, cb.CHAPTER_HEIGHT_LIMIT)
+
+    def test_a_run_too_big_even_for_the_tolerance_still_splits(self):
+        m = wide_family_manifest(kids=7)
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        kids = [c for c in m["claims"] if c["parent"] != "root"]
+        columns = set(by_id[cb.claim_node_id(m["slug"], c["id"])]["x"] for c in kids)
+        self.assertGreater(len(columns), 1, "an unsalvageable run must split")
+        for chapter in chapter_extents(m, canvas):
+            self.assertLessEqual(chapter["y1"] - chapter["y0"],
+                                 cb.CHAPTER_HEIGHT_LIMIT)
 
     def test_spill_keeps_no_overlap_and_is_deterministic(self):
         m = tall_manifest()

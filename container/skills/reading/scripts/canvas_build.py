@@ -41,6 +41,14 @@ CLUSTER_GAP = 240                   # overview cluster -> first chapter
 # (not the safety margin) is what decides how wide the ribbon runs.
 CHAPTER_HEIGHT_CAP = 3400
 
+# A soft tolerance of roughly one card on top of the cap.  It is spent ONLY
+# where it prevents a split — keeping a parent's children in a single adjacent
+# run instead of spilling them into a second column.  Ordinary packing always
+# uses the cap: starting a new band further out costs nothing in traceability,
+# so the tolerance is never spent on that.
+CHAPTER_HEIGHT_TOLERANCE = 700
+CHAPTER_HEIGHT_LIMIT = CHAPTER_HEIGHT_CAP + CHAPTER_HEIGHT_TOLERANCE
+
 SIDE_X = 0                          # overview cluster / legend / bin column, far left
 SIDE_GAP = 60
 
@@ -531,100 +539,170 @@ def _stack_height(branches, spans):
             + SIB_GAP * (len(branches) - 1))
 
 
-def _subtree_height(claim_id, children, heights, cache):
-    """Total card height of a whole subtree — the balancing weight."""
-    if claim_id in cache:
-        return cache[claim_id]
-    total = heights[claim_id]
-    for kid in children.get(claim_id, []):
-        total += SIB_GAP + _subtree_height(kid["id"], children, heights, cache)
-    cache[claim_id] = total
-    return total
-
-
-def _pack_columns(claim_ids, heights, cap):
-    """Fill one column at a time, spilling outward rather than growing taller."""
-    columns = []
+def _greedy_groups(items, span_of, cap):
+    """Split *items* into vertical runs, each no taller than *cap*."""
+    groups = []
     current = []
     used = 0
-    for claim_id in claim_ids:
-        height = heights[claim_id]
-        added = height if not current else SIB_GAP + height
+    for item in items:
+        span = span_of(item)
+        added = span if not current else SIB_GAP + span
         if current and used + added > cap:
-            columns.append(current)
-            current = [claim_id]
-            used = height
+            groups.append(current)
+            current = [item]
+            used = span
         else:
-            current.append(claim_id)
+            current.append(item)
             used += added
     if current:
-        columns.append(current)
-    return columns
+        groups.append(current)
+    return groups
 
 
-def _wing_levels(branches, children):
-    """Claim ids per depth, breadth-first, so siblings stay contiguous."""
-    levels = []
-    frontier = list(branches)
-    while frontier:
-        levels.append([c["id"] for c in frontier])
-        nxt = []
-        for claim in frontier:
-            nxt.extend(children.get(claim["id"], []))
-        frontier = nxt
-    return levels
-
-
-def _column_height(column, heights):
-    if not column:
+def _group_span(group, spans):
+    if not group:
         return 0
-    return sum(heights[c] for c in column) + SIB_GAP * (len(column) - 1)
+    return (sum(spans[item["id"]] for item in group)
+            + SIB_GAP * (len(group) - 1))
+
+
+def _child_runs(kids, spans, cap, limit):
+    """Split a parent's children into adjacent runs.
+
+    The cap decides.  Only if honouring it would break the children into more
+    than one run do we test whether the tolerance keeps them together — and
+    only if it fully avoids the split is it spent.  A run that would still
+    need splitting gets no tolerance at all.
+    """
+    groups = _greedy_groups(kids, lambda k: spans[k["id"]], cap)
+    if len(groups) > 1 and limit > cap:
+        relaxed = _greedy_groups(kids, lambda k: spans[k["id"]], limit)
+        if len(relaxed) == 1:
+            return relaxed
+    return groups
+
+
+def _capped_spans(roots, children, heights, cap, limit):
+    """Vertical band each subtree owns, once over-tall child runs have spilled.
+
+    A node's band is its own height or its tallest run of children, whichever
+    is larger.  Because a run is capped, and a single card can never exceed the
+    cap, every band fits — which is what lets the chapter honour the cap
+    without ever splitting a subtree.
+    """
+    spans = {}
+
+    def compute(claim):
+        claim_id = claim["id"]
+        if claim_id in spans:
+            return spans[claim_id]
+        kids = children.get(claim_id, [])
+        own = heights[claim_id]
+        if not kids:
+            spans[claim_id] = own
+            return own
+        for kid in kids:
+            compute(kid)
+        tallest = 0
+        for group in _child_runs(kids, spans, cap, limit):
+            tallest = max(tallest, _group_span(group, spans))
+        spans[claim_id] = max(own, tallest)
+        return spans[claim_id]
+
+    for root in roots:
+        compute(root)
+    return spans
+
+
+def _place_unit(claim, column, top, children, heights, spans, cap, limit,
+                positions, order):
+    """Place one subtree contiguously, root at *column*, children beside it.
+
+    The root and its children are centred on the same band, so a parent always
+    sits level with the run of its own children in the very next column.  Only
+    when one run would break the cap does it spill into a further column — and
+    even then those children stay beside their parent rather than being pooled
+    with anyone else's.
+    """
+    claim_id = claim["id"]
+    span = spans[claim_id]
+    own = heights[claim_id]
+    positions[claim_id] = (column, top + (span - own) // 2)
+    order.append(claim_id)
+
+    kids = children.get(claim_id, [])
+    if not kids:
+        return column
+
+    rightmost = column
+    cursor_column = column + 1
+    for group in _child_runs(kids, spans, cap, limit):
+        group_span = _group_span(group, spans)
+        cursor = top + (span - group_span) // 2
+        group_right = cursor_column
+        for kid in group:
+            group_right = max(group_right, _place_unit(
+                kid, cursor_column, cursor, children, heights, spans, cap,
+                limit, positions, order))
+            cursor += spans[kid["id"]] + SIB_GAP
+        rightmost = max(rightmost, group_right)
+        cursor_column = group_right + 1
+    return rightmost
 
 
 def _layout_chapter(hub_height, roots, children, heights, cap=None):
     """Filmstrip layout: hub in the middle, capped columns fanning both ways.
 
-    Each depth level is packed into as many columns as the height cap requires,
-    filling one column before starting the next further out.  That trades width
-    for height on purpose: the map is panned horizontally, and a chapter that
-    grows past the cap forces vertical scrolling that the reader will not do.
+    Placement is subtree-contiguous: a section card sits in the wing's first
+    column with its own children stacked immediately beside it, and the whole
+    subtree is placed as one unit.  Units stack down the wing in sibling order;
+    when the stack would break the cap, a new BAND opens further out and the
+    next WHOLE subtree starts there.  A subtree is never split across bands.
 
-    Columns occupy distinct x positions and cards within a column are stacked
-    with a gap, so nothing can overlap by construction.
+    That is deliberately wider than pooling cards by depth.  Proximity beats
+    density here: a parent must be traceable to its children at a glance, and
+    an edge that sweeps across the chapter defeats the map.
+
+    Columns occupy distinct x positions and each subtree owns a disjoint
+    vertical band, so nothing can overlap by construction.
     """
     if cap is None:
         cap = CHAPTER_HEIGHT_CAP
-    cache = {}
-    weights = dict(
-        (c["id"], _subtree_height(c["id"], children, heights, cache)) for c in roots
-    )
-    right, left = _balance_sides(roots, weights)
+    limit = max(cap, CHAPTER_HEIGHT_LIMIT if cap == CHAPTER_HEIGHT_CAP else cap)
+    spans = _capped_spans(roots, children, heights, cap, limit)
+    right, left = _balance_sides(roots, spans)
 
     wings = {}
     for side, branches in ((RIGHT, right), (LEFT, left)):
-        columns = []
-        for level in _wing_levels(branches, children):
-            columns.extend(_pack_columns(level, heights, cap))
-        wings[side] = columns
+        wings[side] = _greedy_groups(branches, lambda b: spans[b["id"]], cap)
 
     content_h = max(
         [hub_height]
-        + [_column_height(col, heights)
-           for side in (RIGHT, LEFT) for col in wings[side]]
+        + [_group_span(band, spans)
+           for side in (RIGHT, LEFT) for band in wings[side]]
     )
 
     positions = {}
     sides = {}
     order = []
     for side in (RIGHT, LEFT):
-        for index, column in enumerate(wings[side]):
-            x = (index + 1) * COL_PITCH * (1 if side == RIGHT else -1)
-            y = (content_h - _column_height(column, heights)) // 2
-            for claim_id in column:
-                positions[claim_id] = (x, y)
-                sides[claim_id] = side
-                order.append(claim_id)
-                y += heights[claim_id] + SIB_GAP
+        wing_positions = {}
+        wing_order = []
+        column = 0
+        for band in wings[side]:
+            top = (content_h - _group_span(band, spans)) // 2
+            band_right = column
+            for unit in band:
+                band_right = max(band_right, _place_unit(
+                    unit, column, top, children, heights, spans, cap, limit,
+                    wing_positions, wing_order))
+                top += spans[unit["id"]] + SIB_GAP
+            column = band_right + 1
+        # Column indices become x here, mirrored for the left wing.
+        for claim_id, (col, y) in wing_positions.items():
+            positions[claim_id] = ((col + 1) * COL_PITCH * side, y)
+            sides[claim_id] = side
+        order.extend(wing_order)
 
     positions[HUB_SLOT] = (0, (content_h - hub_height) // 2)
 
@@ -642,7 +720,7 @@ def _layout_chapter(hub_height, roots, children, heights, cap=None):
         "top_level": [c["id"] for c in right] + [c["id"] for c in left],
         "content_w": right_edge - left_edge,
         "content_h": content_h,
-        "columns": dict((side, len(wings[side])) for side in (RIGHT, LEFT)),
+        "bands": dict((side, len(wings[side])) for side in (RIGHT, LEFT)),
     }
 
 
