@@ -135,30 +135,38 @@ CITE_PREFIX = "↳ cite:"
 CITE_WRAP = "*"                     # the cite line renders italic
 JT_SEP = "\n\n---\n— JT —\n"
 
+# The legend is the map's instruction card: it reads as the workflow JT
+# actually runs (triage -> arm -> read -> refresh), not as a colour key.  Each
+# paragraph is ONE logical line — Obsidian turns a bare newline into a hard
+# break, so source-side wrapping would show up in the render.  Implicit string
+# concatenation keeps the source readable without injecting breaks.
 LEGEND_TEXT = "\n".join([
     "# Legend",
     "",
-    "**Triage flags** — prepend to a card title:",
-    "⭐ key · \U0001f525 dig in · ⏭️ skip · ❓ clarify",
+    "**What you're looking at:** chapters flow left→right as teal hubs with "
+    "their claim cards beside them; up here sit the Heatmap Sections (color "
+    "those tiles freely — yellow is yours, the builder never uses it), this "
+    "legend, and the root overview. A card's *↳ cite* line jumps to the exact "
+    "passage once armed.",
     "",
-    "**Stance** — write it in the highlight note while reading:",
-    "✅ agree · ❌ dispute · \U0001f4a1 surface",
+    "**1 · Before reading — triage.** Skim the map; prepend flags to card "
+    "titles: ⭐ key · \U0001f525 dig in · ⏭️ skip · ❓ clarify. Move, edit, or "
+    "delete anything — your edits are permanent and a deleted claim card never "
+    "comes back (teal furniture regrows). Your material always lands under a "
+    "card's — JT — rule; source text stays above it.",
     "",
-    "**Card colors**",
-    "green = agree · red = dispute · purple = surface",
-    "teal = root, legend, and chapter hubs — machine-authored furniture",
-    "orange = unmatched highlights",
-    "Source cards stay uncolored.",
+    "**2 · Arm — say \"arm the map.\"** Do this once triage is done, "
+    "before you start reading. Every ⭐/\U0001f525/❓ card gets a live cite link "
+    "into Reader; ⏭️ and unflagged cards create nothing.",
     "",
-    "**Map structure** — the Overview group holds the root card and the",
-    "book-level summary; each chapter gets its own group. An unlabelled arrow",
-    "means a claim supports its parent; anything else (objection, reply,",
-    "qualifies, contrasts, example, consequence) is written on the arrow.",
+    "**3 · While reading — in Reader.** Highlight normally. Start a "
+    "highlight's note with ✅ / ❌ / \U0001f4a1 (or agree / dispute / surface) "
+    "to attach a stance; a bare highlight is just an attention flag.",
     "",
-    "**Your edits are safe.** Move, edit, or delete any card — a deleted card is",
-    "recorded as pruned and never recreated, and edited text is kept verbatim.",
-    "Source content and your overlay never mix: your material lands under the",
-    "— JT — rule at the bottom of a card.",
+    "**4 · Refresh — say \"refresh the map.\"** After any reading "
+    "session, as often as you like. Highlights land on their cards with live "
+    "links; stance recolors: ✅ green · ❌ red · \U0001f4a1 purple; anything "
+    "unmatched goes to the orange bin, never dropped.",
 ])
 
 

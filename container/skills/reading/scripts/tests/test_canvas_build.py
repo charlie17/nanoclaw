@@ -1298,8 +1298,38 @@ class ShelfLayoutTest(unittest.TestCase):
                              "%s should wear the furniture colour" % key)
         self.assertEqual(by_id[cb.node_id(SLUG, "bin")]["color"], "2")
 
-    def test_legend_documents_the_furniture_colour(self):
-        self.assertIn("teal = root, legend, and chapter hubs", cb.LEGEND_TEXT)
+    def test_legend_documents_the_furniture_and_reserved_colours(self):
+        # Teal is the machine-authored furniture colour and yellow is JT's
+        # highlighter; the legend is the only place he is told either fact.
+        self.assertIn("teal hubs", cb.LEGEND_TEXT)
+        self.assertIn("teal furniture regrows", cb.LEGEND_TEXT)
+        self.assertIn("yellow is yours, the builder never uses it", cb.LEGEND_TEXT)
+
+    def test_legend_reads_as_the_numbered_workflow(self):
+        # The card's job is to walk JT through triage -> arm -> read -> refresh
+        # in order; a reorder or a dropped step is a real regression.
+        steps = [
+            "**1 · Before reading — triage.**",
+            "**2 · Arm — say \"arm the map.\"**",
+            "**3 · While reading — in Reader.**",
+            "**4 · Refresh — say \"refresh the map.\"**",
+        ]
+        positions = []
+        for step in steps:
+            self.assertIn(step, cb.LEGEND_TEXT)
+            positions.append(cb.LEGEND_TEXT.index(step))
+        self.assertEqual(positions, sorted(positions))
+
+    def test_legend_card_is_sized_to_need_no_scrolling(self):
+        # The workflow copy is materially taller than the old colour key, and
+        # H_MAX is a reference not a clamp — the projected card must still
+        # satisfy the validator's own overflow maths.
+        m = small_manifest(with_unmatched=True, with_overview=True)
+        canvas = cb.build_canvas(m)
+        legend = nodes_by_id(canvas)[cb.node_id(SLUG, "legend")]
+        self.assertGreaterEqual(
+            legend["height"], cb.estimate_height(cb.LEGEND_TEXT))
+        self.assertEqual(validate_canvas(canvas), [])
 
     def test_yellow_is_reserved_and_never_emitted(self):
         for m in (small_manifest(with_unmatched=True, with_overview=True),
