@@ -38,11 +38,18 @@ _TOC_ATTR_RE = re.compile(r'data-rw-epub-toc\s*=\s*"([^"]*)"', re.IGNORECASE)
 _TOC_PRESENT_RE = re.compile(r"data-rw-epub-toc\s*=", re.IGNORECASE)
 _BLOCK_TYPE_RE = re.compile(r"block-type\s*=", re.IGNORECASE)
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-_LI_TOKEN_RE = re.compile(r"<li\b[^>]*>|</li\s*>", re.IGNORECASE)
 
 #: List items are rendered under their anchoring paragraph with this marker.
 ITEM_BULLET = "•"
 ITEM_INDENT = "    "
+
+#: List content that precedes the very first p-block has no preceding
+#: paragraph to cite, so its rendering names the nearest anchorable block —
+#: the first one — explicitly. Deliberately not a ``[NNNN]`` anchor line: it
+#: labels material that sits ABOVE the block it tells extraction to cite.
+FRONT_MATTER_ANCHOR = (
+    "[----] Front-matter list, no preceding paragraph; cite block %04d:"
+)
 
 
 # --------------------------------------------------------------------------
@@ -104,11 +111,87 @@ def detect_format(html):
 
 
 # --------------------------------------------------------------------------
+# Shared tokenizer — one walk, one tag stack
+# --------------------------------------------------------------------------
+#
+# ``inter_block_items`` and ``gap_text_audit`` split the SAME text between
+# them: every run outside the p-blocks is either list content or audit
+# content. So they share one tokenizer and one document-wide tag stack. Two
+# independent scanners is exactly how content goes missing — a per-gap li
+# stack used to drop the tail of any ``<li>`` that spanned an anchor
+# paragraph, while the document-wide audit stack still counted that tail as
+# already surfaced.
+
+_SKIP_CONTAINERS = ("style", "script", "svg", "head", "noscript")
+
+_VOID_TAGS = (
+    "br", "img", "hr", "input", "meta", "link", "source", "col", "area",
+    "base", "embed", "param", "track", "wbr",
+)
+
+_TAG_PARSE_RE = re.compile(r"^<\s*(/?)\s*([A-Za-z][A-Za-z0-9:-]*)")
+_SELF_CLOSING_RE = re.compile(r"/\s*>$")
+
+
+def _walk_text_runs(html, blocks):
+    """Yield ``(position, chunk, stack, open_items)`` for text OUTSIDE the blocks.
+
+    One tag stack spans the whole document, so a ``<li>`` — or a ``<table>`` —
+    that wraps an anchor paragraph keeps its state on both sides of it. Runs
+    inside a p-block are skipped: ``block_text`` already carries them, and a
+    block boundary is always a tag boundary, so a run is never half in.
+
+    ``open_items`` carries one unique id per currently-open ``<li>``, outermost
+    first — the innermost, which owns the text, is ``open_items[-1]``, and an
+    empty list means "not in a list item". Tag names are lowercased, so
+    ``<Li>`` is an ``li``. Both lists are LIVE: read them during the iteration
+    and copy them to keep them. A closing tag unwinds the stack, so an ``<li>``
+    left open by its ``</ul>`` closes with the list.
+    """
+    spans = [(block["start"], block["end"]) for block in blocks]
+    starts = [span[0] for span in spans]
+
+    def inside_block(position):
+        index = bisect.bisect_right(starts, position) - 1
+        return index >= 0 and position < spans[index][1]
+
+    stack = []
+    open_items = []
+    next_item = 0
+    cursor = 0
+    for match in _TAG_RE.finditer(html):
+        chunk = html[cursor:match.start()]
+        if chunk and not inside_block(cursor):
+            yield cursor, chunk, stack, open_items
+        cursor = match.end()
+        raw = match.group(0)
+        parsed = _TAG_PARSE_RE.match(raw)
+        if parsed is None:
+            continue                      # comment, doctype, stray bracket
+        closing, name = parsed.group(1), parsed.group(2).lower()
+        if closing:
+            if name in stack:
+                while stack:
+                    popped = stack.pop()
+                    if popped == "li" and open_items:
+                        open_items.pop()
+                    if popped == name:
+                        break
+        elif name not in _VOID_TAGS and not _SELF_CLOSING_RE.search(raw):
+            stack.append(name)
+            if name == "li":
+                open_items.append(next_item)
+                next_item += 1
+    if cursor < len(html) and not inside_block(cursor):
+        yield cursor, html[cursor:], stack, open_items
+
+
+# --------------------------------------------------------------------------
 # List items — content that lives BETWEEN the p-blocks
 # --------------------------------------------------------------------------
 #
 # Reader's html_content puts ``<li>`` elements outside the ``<p>`` blocks
-# entirely. On the pilot EPUB that is 592 items and ~65K characters of real
+# entirely. On the pilot EPUB that is ~600 items and ~65K characters of real
 # argument that ``chapter_text`` never showed the extractor. They are surfaced
 # here WITHOUT becoming blocks: block indexing, offsets and the highlight
 # anchor unit are untouched, because ``reader_create_highlight`` needs a
@@ -116,83 +199,46 @@ def detect_format(html):
 # the nearest PRECEDING p-block, which is therefore its citation anchor.
 
 
-def _li_items(region):
-    """Flatten every ``<li>`` in *region* to plain text, in document order.
-
-    Nested lists flatten: an outer item contributes only its own text, each
-    inner item follows as its own entry. Unclosed items are closed at the end
-    of the region rather than dropped.
-    """
-    stack = []
-    spans = {}
-    order = 0
-    for match in _LI_TOKEN_RE.finditer(region):
-        if match.group(0)[1] == "/":
-            if stack:
-                index, start = stack.pop()
-                spans[index] = (start, match.start())
-        else:
-            stack.append((order, match.end()))
-            order += 1
-    while stack:
-        index, start = stack.pop()
-        spans[index] = (start, len(region))
-
-    items = []
-    for index in sorted(spans):
-        start, end = spans[index]
-        nested = sorted(
-            (s, e) for key, (s, e) in spans.items()
-            if key != index and start <= s and e <= end
-        )
-        if nested:
-            pieces = []
-            cursor = start
-            for inner_start, inner_end in nested:
-                if inner_start < cursor:
-                    continue
-                pieces.append(region[cursor:inner_start])
-                cursor = inner_end
-            pieces.append(region[cursor:end])
-            content = "".join(pieces)
-        else:
-            content = region[start:end]
-        text = _to_text(content)
-        if text:
-            items.append(text)
-    return items
-
-
-def _gap_regions(html, blocks):
-    """``[(preceding_block_index, region_text), ...]`` for every inter-block gap.
-
-    The region before the first block is attributed to -1; the region after the
-    last block belongs to the last block.
-    """
-    if not blocks:
-        return [(-1, html)]
-    regions = [(-1, html[:blocks[0]["start"]])]
-    for position in range(len(blocks) - 1):
-        regions.append((
-            blocks[position]["i"],
-            html[blocks[position]["end"]:blocks[position + 1]["start"]],
-        ))
-    regions.append((blocks[-1]["i"], html[blocks[-1]["end"]:]))
-    return regions
+def _block_starts_between(starts, low, high):
+    """True when a p-block starts in ``[low, high)`` — i.e. one was skipped."""
+    index = bisect.bisect_left(starts, low)
+    return index < len(starts) and starts[index] < high
 
 
 def inter_block_items(html, blocks):
     """``{preceding_block_index: [item_text, ...]}`` for every ``<li>`` in the gaps.
 
     Items before the first p-block are keyed -1. Keys with no items are absent.
+
+    An item is attributed to the block preceding its FIRST run of text. An item
+    that spans an anchor paragraph — ``<li>before<p>inside</p>after</li>``, a
+    shape calibre really emits — keeps the text on both sides of it: the
+    paragraph is left out (it is its own block) and a single space joins what
+    remains, so nothing is dropped and no word is glued to its neighbour.
     """
-    found = {}
-    for index, region in _gap_regions(html, blocks):
-        if "<li" not in region and "<LI" not in region:
+    starts = [block["start"] for block in blocks]
+    order = []
+    pieces = {}
+    anchor = {}
+    last_end = {}
+    for position, chunk, _stack, open_items in _walk_text_runs(html, blocks):
+        if not open_items:
             continue
-        items = _li_items(region)
-        if items:
-            found.setdefault(index, []).extend(items)
+        item = open_items[-1]
+        if item not in pieces:
+            order.append(item)
+            pieces[item] = []
+            anchor[item] = bisect.bisect_right(starts, position) - 1
+        elif _block_starts_between(starts, last_end[item], position):
+            pieces[item].append(" ")
+        pieces[item].append(chunk)
+        last_end[item] = position + len(chunk)
+
+    found = {}
+    for item in order:
+        text = _to_text("".join(pieces[item]))
+        if text:
+            found.setdefault(anchor[item], []).append(text)
     return found
 
 
@@ -269,7 +315,9 @@ def chapter_text(html, blocks, chapter, items=None):
 
     One paragraph per block, each prefixed with its zero-padded block index —
     ``[0412] ...`` — so downstream extraction can cite block ids. Blocks that
-    render to nothing (spacers, image-only paragraphs) are omitted.
+    render to nothing (spacers, image-only paragraphs) are omitted UNLESS they
+    own list items: an anchor line is emitted for those even when empty, since
+    the bullets underneath still need a block id to cite.
 
     List items found between the blocks follow their anchoring block as
     indented bullets with NO index of their own — they are not anchorable, and
@@ -278,21 +326,36 @@ def chapter_text(html, blocks, chapter, items=None):
     in the gap before the next chapter's first block stay with this chapter and
     never leak into the next one.
 
+    Items keyed -1 sit above the first p-block and so have no preceding
+    paragraph. They open the FIRST chapter's rendering (``block_start == 0``)
+    under a ``FRONT_MATTER_ANCHOR`` label naming the block to cite — the first
+    one, the nearest anchorable paragraph. They are rendered exactly once and
+    never leak into a later chapter.
+
     Pass *items* to reuse a mapping already computed (or cached); by default it
     is derived from *html*.
     """
     if items is None:
         items = inter_block_items(html, blocks)
     paragraphs = []
+    if blocks and chapter["block_start"] == 0:
+        lead = [item for item in items.get(-1, ()) if item]
+        if lead:
+            paragraphs.append("\n".join(
+                [FRONT_MATTER_ANCHOR % blocks[0]["i"]]
+                + ["%s%s %s" % (ITEM_INDENT, ITEM_BULLET, i) for i in lead]
+            ))
     for index in range(chapter["block_start"], chapter["block_end"]):
         block = blocks[index]
         entry = []
         text = block_text(html, block)
+        owned = [item for item in items.get(block["i"], ()) if item]
         if text:
             entry.append("[%04d] %s" % (block["i"], text))
-        for item in items.get(block["i"], ()):
-            if item:
-                entry.append("%s%s %s" % (ITEM_INDENT, ITEM_BULLET, item))
+        elif owned:
+            entry.append("[%04d]" % block["i"])
+        for item in owned:
+            entry.append("%s%s %s" % (ITEM_INDENT, ITEM_BULLET, item))
         if entry:
             paragraphs.append("\n".join(entry))
     return "\n\n".join(paragraphs)
@@ -307,8 +370,6 @@ def chapter_text(html, blocks, chapter, items=None):
 # reports how much text extraction cannot see and which tags it sits in, so a
 # build reports the gap instead of silently dropping it.
 
-_SKIP_CONTAINERS = ("style", "script", "svg", "head", "noscript")
-
 #: Text is attributed to the innermost of these on the open-tag stack; a run in
 #: a ``<td>`` inside a ``<table>`` reports as "table", which is what a human
 #: reading the audit wants to know.
@@ -316,14 +377,6 @@ _AUDIT_CONTAINERS = (
     "table", "blockquote", "pre", "figure", "figcaption", "aside", "caption",
     "dl", "dt", "dd", "code", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6",
 )
-
-_VOID_TAGS = (
-    "br", "img", "hr", "input", "meta", "link", "source", "col", "area",
-    "base", "embed", "param", "track", "wbr",
-)
-
-_TAG_PARSE_RE = re.compile(r"^<\s*(/?)\s*([A-Za-z][A-Za-z0-9:-]*)")
-_SELF_CLOSING_RE = re.compile(r"/\s*>$")
 
 AUDIT_SAMPLE_CHARS = 80
 AUDIT_SAMPLE_COUNT = 5
@@ -343,48 +396,21 @@ def gap_text_audit(html, blocks):
     excluded — it is already surfaced — as is anything inside ``<style>``,
     ``<script>`` or ``<svg>``, and pure whitespace.
 
-    The tag stack is tracked across the whole document rather than per gap, so
-    a ``<table>`` that contains a ``<p>`` block still attributes the text
-    around that block to "table".
+    It shares ``_walk_text_runs`` with ``inter_block_items``, so the tag stack
+    is tracked across the whole document rather than per gap — a ``<table>``
+    that contains a ``<p>`` block still attributes the text around that block
+    to "table" — and the two functions can never disagree about which runs a
+    list item already covers.
     """
-    spans = [(block["start"], block["end"]) for block in blocks]
-    starts = [span[0] for span in spans]
-
-    def inside_block(position):
-        index = bisect.bisect_right(starts, position) - 1
-        return index >= 0 and position < spans[index][1]
-
-    stack = []
     runs = []
-    cursor = 0
-
-    def record(chunk, start_position):
-        if inside_block(start_position):
-            return
-        if "li" in stack:
-            return
-        for name in stack:
-            if name in _SKIP_CONTAINERS:
-                return
+    for _position, chunk, stack, open_items in _walk_text_runs(html, blocks):
+        if open_items:
+            continue                      # already surfaced as a list item
+        if any(name in _SKIP_CONTAINERS for name in stack):
+            continue
         text = _to_text(chunk)
         if text:
             runs.append((_attribute(stack), text))
-
-    for match in _TAG_RE.finditer(html):
-        record(html[cursor:match.start()], cursor)
-        cursor = match.end()
-        raw = match.group(0)
-        parsed = _TAG_PARSE_RE.match(raw)
-        if parsed is None:
-            continue                      # comment, doctype, stray bracket
-        closing, name = parsed.group(1), parsed.group(2).lower()
-        if closing:
-            if name in stack:
-                while stack and stack.pop() != name:
-                    pass
-        elif name not in _VOID_TAGS and not _SELF_CLOSING_RE.search(raw):
-            stack.append(name)
-    record(html[cursor:], cursor)
 
     by_tag = {}
     longest = {}

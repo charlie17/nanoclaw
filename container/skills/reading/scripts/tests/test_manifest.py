@@ -201,6 +201,194 @@ class ValidationTest(unittest.TestCase):
         self.assertFalse(os.path.exists(path))
 
 
+class CoreFieldTypeTest(unittest.TestCase):
+    """Loaded manifests are persisted JSON: their types are checked here or nowhere.
+
+    Every shape below used to pass ``load()`` and then crash a surface that
+    reads the field without a guard — ``body.strip()``, ``int(word_count)``,
+    ``0 <= anchor_block``, ``item.get(...)``.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="dsr-types-")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def rejected(self, mutate):
+        m = sample_manifest()
+        mutate(m)
+        with self.assertRaises(M.ManifestError) as ctx:
+            M.validate(m)
+        return str(ctx.exception)
+
+    def accepted(self, mutate):
+        m = sample_manifest()
+        mutate(m)
+        M.validate(m)
+        return m
+
+    # ---- claim text fields ------------------------------------------------
+
+    def test_rejects_a_numeric_body(self):
+        self.assertIn("body_md", self.rejected(
+            lambda m: m["claims"][0].__setitem__("body_md", 1)))
+
+    def test_rejects_a_list_title(self):
+        self.assertIn("title", self.rejected(
+            lambda m: m["claims"][0].__setitem__("title", ["a", "b"])))
+
+    def test_rejects_a_null_locator(self):
+        self.assertIn("locator", self.rejected(
+            lambda m: m["claims"][0].__setitem__("locator", None)))
+
+    def test_rejects_a_numeric_anchor_phrase(self):
+        self.assertIn("anchor_phrase", self.rejected(
+            lambda m: m["claims"][0].__setitem__("anchor_phrase", 7)))
+
+    # ---- claim integer fields ---------------------------------------------
+
+    def test_rejects_a_string_order(self):
+        self.assertIn("order", self.rejected(
+            lambda m: m["claims"][0].__setitem__("order", "1")))
+
+    def test_rejects_a_boolean_order(self):
+        self.assertIn("order", self.rejected(
+            lambda m: m["claims"][0].__setitem__("order", True)))
+
+    def test_rejects_a_string_chapter_idx(self):
+        self.assertIn("chapter_idx", self.rejected(
+            lambda m: m["claims"][0].__setitem__("chapter_idx", "0")))
+
+    def test_rejects_a_string_anchor_block(self):
+        self.assertIn("anchor_block", self.rejected(
+            lambda m: m["claims"][0].__setitem__("anchor_block", "3")))
+
+    def test_rejects_a_boolean_anchor_block(self):
+        self.assertIn("anchor_block", self.rejected(
+            lambda m: m["claims"][0].__setitem__("anchor_block", False)))
+
+    def test_a_null_anchor_block_is_still_allowed(self):
+        self.accepted(lambda m: m["claims"][0].__setitem__("anchor_block", None))
+
+    # ---- cite -------------------------------------------------------------
+
+    def test_rejects_a_non_object_cite(self):
+        self.assertIn("cite", self.rejected(
+            lambda m: m["claims"][0].__setitem__("cite", "https://x")))
+
+    def test_rejects_a_numeric_cite_field(self):
+        self.assertIn("cite.highlight_id", self.rejected(
+            lambda m: m["claims"][0]["cite"].__setitem__("highlight_id", 5)))
+
+    # ---- the jt overlay ---------------------------------------------------
+
+    def test_rejects_a_string_pruned(self):
+        # "false" is truthy: it would silently delete the card
+        self.assertIn("pruned", self.rejected(
+            lambda m: m["claims"][0]["jt"].__setitem__("pruned", "false")))
+
+    def test_rejects_a_bare_string_flags(self):
+        self.assertIn("flags", self.rejected(
+            lambda m: m["claims"][0]["jt"].__setitem__("flags", "⭐")))
+
+    def test_rejects_null_notes(self):
+        self.assertIn("notes", self.rejected(
+            lambda m: m["claims"][0]["jt"].__setitem__("notes", None)))
+
+    def test_rejects_a_string_inside_highlights(self):
+        self.assertIn("highlights", self.rejected(
+            lambda m: m["claims"][0]["jt"].__setitem__("highlights", ["bad"])))
+
+    def test_a_real_highlight_object_is_accepted(self):
+        self.accepted(lambda m: m["claims"][0]["jt"].__setitem__(
+            "highlights", [M.new_highlight("h-1", "u", "text", "")]))
+
+    # ---- the verbatim slots the canvas writes back -------------------------
+
+    def test_rejects_a_numeric_post_cite(self):
+        self.assertIn("post_cite", self.rejected(
+            lambda m: m["claims"][0]["jt"].__setitem__("post_cite", 5)))
+
+    def test_rejects_a_numeric_jt_section_override(self):
+        self.assertIn("jt_section_override", self.rejected(
+            lambda m: m["claims"][0]["jt"].__setitem__("jt_section_override", 5)))
+
+    def test_an_empty_jt_section_override_is_accepted(self):
+        # "" is a real value: it is how "JT deleted that section" is recorded.
+        self.accepted(lambda m: m["claims"][0]["jt"].__setitem__(
+            "jt_section_override", ""))
+
+    def test_an_empty_post_cite_is_accepted(self):
+        self.accepted(lambda m: m["claims"][0]["jt"].__setitem__("post_cite", ""))
+
+    def test_real_text_in_both_slots_is_accepted(self):
+        def edit(m):
+            m["claims"][0]["jt"]["post_cite"] = "My own thought about this."
+            m["claims"][0]["jt"]["jt_section_override"] = "— JT —\n\nmy wording"
+        self.accepted(edit)
+
+    def test_both_slots_absent_is_the_ordinary_case(self):
+        self.accepted(lambda m: None)
+
+    # ---- source -----------------------------------------------------------
+
+    def test_rejects_a_nonnumeric_word_count(self):
+        self.assertIn("word_count", self.rejected(
+            lambda m: m["source"].__setitem__("word_count", "unknown")))
+
+    def test_rejects_a_negative_word_count(self):
+        self.assertIn("word_count", self.rejected(
+            lambda m: m["source"].__setitem__("word_count", -1)))
+
+    def test_rejects_a_boolean_word_count(self):
+        self.assertIn("word_count", self.rejected(
+            lambda m: m["source"].__setitem__("word_count", True)))
+
+    def test_rejects_an_unknown_category(self):
+        self.assertIn("category", self.rejected(
+            lambda m: m["source"].__setitem__("category", "audiobook")))
+
+    def test_rejects_a_numeric_source_title(self):
+        self.assertIn("source.title", self.rejected(
+            lambda m: m["source"].__setitem__("title", 5)))
+
+    def test_rejects_a_numeric_html_sha256(self):
+        self.assertIn("html_sha256", self.rejected(
+            lambda m: m["source"].__setitem__("html_sha256", 0)))
+
+    # ---- the other persisted collections ----------------------------------
+
+    def test_rejects_a_string_in_unmatched(self):
+        self.assertIn("unmatched", self.rejected(
+            lambda m: m.__setitem__("unmatched", ["bad"])))
+
+    def test_rejects_null_runs(self):
+        self.assertIn("runs", self.rejected(
+            lambda m: m.__setitem__("runs", None)))
+
+    # ---- back-compat ------------------------------------------------------
+
+    def test_load_rejects_a_malformed_core_field_on_disk(self):
+        path = os.path.join(self.dir, "bad-types.json")
+        m = sample_manifest()
+        m["claims"][0]["body_md"] = 1
+        M.atomic_write_text(path, M.dumps(m))
+        with self.assertRaises(M.ManifestError):
+            M.load(path)
+
+    def test_unknown_extra_keys_still_validate(self):
+        # the live pilot manifest carries root_md / body_full alongside the
+        # schema; hardening the known fields must not reject the unknown ones
+        m = self.accepted(lambda m: m.__setitem__("root_md", "# Root"))
+        m["claims"][0]["body_full"] = "the long form"
+        m["source"]["reader_url"] = "https://readwise.io/read/x"
+        M.validate(m)
+
+    def test_a_constructor_built_manifest_round_trips_through_load(self):
+        path = os.path.join(self.dir, "ok.json")
+        M.save(sample_manifest(), path)
+        self.assertEqual(len(M.load(path)["claims"]), 3)
+
+
 class HalfOpenChapterTest(unittest.TestCase):
     """block_end is EXCLUSIVE: chapters[i].block_end == chapters[i+1].block_start."""
 

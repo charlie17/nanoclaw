@@ -56,15 +56,25 @@ def main(argv=None):
     if isinstance(payload, dict):
         print("payload keys : %s" % ", ".join(sorted(payload.keys())))
 
-    items = refresh_mod.as_highlight_list(payload)
+    items, recognized = refresh_mod.coerce_highlights(payload)
+    print("shape        : %s" % ("recognised" if recognized else "UNRECOGNISED"))
     print("highlights   : %d" % len(items))
-    if not items:
+    if not recognized:
         print("")
         print("Nothing came back in a recognised shape. Rerun with --raw and widen "
               "refresh._LIST_KEYS if the envelope key is new.")
         if args.raw:
-            print(json.dumps(payload, ensure_ascii=False, indent=2)[:8000])
+            print("--- raw payload ---")
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 1
+    if not items:
+        print("")
+        print("The envelope was recognised and holds 0 highlights — this document "
+              "has none yet. Nothing to inspect.")
+        if args.raw:
+            print("--- raw payload ---")
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
 
     key_union = set()
     for item in items:
@@ -88,7 +98,7 @@ def main(argv=None):
 
     if args.raw:
         print("--- raw payload ---")
-        print(json.dumps(payload, ensure_ascii=False, indent=2)[:16000])
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
 

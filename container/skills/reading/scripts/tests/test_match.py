@@ -78,8 +78,32 @@ class NormalizeTest(unittest.TestCase):
     def test_non_breaking_space_is_ordinary_space(self):
         self.assertEqual(MATCH.normalize("a b"), "a b")
 
+    def test_a_bare_less_than_in_prose_is_not_a_tag(self):
+        # [28] "<[^>]*>" reads all of "< 5 and y >" as one tag and deletes it.
+        self.assertEqual(
+            MATCH.normalize("If x < 5 and y > 3 then stop"),
+            "If x < 5 and y > 3 then stop",
+        )
+        # real markup around it is still markup
+        self.assertEqual(
+            MATCH.normalize("<p>If x < 5 then <em>stop</em></p>"),
+            "If x < 5 then stop",
+        )
+
     def test_none_is_empty(self):
         self.assertEqual(MATCH.normalize(None), "")
+
+    def test_block_norm_keeps_escaped_angle_bracket_prose(self):
+        # [28] block_norm normalizes the RAW block html.  Normalizing
+        # slicer.block_text's output instead would strip tags twice, and the
+        # "< 5 and y >" that the first pass unescaped would be eaten as markup
+        # by the second — losing the exact text that tells blocks apart.
+        html = "<p>If x &lt; 5 and y &gt; 3 then stop the whole simulation.</p>"
+        block = slicer.slice_blocks(html)[0]
+        self.assertEqual(
+            MATCH.block_norm(html, block),
+            "If x < 5 and y > 3 then stop the whole simulation.",
+        )
 
 
 class LocateHighlightTest(unittest.TestCase):
@@ -160,6 +184,36 @@ class LocateHighlightTest(unittest.TestCase):
         )
         self.assertEqual(MATCH.locate_highlight(HTML, BLOCKS, highlight), [])
 
+    def test_escaped_angle_bracket_prose_locates(self):
+        # [28] the literal "< 5 and y >" is the discriminating text; stripping
+        # tags twice deletes it and drops this highlight into the bin.  Reader
+        # may hand the text back either escaped or already decoded, so both
+        # spellings have to reach the same block.
+        html = "".join([
+            "<p>If x &lt; 5 and y &gt; 3 then stop the whole simulation at once.</p>",
+            "<p>Another paragraph entirely, with nothing bracketed inside of it.</p>",
+        ])
+        blocks = slicer.slice_blocks(html)
+        self.assertEqual(
+            MATCH.locate_highlight(html, blocks, "If x &lt; 5 and y &gt; 3 then stop"),
+            [0],
+        )
+        self.assertEqual(
+            MATCH.locate_highlight(html, blocks, "If x < 5 and y > 3 then stop"),
+            [0],
+        )
+
+    def test_sentences_drifting_across_two_blocks_keep_both(self):
+        # [27] the endpoints drifted, so the exact passes miss; the fallback
+        # must report BOTH sentences' blocks rather than pinning the whole
+        # selection to whichever one happened to be longest.
+        highlight = " ".join([
+            "And then he wrote this.",     # nowhere in the source
+            PARAGRAPHS[3],
+            PARAGRAPHS[9],
+        ])
+        self.assertEqual(MATCH.locate_highlight(HTML, BLOCKS, highlight), [3, 9])
+
 
 class MatchToClaimTest(unittest.TestCase):
     def test_all_blocks_inside_one_claim(self):
@@ -216,6 +270,40 @@ class MatchToClaimTest(unittest.TestCase):
             M.new_claim("c-1", "A", 0, "root", 0, block_range=[0, 6], anchor_block=0),
         ])
         self.assertIsNone(MATCH.match_to_claim(manifest, []))
+
+    def test_equal_range_siblings_are_ambiguous(self):
+        # [30] identical ranges are not nesting — nothing in the source says
+        # which of these two JT meant, so the answer is the bin.
+        manifest = sample_manifest([
+            M.new_claim("c-1", "A", 0, "root", 0, block_range=[2, 6], anchor_block=2),
+            M.new_claim("c-2", "B", 0, "root", 1, block_range=[2, 6], anchor_block=2),
+        ])
+        self.assertIsNone(MATCH.match_to_claim(manifest, [4]))
+
+    def test_equal_ranges_at_different_depths_prefer_the_deeper(self):
+        # ...but depth IS evidence: the child is the more specific reading.
+        manifest = sample_manifest([
+            M.new_claim("c-1", "Parent", 0, "root", 0,
+                        block_range=[2, 6], anchor_block=2),
+            M.new_claim("c-2", "Child", 0, "c-1", 0,
+                        block_range=[2, 6], anchor_block=2),
+        ])
+        self.assertEqual(MATCH.match_to_claim(manifest, [4]), "c-2")
+
+    def test_drifted_sentences_across_two_claims_go_to_the_bin(self):
+        # [27] end to end: the two-block fallback result straddles two claims.
+        manifest = sample_manifest([
+            M.new_claim("c-1", "A", 0, "root", 0, block_range=[0, 4], anchor_block=0),
+            M.new_claim("c-2", "B", 0, "root", 1, block_range=[5, 11], anchor_block=5),
+        ])
+        highlight = " ".join([
+            "And then he wrote this.",
+            PARAGRAPHS[3],
+            PARAGRAPHS[9],
+        ])
+        indices = MATCH.locate_highlight(HTML, BLOCKS, highlight)
+        self.assertEqual(indices, [3, 9])
+        self.assertIsNone(MATCH.match_to_claim(manifest, indices))
 
     def test_overview_claims_without_a_range_are_skipped(self):
         manifest = sample_manifest([

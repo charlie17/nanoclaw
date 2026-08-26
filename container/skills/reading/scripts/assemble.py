@@ -14,7 +14,9 @@ locator, block_range, anchor_block or anchor_phrase at all.
 
 Local ids are only unique *within* a file, so assembly namespaces them:
 ``c-<chapter_idx>-<ordinal>``, or ``o-<ordinal>`` for the overview.  Parent
-references are remapped in the same pass.
+references are remapped in the same pass, and resolved WITHIN THE FILE that
+named them — one chapter may be split across several extraction files and each
+of them may legitimately use ``x1``.
 
 Two reports come out of this module and neither of them judges:
 
@@ -22,9 +24,15 @@ Two reports come out of this module and neither of them judges:
     the block it claims to come from, and does that block sit inside the
     claim's range inside its chapter's range;
   * ``coverage_report`` — where the extraction may have skipped content, and
-    which cards are too thin to be worth a card.
+    which cards are too thin to be worth a card.  ``assemble()`` runs it and
+    hands it back as ``report["coverage"]``.
 
 Both are evidence for the reconciliation pass, not a pass/fail gate.
+
+Everything inside an extraction file is LLM output and is treated as such: a
+field may be the wrong type, the wrong sign or the wrong shape, and the answer
+is always to repair it and say so in the report.  Nothing here aborts a book
+over one bad card.
 
 Ranges: a claim's ``block_range`` is [first, last] INCLUSIVE.  A chapter's
 ``block_start``/``block_end`` is half-open (block_end exclusive), matching
@@ -71,19 +79,30 @@ def claim_id_for(chapter_idx, ordinal):
     return "c-%s-%0*d" % (chapter_idx, ID_PAD, ordinal)
 
 
-def _key(chapter_idx, local_id):
-    return "%s:%s" % (chapter_idx, local_id)
+def _key(source_file, local_id):
+    """The id-map key for a local id.
+
+    Keyed by FILE, not by chapter: the extraction contract only promises local
+    ids are unique within one file, so a chapter fanned out over two files may
+    have an ``x1`` in each and neither may capture the other's children.
+    """
+    return "%s:%s" % (source_file, local_id)
 
 
 # --------------------------------------------------------------------------
 # reading the work dir
 # --------------------------------------------------------------------------
 
-def load_extractions(extraction_dir):
-    """Every ``*.json`` in the work dir, as (filename, payload), name-sorted.
+def load_extractions(extraction_dir, failures=None):
+    """Every readable ``*.json`` in the work dir, as (filename, payload).
 
     Files are read in name order so a rerun over the same directory produces
     byte-identical ids.
+
+    A file that cannot be read or parsed is SKIPPED, never raised on: one
+    subagent leaving a truncated file behind must not throw away every other
+    chapter's work.  Pass a list as *failures* to collect one
+    ``{"file", "error"}`` entry per skipped file.
     """
     names = sorted(
         name for name in os.listdir(extraction_dir) if name.lower().endswith(".json")
@@ -91,9 +110,211 @@ def load_extractions(extraction_dir):
     payloads = []
     for name in names:
         path = os.path.join(extraction_dir, name)
-        with open(path, "r", encoding="utf-8") as handle:
-            payloads.append((name, json.load(handle)))
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                payloads.append((name, json.load(handle)))
+        except (OSError, ValueError) as exc:
+            # ValueError covers json.JSONDecodeError and UnicodeDecodeError.
+            if failures is not None:
+                failures.append(
+                    {"file": name, "error": "%s: %s" % (type(exc).__name__, exc)}
+                )
     return payloads
+
+
+# --------------------------------------------------------------------------
+# normalizing untrusted extraction fields
+# --------------------------------------------------------------------------
+
+def _repair(report, claim_id, kind, detail):
+    report["repairs"].append(
+        {"claim_id": claim_id, "kind": kind, "detail": detail}
+    )
+
+
+def _plain_int(value):
+    """*value* when it is a real int, else None.  ``True`` is not an int here.
+
+    JSON's ``true`` is a Python bool and a bool is an int, so a block index of
+    ``[true, false]`` would otherwise sail through as ``[1, 0]``.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _text_field(raw, field, claim_id, report, repaired=""):
+    """One untrusted text field as a str.
+
+    Absent or null is the extraction legitimately omitting an optional field:
+    it becomes ``""`` silently.  Any other non-string is content that was lost
+    in a shape nothing downstream can render, so it takes *repaired* and says
+    so.
+    """
+    value = raw.get(field)
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    _repair(report, claim_id, field,
+            "%s is a %s, not a string; recorded as %r"
+            % (field, type(value).__name__, repaired))
+    return repaired
+
+
+def _body_field(raw, claim_id, report):
+    """``body_md``, which the extraction sometimes emits as a list of lines.
+
+    A list of strings is a plausible LLM shape carrying the real body, so it is
+    joined into paragraphs rather than thrown away.  Anything else falls back
+    to the ordinary text rule.
+    """
+    value = raw.get("body_md")
+    if (isinstance(value, (list, tuple)) and value
+            and all(isinstance(part, str) for part in value)):
+        _repair(report, claim_id, "body_md",
+                "body_md is a list of %d strings; joined into paragraphs"
+                % len(value))
+        return "\n\n".join(value)
+    return _text_field(raw, "body_md", claim_id, report)
+
+
+def normalize_claim(raw, claim_id, chapter_idx, report):
+    """Every untrusted field of one extraction claim, repaired and reported.
+
+    Returns the keyword arguments ``manifest.new_claim`` wants — ``title`` and
+    ``order`` included.  ``parent`` is deliberately absent: only the caller
+    knows the id map of the file this claim came from.
+
+    Never raises.  Every value it returns is a shape ``new_claim`` and
+    ``manifest.validate`` accept, so a claim that arrives as
+    ``{"block_range": ["bad", 1], "order": "first", "title": ["a", "b"]}``
+    costs one card's provenance and three repair lines, not the book.
+    """
+    is_overview = chapter_idx == manifest_mod.OVERVIEW_IDX
+
+    rel = raw.get("rel") or manifest_mod.REL_DEFAULT
+    if rel not in manifest_mod.REL_VOCABULARY:
+        _repair(report, claim_id, "rel",
+                "rel %r is not in the vocabulary; recorded as %r"
+                % (rel, manifest_mod.REL_DEFAULT))
+        rel = manifest_mod.REL_DEFAULT
+
+    order = raw.get("order", 0)
+    if order is None:
+        order = 0                         # an omitted field, spelled null
+    if _plain_int(order) is None:
+        _repair(report, claim_id, "order",
+                "order %r is not a plain integer; recorded as 0" % (order,))
+        order = 0
+
+    raw_range = raw.get("block_range")
+    start = end = None
+    if isinstance(raw_range, (list, tuple)) and len(raw_range) == 2:
+        start, end = _plain_int(raw_range[0]), _plain_int(raw_range[1])
+        if start is None or end is None:
+            start = end = None            # a half-usable range is not usable
+
+    if start is None:
+        if is_overview:
+            block_range = None            # an overview card cites nothing
+            if raw_range is not None:
+                _repair(report, claim_id, "block_range",
+                        "block_range %r is not a pair of plain integers; the "
+                        "overview card records no range" % (raw_range,))
+        else:
+            _repair(report, claim_id, "block_range",
+                    "block_range %r is not a pair of plain integers; recorded "
+                    "as [0, 0]" % (raw_range,))
+            block_range = [0, 0]
+    else:
+        if start > end:
+            _repair(report, claim_id, "block_range",
+                    "block_range [%d, %d] is inverted; swapped" % (start, end))
+            start, end = end, start
+        if start < 0 or end < 0:
+            _repair(report, claim_id, "block_range",
+                    "block_range [%d, %d] runs before the first block; clamped "
+                    "to [%d, %d]" % (start, end, max(0, start), max(0, end)))
+            start, end = max(0, start), max(0, end)
+        block_range = [start, end]
+
+    raw_anchor = raw.get("anchor_block")
+    anchor_block = _plain_int(raw_anchor)
+    if anchor_block is None and raw_anchor is not None:
+        _repair(report, claim_id, "anchor_block",
+                "anchor_block %r is not a plain integer; discarded"
+                % (raw_anchor,))
+    if anchor_block is None and block_range is not None:
+        anchor_block = block_range[0]
+
+    return {
+        "title": _text_field(raw, "title", claim_id, report,
+                             repaired="(untitled)"),
+        "order": order,
+        "rel": rel,
+        "locator": _text_field(raw, "locator", claim_id, report),
+        "block_range": block_range,
+        "anchor_block": anchor_block,
+        "anchor_phrase": _text_field(raw, "anchor_phrase", claim_id, report),
+        "body_md": _body_field(raw, claim_id, report),
+    }
+
+
+def _break_parent_cycles(claims, report):
+    """Cut any parent edge that closes a cycle, reparenting it to root.
+
+    An extraction can name a parent that resolves perfectly well and still
+    describe a loop — a card that is its own parent, or ``a -> b -> a``.
+    ``manifest.validate`` raises on those, which would discard a whole book's
+    work, so the closing edge is cut here and reported instead.
+    """
+    by_id = dict((claim["id"], claim) for claim in claims)
+    for claim in claims:
+        walked = set()
+        cursor = claim
+        while cursor is not None and cursor["parent"] != "root":
+            if cursor["id"] in walked:
+                _repair(report, cursor["id"], "parent",
+                        "parent %r closes a cycle back to %s; reparented to root"
+                        % (cursor["parent"], cursor["id"]))
+                cursor["parent"] = "root"
+                break
+            walked.add(cursor["id"])
+            cursor = by_id.get(cursor["parent"])
+
+
+def _sane_source_meta(source_meta, report):
+    """Document metadata in a shape ``manifest.validate`` accepts.
+
+    The metadata comes from the Reader API, so it is no more trusted than the
+    extraction: a null word count or a category Reader spells its own way must
+    not abort a book that assembled fine.
+    """
+    clean = dict(source_meta or {})
+    for field in ("document_id", "title", "author", "fetched_at", "html_sha256"):
+        if field in clean and not isinstance(clean[field], str):
+            report["warnings"].append(
+                "source.%s is a %s, not a string; recorded as empty"
+                % (field, type(clean[field]).__name__)
+            )
+            clean[field] = ""
+    if "word_count" in clean:
+        count = clean["word_count"]
+        if _plain_int(count) is None or count < 0:
+            report["warnings"].append(
+                "source.word_count %r is not a whole number of words; recorded "
+                "as 0" % (count,)
+            )
+            clean["word_count"] = 0
+    if "category" in clean and clean["category"] not in manifest_mod.CATEGORIES:
+        report["warnings"].append(
+            "source.category %r is not one of %s; recorded as %r"
+            % (clean["category"], ", ".join(manifest_mod.CATEGORIES),
+               manifest_mod.CATEGORIES[0])
+        )
+        clean["category"] = manifest_mod.CATEGORIES[0]
+    return clean
 
 
 # --------------------------------------------------------------------------
@@ -110,6 +331,13 @@ def assemble(slug, source_meta, chapters, extraction_dir, html=None, blocks=None
     bad anchor must not throw away a book's worth of work.
 
     *html* / *blocks* default to the slice cache for ``source_meta["document_id"]``.
+    When html is available the manifest is BOUND to it —
+    ``manifest["source"]["html_sha256"]`` is the sha256 of that exact string —
+    so arm/refresh can tell a re-fetched source from the one whose block
+    indexes these anchors mean.  No html, no binding: the field stays ``""``.
+
+    ``report["coverage"]`` carries the ``coverage_report`` ledger, or None with
+    a warning when there was no source to compute it from.
     """
     report = {
         "slug": slug,
@@ -120,10 +348,19 @@ def assemble(slug, source_meta, chapters, extraction_dir, html=None, blocks=None
         "warnings": [],
         "id_map": {},
         "manifest_warnings": [],
+        "unreadable_files": [],
+        "coverage": None,
     }
 
-    payloads = load_extractions(extraction_dir)
-    manifest = manifest_mod.new_manifest(slug, source_meta, chapters)
+    payloads = load_extractions(extraction_dir, report["unreadable_files"])
+    for failure in report["unreadable_files"]:
+        report["warnings"].append(
+            "%s: could not be read as extraction JSON (%s); skipped"
+            % (failure["file"], failure["error"])
+        )
+    manifest = manifest_mod.new_manifest(
+        slug, _sane_source_meta(source_meta, report), chapters
+    )
     chapter_by_idx = dict((c["idx"], c) for c in manifest["chapters"])
 
     ordinals = {}
@@ -161,12 +398,12 @@ def assemble(slug, source_meta, chapters, extraction_dir, html=None, blocks=None
             ordinals[chapter_idx] = ordinals.get(chapter_idx, 0) + 1
             claim_id = claim_id_for(chapter_idx, ordinals[chapter_idx])
             local_id = str(raw.get("local_id") or "")
-            key = _key(chapter_idx, local_id)
+            key = _key(name, local_id)
             if local_id and key in id_map:
                 report["warnings"].append(
-                    "%s: duplicate local_id %r in chapter %s; the later one keeps its "
+                    "%s: duplicate local_id %r in this file; the later one keeps its "
                     "own id but parent references resolve to the first"
-                    % (name, local_id, chapter_idx)
+                    % (name, local_id)
                 )
             elif local_id:
                 id_map[key] = claim_id
@@ -178,70 +415,25 @@ def assemble(slug, source_meta, chapters, extraction_dir, html=None, blocks=None
         if parent_raw == "root":
             parent = "root"
         else:
-            parent = id_map.get(_key(chapter_idx, str(parent_raw)))
+            # within this file only — another file's x1 is another claim
+            parent = id_map.get(_key(name, str(parent_raw)))
             if parent is None:
                 parent = "root"
-                report["repairs"].append({
-                    "claim_id": claim_id,
-                    "kind": "parent",
-                    "detail": "parent %r resolves to no claim in %s; reparented to root"
-                              % (parent_raw, name),
-                })
+                _repair(report, claim_id, "parent",
+                        "parent %r resolves to no claim in %s; reparented to root"
+                        % (parent_raw, name))
 
-        rel = raw.get("rel") or manifest_mod.REL_DEFAULT
-        if rel not in manifest_mod.REL_VOCABULARY:
-            report["repairs"].append({
-                "claim_id": claim_id,
-                "kind": "rel",
-                "detail": "rel %r is not in the vocabulary; recorded as %r"
-                          % (rel, manifest_mod.REL_DEFAULT),
-            })
-            rel = manifest_mod.REL_DEFAULT
-
-        block_range = raw.get("block_range")
-        if isinstance(block_range, (list, tuple)) and len(block_range) == 2:
-            start, end = int(block_range[0]), int(block_range[1])
-            if start > end:
-                report["repairs"].append({
-                    "claim_id": claim_id,
-                    "kind": "block_range",
-                    "detail": "block_range [%d, %d] is inverted; swapped" % (start, end),
-                })
-                start, end = end, start
-            block_range = [max(0, start), max(0, end)]
-        elif chapter_idx == manifest_mod.OVERVIEW_IDX:
-            block_range = None
-        else:
-            report["repairs"].append({
-                "claim_id": claim_id,
-                "kind": "block_range",
-                "detail": "no usable block_range in the extraction; recorded as [0, 0]",
-            })
-            block_range = [0, 0]
-
-        anchor_block = raw.get("anchor_block")
-        if isinstance(anchor_block, bool) or not isinstance(anchor_block, int):
-            anchor_block = None
-        if anchor_block is None and block_range is not None:
-            anchor_block = block_range[0]
-
+        fields = normalize_claim(raw, claim_id, chapter_idx, report)
         claims.append(manifest_mod.new_claim(
             claim_id,
-            raw.get("title") or "",
+            fields.pop("title"),
             chapter_idx,
             parent,
-            raw.get("order", 0) or 0,
-            rel=rel,
-            locator=raw.get("locator") or "",
-            block_range=block_range,
-            anchor_block=anchor_block,
-            anchor_phrase=raw.get("anchor_phrase") or "",
-            body_md=raw.get("body_md") or "",
+            fields.pop("order"),
+            **fields
         ))
 
-    manifest["claims"] = claims
-    report["claim_count"] = len(claims)
-    report["manifest_warnings"] = manifest_mod.validate(manifest)
+    _break_parent_cycles(claims, report)
 
     if html is None or blocks is None:
         doc_id = (source_meta or {}).get("document_id")
@@ -250,12 +442,33 @@ def assemble(slug, source_meta, chapters, extraction_dir, html=None, blocks=None
                 html = slicer.load_source(doc_id)
             if blocks is None:
                 blocks = slicer.load_blocks(doc_id)
+
+    # Bind the manifest to the html these anchors were verified against before
+    # validating it, so what gets validated is what gets saved.
+    if html is not None:
+        manifest["source"]["html_sha256"] = slicer.sha256_text(html)
+    elif not isinstance(manifest["source"].get("html_sha256"), str):
+        manifest["source"]["html_sha256"] = ""
+
+    manifest["claims"] = claims
+    report["claim_count"] = len(claims)
+    report["manifest_warnings"] = manifest_mod.validate(manifest)
+
     if html is None or blocks is None:
         report["warnings"].append(
             "source html is not cached; anchor phrases were not verified"
         )
+        report["coverage"] = None
+        report["warnings"].append(
+            "coverage could not be computed: the source html and blocks are "
+            "not available"
+        )
     else:
-        report["anchor_failures"] = verify_anchors(manifest, html, blocks)
+        items = slicer.inter_block_items(html, blocks)
+        report["anchor_failures"] = verify_anchors(manifest, html, blocks, items=items)
+        report["coverage"] = coverage_report(
+            manifest, blocks, manifest["chapters"], html=html, items=items
+        )
 
     return AssembleResult(manifest, report)
 
@@ -264,7 +477,7 @@ def assemble(slug, source_meta, chapters, extraction_dir, html=None, blocks=None
 # anchor verification
 # --------------------------------------------------------------------------
 
-def verify_anchors(manifest, html, blocks):
+def verify_anchors(manifest, html, blocks, items=None):
     """Check every claim's anchor against the cached source.
 
     Three questions per anchored claim, all of which the extraction can get
@@ -280,8 +493,21 @@ def verify_anchors(manifest, html, blocks):
     paraphrased rather than quoted, which is exactly what the cite line
     promises it did not do.
 
+    The third question also searches the inter-block list items attributed to
+    the anchor block, because ``slice.chapter_text`` shows those items under
+    that block's ``[NNNN]`` id and tells extraction to cite them there.  A
+    phrase found ONLY in an item is reported as ``anchor_in_list_item``: the
+    quote is real, but arming it would highlight the whole ``<p>``, which does
+    not contain that text — verified, and not armable.  The pre-block "front
+    matter" items — keyed -1, because nothing precedes them — count as items of
+    the FIRST block, which is the block ``chapter_text`` tells extraction to
+    cite for them.  Pass *items* to reuse a mapping already computed; by default
+    it is derived from *html*.
+
     Returns a list of failure dicts; never raises.
     """
+    if items is None:
+        items = slicer.inter_block_items(html, blocks)
     failures = []
     chapter_by_idx = dict(
         (c["idx"], c) for c in manifest.get("chapters", [])
@@ -348,15 +574,37 @@ def verify_anchors(manifest, html, blocks):
             })
             continue
 
-        haystack = match_mod.normalize(slicer.block_text(html, blocks[anchor_block]))
+        block = blocks[anchor_block]
+        haystack = match_mod.normalize(slicer.block_text(html, block))
         needle = match_mod.normalize(phrase)
-        if needle not in haystack:
+        if needle in haystack:
+            continue
+        candidates = list(items.get(block["i"], ()))
+        # Items sitting ABOVE the first p-block have no preceding paragraph, so
+        # ``inter_block_items`` keys them -1 — but ``slice.chapter_text`` renders
+        # them at the top of the first chapter under a label naming the first
+        # block as the one to cite.  Extraction that followed that instruction
+        # quotes an item block 0's own text does not contain, and would be
+        # reported as a phrase that simply is not there.  It is the same verified
+        # -but-not-armable case as any other list item.
+        if blocks and block["i"] == blocks[0]["i"]:
+            candidates.extend(items.get(-1, ()))
+        if any(needle in match_mod.normalize(item) for item in candidates):
             failures.append({
                 "claim_id": claim_id,
-                "kind": "phrase_not_in_block",
-                "detail": "anchor phrase %r does not occur in block %d"
+                "kind": "anchor_in_list_item",
+                "detail": "anchor phrase %r comes from a list item under block "
+                          "%d, not from the block itself; the quote is verified "
+                          "but cannot be armed as a highlight"
                           % (phrase, anchor_block),
             })
+            continue
+        failures.append({
+            "claim_id": claim_id,
+            "kind": "phrase_not_in_block",
+            "detail": "anchor phrase %r does not occur in block %d"
+                      % (phrase, anchor_block),
+        })
 
     return failures
 
@@ -365,14 +613,31 @@ def verify_anchors(manifest, html, blocks):
 # coverage
 # --------------------------------------------------------------------------
 
-def _nonempty_flags(blocks, html):
-    """Per-block "has readable text", or all-True when there is no html."""
+def _nonempty_flags(blocks, html, items=None):
+    """Per-block "has content", or all-True when there is no html.
+
+    Content is the block's own text OR any non-empty list item attributed to
+    it.  An empty spacer paragraph that owns a real list is content: extraction
+    was shown those items under its ``[NNNN]`` id, the gap audit deliberately
+    skips ``li`` text, so leaving it out of the denominator lets a chapter
+    report 100% coverage while the whole list went missing.
+    """
     if html is None:
         return [True] * len(blocks)
-    return [bool(slicer.block_text(html, block).strip()) for block in blocks]
+    if items is None:
+        items = slicer.inter_block_items(html, blocks)
+    flags = []
+    for block in blocks:
+        has_content = bool(slicer.block_text(html, block).strip())
+        if not has_content:
+            has_content = any(
+                item.strip() for item in items.get(block["i"], ())
+            )
+        flags.append(has_content)
+    return flags
 
 
-def coverage_report(manifest, blocks, chapters, html=None):
+def coverage_report(manifest, blocks, chapters, html=None, items=None):
     """Per-chapter evidence about what the extraction may have missed.
 
     Pure data, no judgement: it says a stretch of the source has no card and
@@ -380,7 +645,9 @@ def coverage_report(manifest, blocks, chapters, html=None):
 
     Pass *html* to have empty blocks (spacers, image-only paragraphs) excluded
     from the arithmetic; without it every block counts as content, which
-    understates coverage rather than overstating it.
+    understates coverage rather than overstating it.  A block that renders
+    empty but owns list items still counts — see ``_nonempty_flags``.  Pass
+    *items* to reuse an inter-block item mapping already computed.
 
     Returns a list of per-chapter dicts in chapter order, plus a trailing
     entry for the overview group (chapter_idx -1) when overview claims exist,
@@ -388,7 +655,7 @@ def coverage_report(manifest, blocks, chapters, html=None):
     text that lives outside the p-blocks entirely (tables, callouts,
     blockquotes) which no amount of per-chapter coverage would reveal.
     """
-    nonempty = _nonempty_flags(blocks, html)
+    nonempty = _nonempty_flags(blocks, html, items=items)
     total_blocks = len(blocks)
 
     live = manifest_mod.live_claims(manifest)

@@ -109,6 +109,66 @@ class InterBlockItemsTest(unittest.TestCase):
         blocks = slicer.slice_blocks(html)
         self.assertEqual(slicer.inter_block_items(html, blocks), {0: ["Rock & roll"]})
 
+    def test_inline_markup_inside_an_item_does_not_split_a_word(self):
+        html = "<p>Lead.</p><ul><li>catastroph<i>e</i> theory</li></ul>"
+        blocks = slicer.slice_blocks(html)
+        self.assertEqual(
+            slicer.inter_block_items(html, blocks), {0: ["catastrophe theory"]}
+        )
+
+
+class ItemSpanningAnAnchorParagraphTest(unittest.TestCase):
+    """An ``<li>`` may legally wrap a ``<p>`` block — calibre emits this shape.
+
+    Every gap used to be parsed on its own, so the trailing ``</li>`` popped an
+    empty stack and everything after the nested paragraph was dropped from the
+    items; the audit skipped it too, because its own stack knew the ``li`` was
+    still open. The text existed in the source and reached no surface at all.
+    """
+
+    HTML = (
+        "<p>Lead in.</p>"
+        "<ul><li>before<p>inside</p>after</li></ul>"
+        "<p>Tail.</p>"
+    )
+
+    def setUp(self):
+        self.blocks = slicer.slice_blocks(self.HTML)
+        self.items = slicer.inter_block_items(self.HTML, self.blocks)
+
+    def test_the_nested_paragraph_is_still_its_own_block(self):
+        self.assertEqual(len(self.blocks), 3)
+        self.assertEqual(slicer.block_text(self.HTML, self.blocks[1]), "inside")
+
+    def test_both_sides_of_the_nested_paragraph_are_attributed(self):
+        self.assertEqual(self.items, {0: ["before after"]})
+
+    def test_the_item_reaches_chapter_text(self):
+        chapters = slicer.chapters(self.HTML, self.blocks)
+        text = slicer.chapter_text(self.HTML, self.blocks, chapters[0])
+        self.assertIn("    %s before after" % slicer.ITEM_BULLET, text)
+
+    def test_the_recovered_tail_is_not_also_counted_by_the_audit(self):
+        audit = slicer.gap_text_audit(self.HTML, self.blocks)
+        self.assertEqual(audit["total_chars"], 0)
+
+
+class MixedCaseListTagsTest(unittest.TestCase):
+    """``<Li>`` is a valid spelling; a case-sensitive fast path skipped it."""
+
+    HTML = "<p>Lead.</p><UL><Li>Mixed case item</Li></UL>"
+
+    def test_a_mixed_case_item_is_captured(self):
+        blocks = slicer.slice_blocks(self.HTML)
+        self.assertEqual(
+            slicer.inter_block_items(self.HTML, blocks), {0: ["Mixed case item"]}
+        )
+
+    def test_a_mixed_case_item_is_not_double_counted_by_the_audit(self):
+        blocks = slicer.slice_blocks(self.HTML)
+        audit = slicer.gap_text_audit(self.HTML, blocks)
+        self.assertEqual(audit["total_chars"], 0)
+
 
 class ChapterTextWithItemsTest(unittest.TestCase):
     def setUp(self):
@@ -139,18 +199,72 @@ class ChapterTextWithItemsTest(unittest.TestCase):
         self.assertIn(seam, first)
         self.assertNotIn(seam, second)
 
-    def test_front_matter_items_have_no_preceding_block_and_are_not_rendered(self):
-        joined = "".join(
+    def test_front_matter_items_open_the_first_chapter_with_a_cite_marker(self):
+        # Items keyed -1 precede every block, so they have no anchor line of
+        # their own; the marker names the block a citation must use instead.
+        lines = slicer.chapter_text(
+            self.html, self.blocks, self.chapters[0]
+        ).split("\n")
+        self.assertEqual(lines[0], slicer.FRONT_MATTER_ANCHOR % 0)
+        self.assertEqual(lines[1], "    • Front matter item")
+
+    def test_front_matter_items_are_rendered_exactly_once(self):
+        joined = "\n".join(
             slicer.chapter_text(self.html, self.blocks, chapter)
             for chapter in self.chapters
         )
-        self.assertNotIn("Front matter item", joined)
+        self.assertEqual(joined.count("Front matter item"), 1)
+        self.assertNotIn(
+            "Front matter item",
+            slicer.chapter_text(self.html, self.blocks, self.chapters[1]),
+        )
 
     def test_an_explicit_items_mapping_is_honoured(self):
         text = slicer.chapter_text(
             self.html, self.blocks, self.chapters[1], items={3: ["Injected"]}
         )
         self.assertIn("    • Injected", text)
+
+
+class EmptyBlockOwningItemsTest(unittest.TestCase):
+    """An image-only block that owns items still needs an anchor line.
+
+    Without one the bullets float under whatever came before, and extraction
+    has no block id to cite for them.
+    """
+
+    HTML = (
+        "<p>An ordinary opening paragraph.</p>"
+        '<p><img src="figure.png"/></p>'
+        "<ul><li>The figure caption lives in a list</li></ul>"
+        "<p>A closing paragraph.</p>"
+    )
+
+    def setUp(self):
+        self.blocks = slicer.slice_blocks(self.HTML)
+        self.chapters = slicer.chapters(self.HTML, self.blocks)
+        self.text = slicer.chapter_text(self.HTML, self.blocks, self.chapters[0])
+
+    def test_the_block_really_is_empty_and_really_owns_the_item(self):
+        self.assertEqual(slicer.block_text(self.HTML, self.blocks[1]), "")
+        self.assertEqual(
+            slicer.inter_block_items(self.HTML, self.blocks),
+            {1: ["The figure caption lives in a list"]},
+        )
+
+    def test_the_anchor_line_is_emitted_above_the_bullets(self):
+        lines = self.text.split("\n")
+        self.assertIn("[0001]", lines)
+        self.assertEqual(
+            lines[lines.index("[0001]") + 1],
+            "    • The figure caption lives in a list",
+        )
+
+    def test_an_empty_block_owning_nothing_is_still_omitted(self):
+        html = "<p>Opening.</p><p>   </p><p>Closing.</p>"
+        blocks = slicer.slice_blocks(html)
+        chapters = slicer.chapters(html, blocks)
+        self.assertNotIn("[0001]", slicer.chapter_text(html, blocks, chapters[0]))
 
 
 AUDIT_DOC = (

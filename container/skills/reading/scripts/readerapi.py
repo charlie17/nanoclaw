@@ -17,6 +17,10 @@ Facts this module is built to (verified by live probe 2026-08-25):
   id is the answer. No session header is required.
 * Highlight creation takes a byte-for-byte verbatim ``<p ...>...</p>`` block from
   the document's ``html_content``.
+* Retry is mutation-aware. A mutating tool call is never replayed on an ambiguous
+  outcome (5xx, timeout, broken body read) because the highlight may already
+  exist and cannot be deleted Reader-side; the caller reconciles instead. A 429
+  IS retried even for a create — the server refused before doing the work.
 * Reader-side highlight ids are NOT deletable. The highlight syncs to classic
   Readwise under an integer id; delete there
   (``readwise_list_highlights`` -> match text -> ``readwise_delete_highlight``).
@@ -27,6 +31,7 @@ Never prints or logs a token.
 from __future__ import annotations
 
 import email.utils
+import http.client
 import json
 import os
 import re
@@ -61,6 +66,20 @@ MAX_RETRY_AFTER_S = 300.0
 
 #: The create-highlight endpoint throttles around 20/min. Stay under it.
 MIN_CREATE_INTERVAL_S = 3.5
+
+#: Methods whose replay cannot change anything, so an ambiguous failure may be
+#: sent again.
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+
+#: MCP tools that change state. Everything else this module calls is a read,
+#: and a read stays retryable even though MCP carries it over POST.
+MUTATING_TOOLS = (
+    "reader_create_highlight",
+    "reader_add_tags_to_highlight",
+    "reader_remove_tags_from_highlight",
+    "reader_set_highlight_notes",
+    "readwise_delete_highlight",
+)
 
 ENV_TOKEN_VAR = "READWISE_ACCESS_TOKEN"   # container
 DOTENV_TOKEN_KEY = "READWISE_TOKEN"       # ~/.env on Windows / Claude Code
@@ -196,48 +215,99 @@ def _decode(payload):
     return payload
 
 
+def _may_replay(status, mutating):
+    """May a failed attempt be sent again?
+
+    ``status`` is the HTTP status, or None for a transport or response-read
+    failure — the genuinely ambiguous case, where the request may well have
+    reached Readwise and taken effect before the wire broke.
+
+    429 is the one unambiguous failure: the server refused the request instead
+    of doing the work, so even a create may be retried. Every other ambiguous
+    outcome on a mutating call is left to the caller, because a replayed
+    ``reader_create_highlight`` makes a second highlight and Reader-side
+    highlights cannot be deleted.
+    """
+    if status == 429:
+        return True
+    if mutating:
+        return False
+    return status is None or 500 <= status < 600
+
+
+def _ambiguity_note(status, mutating):
+    """Why a mutating call was not replayed, appended to the raised message."""
+    if mutating and (status is None or 500 <= status < 600):
+        return " (not retried: the request may already have taken effect)"
+    return ""
+
+
 def _request(url, method="GET", headers=None, body=None, timeout=DEFAULT_TIMEOUT,
-             max_retries=MAX_RETRIES):
-    """Perform one HTTP request with 429/5xx retry.
+             max_retries=MAX_RETRIES, mutating=None):
+    """Perform one HTTP request with method-aware 429/5xx retry.
 
     Returns ``(status, headers, text)``. Raises :class:`ReaderAPIError` on a
     non-retryable HTTP error or after retries are exhausted.
+
+    ``mutating`` defaults to "any method that is not safe" and can be set
+    explicitly: MCP sends reads over POST too, and those stay retryable.
     """
     data = body.encode("utf-8") if isinstance(body, str) else body
+    if mutating is None:
+        mutating = str(method).upper() not in SAFE_METHODS
     attempt = 0
     while True:
         request = urllib.request.Request(url, data=data, method=method)
         for key, value in (headers or {}).items():
             request.add_header(key, value)
+        failure = None
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 status = getattr(response, "status", None)
                 if status is None:
                     status = response.getcode()
-                return status, response.headers, _decode(response.read())
+                try:
+                    payload = response.read()
+                except (OSError, http.client.HTTPException) as err:
+                    # The body died mid-read. urlopen already succeeded, so this
+                    # is not a URLError and would otherwise escape both the retry
+                    # policy and this function's ReaderAPIError contract.
+                    failure = err
+                else:
+                    return status, response.headers, _decode(payload)
         except urllib.error.HTTPError as err:
             status = err.code
             try:
                 text = _decode(err.read())
             except Exception:  # pragma: no cover - defensive
                 text = ""
-            retryable = status == 429 or 500 <= status < 600
+            retryable = (
+                (status == 429 or 500 <= status < 600)
+                and _may_replay(status, mutating)
+            )
             if not retryable or attempt >= max_retries:
                 raise ReaderAPIError(
-                    "HTTP %s from %s" % (status, _safe_url(url)),
+                    "HTTP %s from %s%s"
+                    % (status, _safe_url(url), _ambiguity_note(status, mutating)),
                     status=status,
                     body=text[:2000],
                 )
             wait = _retry_after_seconds(_header_get(err.headers, "Retry-After"), attempt)
             _sleep(wait)
             attempt += 1
+            continue
         except urllib.error.URLError as err:
-            if attempt >= max_retries:
-                raise ReaderAPIError(
-                    "Network error contacting %s: %s" % (_safe_url(url), err.reason)
-                )
-            _sleep(min(float(2 ** attempt), MAX_BACKOFF_S))
-            attempt += 1
+            failure = err
+
+        # Transport or read-time failure: ambiguous, so one policy covers both.
+        if not _may_replay(None, mutating) or attempt >= max_retries:
+            raise ReaderAPIError(
+                "Network error contacting %s: %s%s"
+                % (_safe_url(url), getattr(failure, "reason", failure),
+                   _ambiguity_note(None, mutating))
+            )
+        _sleep(min(float(2 ** attempt), MAX_BACKOFF_S))
+        attempt += 1
 
 
 def _safe_url(url):
@@ -376,14 +446,15 @@ def _extract_frames(text, content_type):
     return [decoded] if isinstance(decoded, dict) else []
 
 
-def _mcp_post(payload, token, timeout=DEFAULT_TIMEOUT):
+def _mcp_post(payload, token, timeout=DEFAULT_TIMEOUT, mutating=False):
     headers = _auth_headers(token)
     headers["Content-Type"] = "application/json"
     headers["Accept"] = "application/json, text/event-stream"
     headers["User-Agent"] = USER_AGENT
     body = json.dumps(payload)
     status, response_headers, text = _request(
-        MCP_URL, method="POST", headers=headers, body=body, timeout=timeout
+        MCP_URL, method="POST", headers=headers, body=body, timeout=timeout,
+        mutating=mutating,
     )
     return status, _header_get(response_headers, "Content-Type"), text
 
@@ -392,7 +463,7 @@ def _mcp_notify(method, params, token):
     _mcp_post({"jsonrpc": "2.0", "method": method, "params": params or {}}, token)
 
 
-def _mcp_call(method, params, token, timeout=DEFAULT_TIMEOUT):
+def _mcp_call(method, params, token, timeout=DEFAULT_TIMEOUT, mutating=False):
     request_id = _next_request_id()
     payload = {
         "jsonrpc": "2.0",
@@ -400,7 +471,9 @@ def _mcp_call(method, params, token, timeout=DEFAULT_TIMEOUT):
         "method": method,
         "params": params or {},
     }
-    _status, content_type, text = _mcp_post(payload, token, timeout=timeout)
+    _status, content_type, text = _mcp_post(
+        payload, token, timeout=timeout, mutating=mutating
+    )
     frame = pick_frame(_extract_frames(text, content_type), request_id)
     if frame is None:
         raise ReaderAPIError(
@@ -464,13 +537,22 @@ def _content_text(result):
     return "\n".join(parts)
 
 
+def is_mutating_tool(name):
+    """True when replaying this tool call could change Readwise a second time."""
+    return name in MUTATING_TOOLS
+
+
 def call_tool(name, arguments, token=None, timeout=DEFAULT_TIMEOUT):
-    """Call an MCP tool by name and return its unwrapped payload."""
+    """Call an MCP tool by name and return its unwrapped payload.
+
+    A mutating tool is never replayed by the transport on an ambiguous outcome
+    (see :func:`_may_replay`); the caller reconciles instead.
+    """
     token = resolve_token(token)
     _ensure_handshake(token)
     result = _mcp_call(
         "tools/call", {"name": name, "arguments": arguments or {}}, token,
-        timeout=timeout,
+        timeout=timeout, mutating=is_mutating_tool(name),
     )
     return tool_result_payload(result)
 
@@ -527,6 +609,11 @@ def create_highlight(doc_id, html_block, note=None, tags=None, token=None):
     Returns the tool payload, normally
     ``{"id": ..., "location": ..., "url": "https://read.readwise.io/read/<id>"}``.
     Calls are paced to at least ``MIN_CREATE_INTERVAL_S`` apart.
+
+    A raised error is NOT proof that nothing was created: the transport refuses
+    to replay this call precisely because an ambiguous failure may follow a
+    successful commit. Reconcile against the document's existing highlights
+    before creating again.
     """
     arguments = {"document_id": doc_id, "html_content": html_block}
     if note:

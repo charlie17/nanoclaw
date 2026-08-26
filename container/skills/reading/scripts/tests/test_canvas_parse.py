@@ -148,6 +148,67 @@ class FlagParseTest(unittest.TestCase):
         self.assertTrue(all(v == [] for v in overlay["flags"].values()))
 
 
+class InvalidCanvasTest(unittest.TestCase):
+    """A canvas we cannot read is NOT an empty canvas.
+
+    Reading one as empty marked every claim pruned, and the caller persisted
+    that as JT deleting the entire map — unrecoverable, because a pruned card
+    is never recreated.
+    """
+
+    def broken(self, canvas):
+        return cp.parse_overlay(demo_manifest(), canvas)
+
+    def test_a_canvas_with_no_nodes_key_is_invalid_not_empty(self):
+        overlay = self.broken({"edges": []})
+        self.assertIn("invalid", overlay)
+        self.assertTrue(overlay["invalid"])
+        self.assertEqual(overlay["pruned"], [])
+
+    def test_a_non_list_nodes_value_is_invalid_not_empty(self):
+        for nodes in ({}, "nodes", 7, None):
+            overlay = self.broken({"nodes": nodes})
+            self.assertIn("invalid", overlay, "accepted nodes=%r" % (nodes,))
+            self.assertEqual(overlay["pruned"], [])
+
+    def test_nothing_at_all_is_folded_in_from_an_invalid_canvas(self):
+        overlay = self.broken({"nodes": {}})
+        self.assertEqual(overlay["flags"], {})
+        self.assertEqual(overlay["title_overrides"], {})
+        self.assertEqual(overlay["body_overrides"], {})
+        self.assertEqual(overlay["post_cite_overrides"], {})
+        self.assertEqual(overlay["jt_section_overrides"], {})
+        self.assertEqual(overlay["furniture_edits"], {})
+        self.assertEqual(overlay["moved"], {})
+        self.assertEqual(overlay["alien_nodes"], [])
+        self.assertTrue(overlay["warnings"])
+
+    def test_applying_an_invalid_overlay_prunes_nothing(self):
+        m = demo_manifest()
+        cp.apply_overlay(m, cp.parse_overlay(m, {"nodes": {}}))
+        for claim in m["claims"]:
+            self.assertFalse(claim["jt"]["pruned"])
+
+    def test_a_readable_canvas_carries_no_invalid_key(self):
+        m = demo_manifest()
+        self.assertNotIn("invalid", cp.parse_overlay(m, cb.build_canvas(m)))
+
+    def test_a_genuinely_empty_nodes_array_is_still_read_as_deletion(self):
+        # An empty ARRAY is structurally valid: he really did clear the canvas.
+        m = demo_manifest()
+        overlay = cp.parse_overlay(m, {"nodes": [], "edges": []})
+        self.assertNotIn("invalid", overlay)
+        self.assertEqual(overlay["pruned"],
+                         ["c-0001", "c-0002", "c-0003", "c-0004"])
+
+    def test_the_write_path_and_the_read_path_agree_on_nodes(self):
+        # validate.py already refused {"nodes": {}} on the way out; the parse
+        # path used to accept it on the way in.
+        import validate as V
+        self.assertTrue(V.validate_canvas({"nodes": {}}))
+        self.assertIn("invalid", cp.parse_overlay(demo_manifest(), {"nodes": {}}))
+
+
 class PruneTest(unittest.TestCase):
     def test_deleted_node_is_pruned(self):
         m = demo_manifest()
@@ -207,6 +268,33 @@ class BodyOverrideTest(unittest.TestCase):
         overlay = cp.parse_overlay(m, canvas)
         self.assertEqual(overlay["body_overrides"], {})
         self.assertEqual(overlay["warnings"], [])
+
+    def test_a_flag_prepended_to_an_edited_body_line_is_read_as_a_flag(self):
+        """Prepend ❓ AND edit the same line in one pass.
+
+        No prefix restores the projected body, so the old fallback returned no
+        flag and left the glyph stranded inside body_override — arm then never
+        selected the claim, which is the documented action for a ❓.
+        """
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0002")
+        edited = "**Support** A worked example — but only across TWO account types."
+        node["text"] = node["text"].replace(BODY_B, "❓ " + edited, 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["flags"]["c-0002"], ["❓"])
+        self.assertEqual(overlay["body_overrides"], {"c-0002": edited})
+
+        cp.apply_overlay(m, overlay)
+        M.validate(m)
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        text = [n for n in rebuilt["nodes"]
+                if n["id"] == cb.claim_node_id(SLUG, "c-0002")][0]["text"]
+        self.assertIn(edited, text)
+        self.assertTrue(text.startswith("# ❓ "))
+        again = cp.parse_overlay(m, rebuilt)
+        self.assertEqual(again["body_overrides"], {})
+        self.assertEqual(again["flags"]["c-0002"], ["❓"])
 
     def test_cite_edit_is_surfaced_as_a_warning(self):
         m = demo_manifest()
@@ -299,6 +387,132 @@ class TitleOverrideTest(unittest.TestCase):
         m = demo_manifest()
         overlay = cp.parse_overlay(m, cb.build_canvas(m))
         self.assertEqual(overlay["title_overrides"], {})
+
+
+class AuthoredRegionTest(unittest.TestCase):
+    """Two regions split_card used to read and then throw away.
+
+    Everything JT types on a card is his.  Both of these were parsed out and
+    silently overwritten on the next rebuild.
+    """
+
+    def overlaid_manifest(self):
+        m = demo_manifest()
+        m["claims"][0]["jt"]["stance"] = "agree"
+        m["claims"][0]["jt"]["notes"] = ["matches my own numbers"]
+        m["claims"][0]["jt"]["highlights"] = [
+            M.new_highlight("h-1", "https://readwise.io/x/1",
+                            "a stream of cash flows", "the core idea")
+        ]
+        M.validate(m)
+        return m
+
+    def test_an_edited_jt_section_survives_a_rebuild(self):
+        m = self.overlaid_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        self.assertIn("✅ Agree", node["text"])
+        mine = ("✅ Agree — with one caveat\n"
+                "- matches my own numbers, but only after 2030\n"
+                "- ASK THE CPA about the Roth conversion window")
+        head, _sep, _tail = node["text"].rpartition(cb.JT_SEP)
+        node["text"] = head + cb.JT_SEP + mine
+
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["jt_section_overrides"], {"c-0001": mine})
+        self.assertTrue(any("— JT — section was edited" in w
+                            for w in overlay["warnings"]))
+
+        cp.apply_overlay(m, overlay)
+        M.validate(m)
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        text = [n for n in rebuilt["nodes"]
+                if n["id"] == cb.claim_node_id(SLUG, "c-0001")][0]["text"]
+        self.assertIn("ASK THE CPA about the Roth conversion window", text)
+        self.assertIn("✅ Agree — with one caveat", text)
+        # and re-parsing is quiet: his wording is now what we project
+        again = cp.parse_overlay(m, rebuilt)
+        self.assertEqual(again["jt_section_overrides"], {})
+        self.assertEqual(again["warnings"], [])
+
+    def test_deleting_the_jt_section_is_not_undone(self):
+        m = self.overlaid_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        node["text"] = node["text"].rpartition(cb.JT_SEP)[0]
+        cp.apply_overlay(m, cp.parse_overlay(m, canvas))
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        text = [n for n in rebuilt["nodes"]
+                if n["id"] == cb.claim_node_id(SLUG, "c-0001")][0]["text"]
+        self.assertNotIn(cb.JT_SEP, text)
+        self.assertEqual(cp.parse_overlay(m, rebuilt)["jt_section_overrides"], {})
+
+    def test_an_untouched_jt_section_is_not_captured(self):
+        m = self.overlaid_manifest()
+        overlay = cp.parse_overlay(m, cb.build_canvas(m))
+        self.assertEqual(overlay["jt_section_overrides"], {})
+        self.assertEqual(overlay["warnings"], [])
+
+    def test_a_paragraph_appended_under_the_cite_survives_a_rebuild(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0004")
+        mine = ("This is the one that changed my mind — see the spreadsheet\n"
+                "tab called \"withdrawal order\".")
+        self.assertTrue(node["text"].rstrip().endswith("*"))
+        node["text"] = node["text"] + "\n\n" + mine
+
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["post_cite_overrides"], {"c-0004": mine})
+        # it is NOT mistaken for a body edit or a cite edit
+        self.assertEqual(overlay["body_overrides"], {})
+        self.assertEqual(overlay["warnings"], [])
+
+        cp.apply_overlay(m, overlay)
+        M.validate(m)
+        self.assertEqual(m["claims"][3]["jt"]["post_cite"], mine)
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        text = [n for n in rebuilt["nodes"]
+                if n["id"] == cb.claim_node_id(SLUG, "c-0004")][0]["text"]
+        self.assertIn(mine, text)
+        # still below the cite line, where he put it
+        self.assertGreater(text.index(mine), text.index("↳ cite:"))
+        again = cp.parse_overlay(m, rebuilt)
+        self.assertEqual(again["post_cite_overrides"], {})
+        self.assertEqual(again["warnings"], [])
+
+    def test_a_post_cite_paragraph_survives_alongside_an_overlay_block(self):
+        m = self.overlaid_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        head, sep, tail = node["text"].rpartition(cb.JT_SEP)
+        mine = "My own footnote, under the citation."
+        node["text"] = head + "\n\n" + mine + sep + tail
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["post_cite_overrides"], {"c-0001": mine})
+        self.assertEqual(overlay["jt_section_overrides"], {})
+        cp.apply_overlay(m, overlay)
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        text = [n for n in rebuilt["nodes"]
+                if n["id"] == cb.claim_node_id(SLUG, "c-0001")][0]["text"]
+        self.assertIn(mine, text)
+        self.assertLess(text.index(mine), text.index(cb.JT_SEP))
+        self.assertEqual(cp.parse_overlay(m, rebuilt)["post_cite_overrides"], {})
+
+    def test_a_clean_canvas_captures_neither_region(self):
+        m = demo_manifest()
+        overlay = cp.parse_overlay(m, cb.build_canvas(m))
+        self.assertEqual(overlay["post_cite_overrides"], {})
+        self.assertEqual(overlay["jt_section_overrides"], {})
+
+    def test_the_card_grows_to_fit_a_post_cite_paragraph(self):
+        m = demo_manifest()
+        claim = m["claims"][3]
+        before = cb.card_height(cb.card_text(claim))
+        claim["jt"]["post_cite"] = "\n\n".join(["A long added paragraph. " * 12] * 4)
+        text = cb.card_text(claim)
+        self.assertGreater(cb.card_height(text), before)
+        self.assertGreaterEqual(cb.card_height(text), cb.estimate_height(text))
 
 
 class AlienNodeTest(unittest.TestCase):
@@ -589,6 +803,47 @@ class UntouchedCanvasInvariantTest(unittest.TestCase):
         self.assertEqual(overlay["flags"]["c-0002"], ["❓"])
         self.assertEqual(overlay["body_overrides"], {})
 
+    def test_editing_a_glyph_led_title_invents_no_flag_and_keeps_the_glyph(self):
+        """Expected '⭐ Old wording', raw '⭐ New wording'.
+
+        The old fallback read the authored ⭐ as triage AND deleted it out of
+        the title, so arm.select_targets() went on to create a real tagged
+        Readwise highlight JT never asked for.
+        """
+        m = self.glyph_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        node["text"] = node["text"].replace(
+            "# ⭐ Star-led title stays a title",
+            "# ⭐ Star-led title, in my own words", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["flags"]["c-0001"], [])
+        self.assertEqual(overlay["title_overrides"],
+                         {"c-0001": "⭐ Star-led title, in my own words"})
+
+        cp.apply_overlay(m, overlay)
+        M.validate(m)
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        text = [n for n in rebuilt["nodes"]
+                if n["id"] == cb.claim_node_id(SLUG, "c-0001")][0]["text"]
+        self.assertTrue(text.startswith("# ⭐ Star-led title, in my own words\n"))
+        # and a second pass adds nothing further
+        again = cp.parse_overlay(m, rebuilt)
+        self.assertEqual(again["flags"]["c-0001"], [])
+        self.assertEqual(again["title_overrides"], {})
+
+    def test_a_flag_prepended_to_an_edited_glyph_led_title_is_still_read(self):
+        m = self.glyph_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        node["text"] = node["text"].replace(
+            "# ⭐ Star-led title stays a title",
+            "# \U0001f525 ⭐ Star-led title, reworded", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["flags"]["c-0001"], ["\U0001f525"])
+        self.assertEqual(overlay["title_overrides"],
+                         {"c-0001": "⭐ Star-led title, reworded"})
+
     def test_editing_a_glyph_led_body_captures_it_without_inventing_a_flag(self):
         m = self.glyph_manifest()
         canvas = clone(cb.build_canvas(m))
@@ -705,6 +960,96 @@ class UnknownGlyphTest(unittest.TestCase):
         self.assertEqual(overlay["flags"]["c-0002"], ["⭐"])
         self.assertEqual(overlay["title_overrides"],
                          {"c-0002": "❗ Sequence risk dominates early years"})
+
+
+class SnapshotGuardTest(unittest.TestCase):
+    """The second fold of a run may only re-read cards whose text CHANGED.
+
+    Every capture in ``parse_overlay`` is a comparison against what the
+    manifest renders NOW.  By a run's second fold the manifest has moved on,
+    while the canvas still shows the pre-run projection — so without the
+    snapshot every untouched card reads as rewritten and our own stale text
+    gets frozen into JT's verbatim slots.
+    """
+
+    def setUp(self):
+        self.m = demo_manifest()
+        self.snapshot = clone(cb.build_canvas(self.m))
+
+    def test_untouched_nodes_reports_the_byte_identical_ones(self):
+        live = clone(self.snapshot)
+        node_of(live, "c-0002")["text"] += "\n\nsomething I typed"
+        untouched = cp.untouched_nodes(live, self.snapshot)
+        self.assertIn(cb.claim_node_id(SLUG, "c-0001"), untouched)
+        self.assertNotIn(cb.claim_node_id(SLUG, "c-0002"), untouched)
+
+    def test_no_snapshot_means_no_exemption(self):
+        self.assertEqual(cp.untouched_nodes(self.snapshot, None), set())
+
+    def test_a_manifest_that_moved_on_does_not_capture_untouched_cards(self):
+        # The run's own work: a highlight landed on c-0001 after the snapshot.
+        self.m["claims"][0]["jt"]["stance"] = "agree"
+        self.m["claims"][0]["jt"]["highlights"] = [
+            M.new_highlight("h-9", "u", "a passage he marked", "worth keeping")
+        ]
+        live = clone(self.snapshot)
+        node = node_of(live, "c-0004")
+        lines = node["text"].split("\n")
+        lines[0] = "# JT retitled this one mid-run"
+        node["text"] = "\n".join(lines)
+
+        blind = cp.parse_overlay(self.m, live)
+        self.assertIn("c-0001", blind["jt_section_overrides"])
+
+        guarded = cp.parse_overlay(self.m, live, snapshot=self.snapshot)
+        self.assertEqual(guarded["jt_section_overrides"], {})
+        self.assertEqual(guarded["body_overrides"], {})
+        self.assertEqual(guarded["warnings"], [])
+        # ...and the card he really did edit is still read in full
+        self.assertEqual(guarded["title_overrides"],
+                         {"c-0004": "JT retitled this one mid-run"})
+
+    def test_untouched_furniture_is_never_captured_as_an_edit(self):
+        # The manifest moved on; the root card on disk is our own stale text.
+        self.m["claims"][0]["jt"]["pruned"] = True
+        live = clone(self.snapshot)
+        node = node_of(live, "c-0004")
+        node["text"] = node["text"].replace(
+            "Tax location beats tax rate", "Retitled mid-run", 1)
+        overlay = cp.parse_overlay(self.m, live, snapshot=self.snapshot)
+        self.assertEqual(overlay["furniture_edits"], {})
+
+    def test_furniture_JT_really_rewrote_mid_run_is_still_captured(self):
+        live = clone(self.snapshot)
+        root_id = cb.node_id(SLUG, "root")
+        mine = "# My framing\n\nwritten while the run was on the network"
+        for node in live["nodes"]:
+            if node["id"] == root_id:
+                node["text"] = mine
+        overlay = cp.parse_overlay(self.m, live, snapshot=self.snapshot)
+        self.assertEqual(overlay["furniture_edits"], {"root": mine})
+
+    def test_a_card_deleted_mid_run_is_still_pruned(self):
+        live = clone(self.snapshot)
+        target = cb.claim_node_id(SLUG, "c-0003")
+        live["nodes"] = [n for n in live["nodes"] if n["id"] != target]
+        overlay = cp.parse_overlay(self.m, live, snapshot=self.snapshot)
+        self.assertEqual(overlay["pruned"], ["c-0003"])
+
+    def test_geometry_is_still_read_off_an_untouched_card(self):
+        # Text-identical is not position-identical: dragging a card is a move,
+        # and the guard must not swallow it.
+        self.m["node_geometry"] = dict(
+            (n["id"], [n["x"], n["y"], n["width"], n["height"]])
+            for n in self.snapshot["nodes"]
+        )
+        live = clone(self.snapshot)
+        target = cb.claim_node_id(SLUG, "c-0002")
+        for node in live["nodes"]:
+            if node["id"] == target:
+                node["x"] += 500
+        overlay = cp.parse_overlay(self.m, live, snapshot=self.snapshot)
+        self.assertIn(target, overlay["moved"])
 
 
 class FurnitureTest(unittest.TestCase):

@@ -28,8 +28,13 @@ import slice as slicer
 # normalization
 # --------------------------------------------------------------------------
 
-_TAG_RE = re.compile(r"<[^>]*>")
-_HAS_TAG_RE = re.compile(r"<[^>]+>")
+#: A tag has to LOOK like a tag: ``<`` then a name, a closing slash, or a
+#: declaration/comment marker.  ``<[^>]*>`` also swallows ordinary prose — "If
+#: x < 5 and y > 3" reads as one big tag and loses its middle — and the block
+#: side and the highlight side of a compare do not always arrive equally
+#: escaped, so that damage is not symmetric and cannot be relied on to cancel.
+_TAG_RE = re.compile(r"</?[A-Za-z!?][^>]*>")
+_HAS_TAG_RE = _TAG_RE
 _WS_RE = re.compile(r"\s+")
 
 #: Curly quotes, primes, guillemets and the whole dash family collapse to their
@@ -66,6 +71,10 @@ def normalize(text):
     Order matters and mirrors ``slice.block_text``: tags are stripped BEFORE
     unescaping, so an escaped ``&lt;p&gt;`` in the prose is never mistaken for
     markup.  Case is preserved — it is signal, not noise.
+
+    Call this ONCE per side of a compare, on the raw source.  Running it over
+    text something else has already stripped and unescaped strips a second
+    time, and prose the first pass revealed ("if x < 5") is eaten as markup.
     """
     if text is None:
         return ""
@@ -79,8 +88,16 @@ def normalize(text):
 
 
 def block_norm(html, block):
-    """Normalized plain text of one slice block."""
-    return normalize(slicer.block_text(html, block))
+    """Normalized plain text of one slice block.
+
+    From the RAW block html, not ``slicer.block_text``: that helper has already
+    stripped tags and unescaped entities, so normalizing its output would strip
+    a second time and eat escaped literal prose — ``&lt;p&gt;`` unescapes to
+    ``<p>`` on the first pass and is then deleted as markup on the second.
+    Normalizing the source fragment keeps stripping and unescaping in the one
+    order both sides of every compare agree on.
+    """
+    return normalize(slicer.block_html(html, block))
 
 
 def normalized_blocks(html, blocks):
@@ -141,9 +158,17 @@ def locate_highlight(html, blocks, highlight_text, texts=None):
     2. a run of up to ``MAX_SPAN_BLOCKS`` consecutive blocks the highlight
        runs across (its head in the first block's tail, its tail in the last
        block's head);
-    3. the highlight's longest sentence found in exactly one block — the
-       sentence-level overlap that survives a Reader selection which clipped
-       or extended a word at either end.
+    3. every one of the highlight's sentences that is found in exactly one
+       block — the sentence-level overlap that survives a Reader selection
+       which clipped or extended a word at either end.  ALL of their blocks
+       come back, not just the first: a drifted selection whose sentences sit
+       in two different claims has to reach ``match_to_claim`` as the two-claim
+       span it really is, so that it lands in the bin rather than on whichever
+       claim happened to own the longest sentence.  Together they must still
+       account for ``MIN_SENTENCE_COVERAGE`` of the highlight, and land in no
+       more than ``MAX_SPAN_BLOCKS`` blocks, or the fallback refuses — one
+       sentence out of ten is not evidence of anything, and a selection
+       reaching into eight blocks is past the size this tool will place.
 
     Any pass that finds more than one candidate returns [] instead: a repeated
     boilerplate paragraph is exactly the case where a guess does damage.
@@ -170,14 +195,20 @@ def locate_highlight(html, blocks, highlight_text, texts=None):
     if len(unique) > 1:
         return []
 
+    located = []
+    covered = 0
     for sentence in _sentence_candidates(needle):
-        if len(sentence) < MIN_SENTENCE_COVERAGE * len(needle):
-            break            # candidates are longest-first; none will qualify
         hits = [i for i, text in enumerate(texts) if text and sentence in text]
-        if len(hits) == 1:
-            return hits
         if len(hits) > 1:
-            return []
+            return []        # one ambiguous sentence poisons the whole pass
+        if len(hits) == 1:
+            covered += len(sentence)
+            if hits[0] not in located:
+                located.append(hits[0])
+    if len(located) > MAX_SPAN_BLOCKS:
+        return []            # the same size cap the exact-span pass obeys
+    if located and covered >= MIN_SENTENCE_COVERAGE * len(needle):
+        return sorted(located)
     return []
 
 
@@ -208,6 +239,11 @@ def match_to_claim(manifest, block_indices):
     Blocks straddling two claims, or landing in none, return None — the caller
     puts those in the unmatched bin.  Where claim ranges nest, the deepest and
     tightest claim wins: that is the most specific thing JT could have meant.
+
+    Two candidates tied on both range width and depth are refused.  Identical
+    ranges are common by construction — assembly repairs a bad range to [0, 0]
+    — and nothing in the source distinguishes such siblings, so picking one by
+    claim-id sort order would be a coin toss dressed up as an answer.
     """
     if not block_indices:
         return None
@@ -237,7 +273,14 @@ def match_to_claim(manifest, block_indices):
         )
     )
     tightest, tightest_range = candidates[0]
-    for _claim, other_range in candidates[1:]:
+    tightest_key = (
+        tightest_range[1] - tightest_range[0], _claim_depth(tightest, by_id)
+    )
+    for other, other_range in candidates[1:]:
+        if (other_range[1] - other_range[0],
+                _claim_depth(other, by_id)) == tightest_key:
+            # Same width, same depth: no evidence separates them.
+            return None
         if not _range_contains(other_range, tightest_range):
             # Overlapping-but-not-nested ranges: genuinely ambiguous.
             return None

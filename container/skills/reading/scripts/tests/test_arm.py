@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -21,6 +22,7 @@ import slice as slicer  # noqa: E402
 
 DOC_ID = "docarm"
 SLUG = "an-armed-book"
+SKIP = ARM.SKIP_FLAG
 
 PARAGRAPHS = [
     "The opening paragraph frames the whole argument in terms of cash flow.",
@@ -53,7 +55,7 @@ def build_manifest():
     manifest = M.new_manifest(
         SLUG,
         {"document_id": DOC_ID, "title": "An Armed Book", "author": "An Author",
-         "category": "epub"},
+         "category": "epub", "html_sha256": slicer.sha256_text(HTML)},
         [{"idx": 0, "title": "The whole thing", "block_start": 0,
           "block_end": len(BLOCKS)}],
     )
@@ -126,6 +128,14 @@ class ArmTestCase(unittest.TestCase):
                 return node
         return None
 
+    def fail_a5(self):
+        """One run in which a5's create raises — an ambiguous outcome."""
+        with mock.patch.object(
+            readerapi, "create_highlight",
+            side_effect=[payload(1), readerapi.ReaderAPIError("boom"), payload(3)],
+        ):
+            return ARM.arm(self.manifest, DOC_ID, self.vault)
+
 
 class TargetSelectionTest(ArmTestCase):
     def test_only_star_fire_and_question_cards_are_targets(self):
@@ -136,6 +146,22 @@ class TargetSelectionTest(ArmTestCase):
         _targets, skipped = ARM.select_targets(self.manifest)
         reasons = dict((s["claim_id"], s["reason"]) for s in skipped)
         self.assertEqual(reasons["a2"], "skip flag only")
+
+    def test_a_mixed_flag_card_is_skipped_because_skip_wins(self):
+        M.claims_by_id(self.manifest)["a1"]["jt"]["flags"] = [SKIP, "⭐"]
+        targets, skipped = ARM.select_targets(self.manifest)
+        self.assertNotIn("a1", [c["id"] for c in targets])
+        reasons = dict((s["claim_id"], s["reason"]) for s in skipped)
+        self.assertIn("skip flag wins", reasons["a1"])
+
+    def test_a_mixed_flag_card_is_not_armed_end_to_end(self):
+        M.claims_by_id(self.manifest)["a1"]["jt"]["flags"] = [SKIP, "⭐"]
+        cb.write_canvas(self.manifest, cb.build_canvas(self.manifest), self.vault)
+        with mock.patch.object(readerapi, "create_highlight",
+                               side_effect=[payload(2), payload(3)]) as create:
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+        self.assertEqual([a["claim_id"] for a in report["armed"]], ["a5", "a7"])
+        self.assertEqual(create.call_count, 2)
 
     def test_already_armed_card_is_never_rearmed(self):
         _targets, skipped = ARM.select_targets(self.manifest)
@@ -261,21 +287,64 @@ class ResumeTest(ArmTestCase):
         self.assertIsNone(saved["a5"]["cite"]["highlight_id"])
 
     def test_the_rerun_arms_only_what_failed(self):
-        with mock.patch.object(
-            readerapi, "create_highlight",
-            side_effect=[payload(1), readerapi.ReaderAPIError("boom"), payload(3)],
-        ):
-            ARM.arm(self.manifest, DOC_ID, self.vault)
+        self.fail_a5()
 
         resumed = M.load(ARM.manifest_path(self.manifest, self.vault))
-        with mock.patch.object(readerapi, "create_highlight",
-                               side_effect=[payload(9)]) as create:
+        # The ambiguous attempt is reconciled first: Reader has no tagged
+        # highlight for that block, so the attempt plainly did not commit.
+        with mock.patch.object(readerapi, "get_document_highlights",
+                               return_value={"highlights": []}) as lookup, \
+                mock.patch.object(readerapi, "create_highlight",
+                                  side_effect=[payload(9)]) as create:
             report = ARM.arm(resumed, DOC_ID, self.vault)
+        self.assertEqual(lookup.call_count, 1)
         self.assertEqual(create.call_count, 1)
         self.assertEqual([a["claim_id"] for a in report["armed"]], ["a5"])
         self.assertEqual(
             M.claims_by_id(resumed)["a5"]["cite"]["highlight_id"], "hl-9"
         )
+
+
+class AmbiguousAttemptTest(ArmTestCase):
+    """A create that raised may still have committed on Reader's side."""
+
+    def test_the_attempt_is_recorded_before_the_call_goes_out(self):
+        self.fail_a5()
+        saved = M.claims_by_id(self.saved_manifest())
+        self.assertTrue(saved["a5"]["cite"].get("attempted"))
+        self.assertIsNone(saved["a5"]["cite"]["highlight_id"])
+        # A card that came back clean carries no marker.
+        self.assertFalse(saved["a1"]["cite"].get("attempted"))
+
+    def test_the_rerun_adopts_the_highlight_the_attempt_did_create(self):
+        self.fail_a5()
+        resumed = M.load(ARM.manifest_path(self.manifest, self.vault))
+        already_there = {"highlights": [
+            {"id": "hl-ghost", "text": PARAGRAPHS[5],
+             "tags": ["daystrom-claim"]},
+            {"id": "hl-jt", "text": PARAGRAPHS[5], "tags": ["something-else"]},
+        ]}
+        with mock.patch.object(readerapi, "get_document_highlights",
+                               return_value=already_there), \
+                mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(resumed, DOC_ID, self.vault)
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual([a["claim_id"] for a in report["armed"]], ["a5"])
+        self.assertTrue(report["armed"][0]["adopted"])
+        cite = M.claims_by_id(resumed)["a5"]["cite"]
+        self.assertEqual(cite["highlight_id"], "hl-ghost")
+        self.assertEqual(cite["url"], "https://read.readwise.io/read/hl-ghost")
+
+    def test_a_lookup_that_fails_refuses_to_create_a_possible_duplicate(self):
+        self.fail_a5()
+        resumed = M.load(ARM.manifest_path(self.manifest, self.vault))
+        with mock.patch.object(readerapi, "get_document_highlights",
+                               side_effect=readerapi.ReaderAPIError("no answer")), \
+                mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(resumed, DOC_ID, self.vault)
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual([f["claim_id"] for f in report["failed"]], ["a5"])
+        self.assertIn("no duplicate was created", report["failed"][0]["error"])
 
 
 class GeometryTest(ArmTestCase):
@@ -331,6 +400,259 @@ class GeometryTest(ArmTestCase):
             report = ARM.arm(self.manifest, DOC_ID, self.vault)
         self.assertEqual([a["claim_id"] for a in report["armed"]], ["a5", "a7"])
         self.assertTrue(M.claims_by_id(self.manifest)["a1"]["jt"]["pruned"])
+
+
+class MidRunCanvasEditTest(ArmTestCase):
+    """The create loop runs for minutes; JT keeps working while it does."""
+
+    def test_an_edit_made_during_the_create_loop_survives_the_write(self):
+        calls = []
+
+        def create(*args, **kwargs):
+            if not calls:
+                canvas = cb.read_canvas(self.canvas_path())
+                target = cb.claim_node_id(SLUG, "a5")
+                for node in canvas["nodes"]:
+                    if node["id"] == target:
+                        lines = node["text"].split("\n")
+                        lines[0] = lines[0] + ", rethought"
+                        node["text"] = "\n".join(lines)
+                canvas["nodes"].append({
+                    "id": "jt-sticky", "type": "text", "x": 9000, "y": 9000,
+                    "width": 400, "height": 200, "text": "a thought of my own",
+                })
+                M.atomic_write_text(self.canvas_path(), cb.dumps_canvas(canvas))
+            calls.append(args)
+            return payload(len(calls))
+
+        with mock.patch.object(readerapi, "create_highlight", side_effect=create):
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+
+        self.assertEqual(len(report["armed"]), 3)
+        # The retitle reached the manifest and came back out on the canvas...
+        self.assertEqual(
+            M.claims_by_id(self.manifest)["a5"]["jt"]["title_override"],
+            "Annuities, rethought",
+        )
+        self.assertIn("Annuities, rethought", self.node_by_claim("a5")["text"])
+        # ...and the card he added mid-run was not wiped off the map.
+        written = cb.read_canvas(self.canvas_path())
+        self.assertIn("jt-sticky", [n["id"] for n in written["nodes"]])
+
+    def test_arming_is_not_read_back_as_a_hand_edited_cite_line(self):
+        """The second fold must not mistake this run's own work for JT's.
+
+        Arming rewrites every target's cite line ON THE MANIFEST; the canvas
+        still shows the pre-run projection until we write it.  A blanket
+        re-fold therefore reported each armed card as having had its cite line
+        edited by hand — and captured a — JT — section override for it.
+        """
+        calls = []
+
+        def create(*args, **kwargs):
+            if not calls:
+                # JT touches ONE card that this run is not arming at all.
+                canvas = cb.read_canvas(self.canvas_path())
+                target = cb.claim_node_id(SLUG, "a6")
+                for node in canvas["nodes"]:
+                    if node["id"] == target:
+                        node["text"] = node["text"].replace(
+                            "An untriaged card", "A card JT retitled", 1)
+                M.atomic_write_text(self.canvas_path(), cb.dumps_canvas(canvas))
+            calls.append(args)
+            return payload(len(calls))
+
+        with mock.patch.object(readerapi, "create_highlight", side_effect=create):
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+
+        self.assertEqual([a["claim_id"] for a in report["armed"]],
+                         ["a1", "a5", "a7"])
+        self.assertEqual([w for w in report["warnings"] if "cite line" in w], [])
+
+        by_id = M.claims_by_id(self.manifest)
+        for claim_id in ("a1", "a5", "a7"):
+            jt = by_id[claim_id]["jt"]
+            self.assertNotIn("jt_section_override", jt, claim_id)
+            self.assertIsNone(jt["title_override"], claim_id)
+        # ...while the card he really did retitle came through.
+        self.assertEqual(by_id["a6"]["jt"]["title_override"], "A card JT retitled")
+
+    def test_a_card_deleted_during_the_create_loop_stays_deleted(self):
+        calls = []
+
+        def create(*args, **kwargs):
+            if not calls:
+                canvas = cb.read_canvas(self.canvas_path())
+                target = cb.claim_node_id(SLUG, "a7")
+                canvas["nodes"] = [n for n in canvas["nodes"] if n["id"] != target]
+                canvas["edges"] = [
+                    e for e in canvas["edges"]
+                    if e.get("fromNode") != target and e.get("toNode") != target
+                ]
+                M.atomic_write_text(self.canvas_path(), cb.dumps_canvas(canvas))
+            calls.append(args)
+            return payload(len(calls))
+
+        with mock.patch.object(readerapi, "create_highlight", side_effect=create):
+            ARM.arm(self.manifest, DOC_ID, self.vault)
+
+        self.assertTrue(M.claims_by_id(self.manifest)["a7"]["jt"]["pruned"])
+        self.assertIsNone(self.node_by_claim("a7"))
+
+
+class InvalidCanvasTest(ArmTestCase):
+    """A canvas with no usable nodes is a broken file, not an emptied map."""
+
+    def test_a_structurally_invalid_canvas_stops_the_run_dead(self):
+        before_canvas = self.canvas_bytes()
+        before_manifest = M.dumps(self.saved_manifest())
+        with mock.patch.object(ARM.cp, "parse_overlay",
+                               return_value=ARM.blocked_overlay("no nodes array")), \
+                mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual(self.canvas_bytes(), before_canvas)
+        self.assertEqual(M.dumps(self.saved_manifest()), before_manifest)
+        self.assertTrue(any("no nodes array" in w for w in report["warnings"]))
+        # Nothing was folded in, so no claim was pruned by the broken file.
+        pruned = [c["id"] for c in self.manifest["claims"]
+                  if c["jt"]["pruned"] and c["id"] != "a4"]
+        self.assertEqual(pruned, [])
+
+    def test_a_real_nodeless_canvas_file_stops_the_run_dead(self):
+        # The same refusal without a stub: a half-synced file that is valid
+        # JSON and has no nodes list at all.
+        M.atomic_write_text(self.canvas_path(), '{"edges": []}\n')
+        before_manifest = M.dumps(self.saved_manifest())
+        with mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual(M.dumps(self.saved_manifest()), before_manifest)
+        with open(self.canvas_path(), "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), '{"edges": []}\n')
+        self.assertTrue(any("nodes" in w for w in report["warnings"]))
+        pruned = [c["id"] for c in self.manifest["claims"]
+                  if c["jt"]["pruned"] and c["id"] != "a4"]
+        self.assertEqual(pruned, [])
+
+
+class SourceBindingTest(ArmTestCase):
+    def test_a_drifted_cache_arms_nothing(self):
+        self.manifest["source"]["html_sha256"] = "0" * 64
+        before = self.canvas_bytes()
+        with mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual(report["armed"], [])
+        self.assertEqual(self.canvas_bytes(), before)
+        self.assertTrue(any("source drift" in w for w in report["warnings"]))
+
+    def test_an_unbound_manifest_warns_and_proceeds(self):
+        self.manifest["source"]["html_sha256"] = ""
+        with mock.patch.object(readerapi, "create_highlight",
+                               side_effect=[payload(1), payload(2), payload(3)]):
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+        self.assertEqual(len(report["armed"]), 3)
+        self.assertTrue(any("no source binding" in w for w in report["warnings"]))
+
+
+class DocumentIdTest(ArmTestCase):
+    def test_a_doc_id_that_is_not_this_maps_document_does_nothing(self):
+        before = self.canvas_bytes()
+        with mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(self.manifest, "some-other-doc", self.vault)
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual(self.canvas_bytes(), before)
+        self.assertTrue(any("document mismatch" in w for w in report["warnings"]))
+
+    def test_a_manifest_with_no_document_id_warns_and_proceeds(self):
+        self.manifest["source"]["document_id"] = ""
+        with mock.patch.object(readerapi, "create_highlight",
+                               side_effect=[payload(1), payload(2), payload(3)]):
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+        self.assertEqual(len(report["armed"]), 3)
+        self.assertTrue(
+            any("records no document id" in w for w in report["warnings"])
+        )
+
+
+class ConflictCopyTest(ArmTestCase):
+    """Obsidian Sync parks the losing copy beside the file JT was editing."""
+
+    def make_conflict(self, age_seconds):
+        sibling = os.path.join(
+            self.vault, "%s (conflicted copy 2026-08-26).canvas" % SLUG
+        )
+        shutil.copyfile(self.canvas_path(), sibling)
+        stamp = time.time() + age_seconds
+        os.utime(sibling, (stamp, stamp))
+        return sibling
+
+    def test_a_newer_conflict_copy_blocks_every_write(self):
+        self.make_conflict(600)
+        before_canvas = self.canvas_bytes()
+        before_manifest = M.dumps(self.saved_manifest())
+        with mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual(self.canvas_bytes(), before_canvas)
+        self.assertEqual(M.dumps(self.saved_manifest()), before_manifest)
+        self.assertTrue(any("conflict copy" in w for w in report["warnings"]))
+
+    def test_an_older_conflict_copy_only_warns(self):
+        self.make_conflict(-600)
+        with mock.patch.object(readerapi, "create_highlight",
+                               side_effect=[payload(1), payload(2), payload(3)]):
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+        self.assertEqual(len(report["armed"]), 3)
+        self.assertTrue(any("conflict copies sit beside" in w
+                            for w in report["warnings"]))
+
+
+class AnchorPhraseTest(ArmTestCase):
+    """The block index is not provenance — the quoted phrase is."""
+
+    def resync_canvas(self):
+        cb.write_canvas(self.manifest, cb.build_canvas(self.manifest), self.vault)
+
+    def test_a_phrase_that_is_not_in_its_block_is_not_armed(self):
+        M.claims_by_id(self.manifest)["a1"]["anchor_phrase"] = "a phrase from nowhere"
+        self.resync_canvas()
+        with mock.patch.object(readerapi, "create_highlight",
+                               side_effect=[payload(2), payload(3)]) as create:
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+        self.assertEqual(create.call_count, 2)
+        self.assertEqual([f["claim_id"] for f in report["failed"]], ["a1"])
+        self.assertIn("does not occur in block", report["failed"][0]["error"])
+        self.assertIsNone(M.claims_by_id(self.manifest)["a1"]["cite"]["highlight_id"])
+
+    def test_a_card_with_no_anchor_phrase_at_all_is_not_armed(self):
+        M.claims_by_id(self.manifest)["a1"]["anchor_phrase"] = ""
+        self.resync_canvas()
+        with mock.patch.object(readerapi, "create_highlight",
+                               side_effect=[payload(2), payload(3)]) as create:
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+        self.assertEqual(create.call_count, 2)
+        self.assertEqual([f["claim_id"] for f in report["failed"]], ["a1"])
+        self.assertIn("no anchor phrase", report["failed"][0]["error"])
+
+
+class DerivedCiteUrlTest(ArmTestCase):
+    def test_an_id_only_payload_still_yields_a_cite_link(self):
+        with mock.patch.object(readerapi, "create_highlight",
+                               side_effect=[{"id": "hl-nourl"}, payload(2),
+                                            payload(3)]):
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+        armed = dict((a["claim_id"], a["url"]) for a in report["armed"])
+        self.assertEqual(armed["a1"], "https://read.readwise.io/read/hl-nourl")
+        self.assertEqual(
+            M.claims_by_id(self.manifest)["a1"]["cite"]["url"],
+            "https://read.readwise.io/read/hl-nourl",
+        )
+        self.assertIn("https://read.readwise.io/read/hl-nourl",
+                      self.node_by_claim("a1")["text"])
 
 
 class HighlightFieldsTest(unittest.TestCase):

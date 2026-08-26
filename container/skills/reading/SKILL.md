@@ -18,10 +18,11 @@ Transform a complete source in Readwise Reader (book-scale EPUB, PDF, or article
 ## Ground rules
 
 - **The manifest is the backbone; the canvas is its projection.** Never regenerate the canvas. Every arm/refresh first parses the canvas back into the manifest (flags, moves, edits, deletions), then projects forward, touching known node ids only.
-- **JT's material is canonical wherever it appears.** His edits — including edits to source-content sections — are preserved verbatim. A node he deleted is marked pruned and never recreated. Anything flag-like or stance-like that fails to parse is surfaced in the run report, never silently dropped.
+- **JT's material is canonical wherever it appears.** His edits — including edits to source-content sections, text added below the cite line, and rewrites of the `— JT —` block (which freeze that section's machine rendering until he clears them) — are preserved verbatim. A node he deleted is marked pruned and never recreated. Anything flag-like or stance-like that fails to parse is surfaced in the run report, never silently dropped.
 - **Stance is never inferred.** A bare highlight is an attention flag with empty stance. Only JT's shorthand sets ✅ Agree · ❌ Dispute · 💡 Surface.
 - **Provenance stays legible forever.** Source content and JT overlay never mix: overlay lands in a fenced `— JT —` section at the bottom of a card; stance recolors the node; source cards stay neutral. The legend card documents every convention.
 - **One writer at a time.** Check canvas freshness (hash vs. manifest record) before writing; on drift, re-parse — never clobber. All writes atomic (temp + rename): the vault is under Obsidian Sync.
+- **Runs refuse rather than guess.** Arm and refresh abort with a report warning — no writes, no highlight creates — when: the doc id doesn't match the manifest; the cached source no longer matches the manifest's `html_sha256` (source drift → re-slice and rebuild); the canvas is structurally invalid (never read a broken file as "JT deleted everything"); or a newer Sync conflict copy sits beside the canvas. Arm also creates nothing for a card whose anchor phrase can't be verified in its block, and ⏭️ beats every other flag in a mixed run.
 
 ## Build doctrine — comprehensiveness is the point
 

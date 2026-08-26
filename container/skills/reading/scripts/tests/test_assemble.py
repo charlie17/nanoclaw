@@ -3,6 +3,7 @@
 Strictly offline: a synthetic html document plus hand-written extraction files.
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -418,6 +419,382 @@ class CacheFallbackTest(AssembleBase):
             any("not cached" in w for w in result.report["warnings"])
         )
         self.assertEqual(len(result.manifest["claims"]), 6)
+
+
+class UnreadableExtractionFileTest(AssembleBase):
+    """One bad file in the work dir must cost that file, not the book."""
+
+    def test_a_truncated_file_is_skipped_and_the_rest_assembles(self):
+        path = os.path.join(self.dir, "ch01-truncated.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write('{"chapter_idx": 1, "claims": [{"local_id": "y1",')
+        result = self.build([("ch00.json", CHAPTER_0)])
+        self.assertEqual([c["id"] for c in result.manifest["claims"]],
+                         ["c-0-001", "c-0-002", "c-0-003"])
+        failures = result.report["unreadable_files"]
+        self.assertEqual([f["file"] for f in failures], ["ch01-truncated.json"])
+        self.assertTrue(failures[0]["error"])
+        self.assertTrue(
+            any("ch01-truncated.json" in w for w in result.report["warnings"])
+        )
+
+    def test_an_unopenable_path_is_reported_not_raised(self):
+        # a directory named *.json raises OSError on open, on every platform
+        os.mkdir(os.path.join(self.dir, "zz-not-a-file.json"))
+        result = self.build([("ch00.json", CHAPTER_0)])
+        self.assertEqual(len(result.manifest["claims"]), 3)
+        self.assertEqual([f["file"] for f in result.report["unreadable_files"]],
+                         ["zz-not-a-file.json"])
+
+
+class MalformedFieldRepairTest(AssembleBase):
+    """Every extraction field is LLM output: repair it, report it, never raise."""
+
+    def claim_with(self, **fields):
+        raw = {"local_id": "a", "parent": "root", "title": "A claim",
+               "locator": "Ch 1", "block_range": [0, 3], "anchor_block": 0,
+               "anchor_phrase": "topic 00", "body_md": BODY}
+        raw.update(fields)
+        return self.build([("ch00.json", {"chapter_idx": 0, "claims": [raw]})])
+
+    def repairs(self, result, kind):
+        return [r for r in result.report["repairs"] if r["kind"] == kind]
+
+    def only_claim(self, result):
+        self.assertEqual(M.validate(result.manifest), [])
+        return result.manifest["claims"][0]
+
+    def test_a_string_endpoint_is_repaired_to_zero_zero(self):
+        result = self.claim_with(block_range=["bad", 1])
+        self.assertEqual(self.only_claim(result)["block_range"], [0, 0])
+        self.assertTrue(self.repairs(result, "block_range"))
+
+    def test_a_null_endpoint_is_repaired_to_zero_zero(self):
+        result = self.claim_with(block_range=[None, 3])
+        self.assertEqual(self.only_claim(result)["block_range"], [0, 0])
+        self.assertTrue(self.repairs(result, "block_range"))
+
+    def test_boolean_endpoints_are_not_integers(self):
+        result = self.claim_with(block_range=[True, False])
+        self.assertEqual(self.only_claim(result)["block_range"], [0, 0])
+        detail = self.repairs(result, "block_range")[0]["detail"]
+        self.assertNotIn("inverted", detail)
+        self.assertIn("plain integers", detail)
+
+    def test_fractional_endpoints_are_repaired_not_truncated(self):
+        result = self.claim_with(block_range=[1.9, 3.2])
+        self.assertEqual(self.only_claim(result)["block_range"], [0, 0])
+        self.assertTrue(self.repairs(result, "block_range"))
+
+    def test_a_negative_endpoint_is_clamped_and_reported(self):
+        result = self.claim_with(block_range=[-4, 3])
+        self.assertEqual(self.only_claim(result)["block_range"], [0, 3])
+        details = [r["detail"] for r in self.repairs(result, "block_range")]
+        self.assertEqual(len(details), 1)
+        self.assertIn("clamped", details[0])
+
+    def test_an_in_range_pair_is_left_alone(self):
+        result = self.claim_with(block_range=[1, 3])
+        self.assertEqual(self.only_claim(result)["block_range"], [1, 3])
+        self.assertEqual(self.repairs(result, "block_range"), [])
+
+    def test_a_nonnumeric_order_defaults_to_zero(self):
+        result = self.claim_with(order="first")
+        self.assertEqual(self.only_claim(result)["order"], 0)
+        self.assertTrue(self.repairs(result, "order"))
+
+    def test_a_fractional_order_defaults_to_zero(self):
+        result = self.claim_with(order=2.9)
+        self.assertEqual(self.only_claim(result)["order"], 0)
+        self.assertTrue(self.repairs(result, "order"))
+
+    def test_a_boolean_order_defaults_to_zero(self):
+        result = self.claim_with(order=True)
+        self.assertEqual(self.only_claim(result)["order"], 0)
+        self.assertTrue(self.repairs(result, "order"))
+
+    def test_a_missing_order_is_zero_and_silent(self):
+        raw = {"local_id": "a", "parent": "root", "title": "No order",
+               "block_range": [0, 3], "anchor_block": 0,
+               "anchor_phrase": "topic 00", "body_md": BODY}
+        result = self.build([("ch00.json", {"chapter_idx": 0, "claims": [raw]})])
+        self.assertEqual(self.only_claim(result)["order"], 0)
+        self.assertEqual(self.repairs(result, "order"), [])
+
+    def test_a_list_title_becomes_a_placeholder(self):
+        result = self.claim_with(title=["a", "b"])
+        self.assertEqual(self.only_claim(result)["title"], "(untitled)")
+        self.assertTrue(self.repairs(result, "title"))
+
+    def test_a_nonstring_locator_is_repaired(self):
+        result = self.claim_with(locator=42)
+        self.assertEqual(self.only_claim(result)["locator"], "")
+        self.assertTrue(self.repairs(result, "locator"))
+
+    def test_a_nonstring_anchor_phrase_is_repaired(self):
+        result = self.claim_with(anchor_phrase={"quote": "topic 00"})
+        self.assertEqual(self.only_claim(result)["anchor_phrase"], "")
+        self.assertTrue(self.repairs(result, "anchor_phrase"))
+
+    def test_a_list_body_is_joined_into_paragraphs(self):
+        result = self.claim_with(body_md=["**Claim** One.", "**Reasoning** Two."])
+        self.assertEqual(self.only_claim(result)["body_md"],
+                         "**Claim** One.\n\n**Reasoning** Two.")
+        self.assertTrue(self.repairs(result, "body_md"))
+
+    def test_another_body_shape_becomes_empty(self):
+        result = self.claim_with(body_md={"claim": "One."})
+        self.assertEqual(self.only_claim(result)["body_md"], "")
+        self.assertTrue(self.repairs(result, "body_md"))
+
+    def test_a_nonint_anchor_block_falls_back_to_the_range_start(self):
+        result = self.claim_with(anchor_block="2", block_range=[1, 3])
+        self.assertEqual(self.only_claim(result)["anchor_block"], 1)
+        self.assertTrue(self.repairs(result, "anchor_block"))
+
+    def test_an_overview_claim_with_a_bad_range_records_no_range(self):
+        payload = {"chapter_idx": -1, "claims": [
+            {"local_id": "ov", "parent": "root", "title": "Thesis",
+             "block_range": "the whole book", "body_md": BODY}]}
+        result = self.build([("overview.json", payload)])
+        self.assertIsNone(self.only_claim(result)["block_range"])
+        self.assertTrue(self.repairs(result, "block_range"))
+
+
+class ParentCycleTest(AssembleBase):
+    def claims(self, entries):
+        return self.build([("ch00.json", {"chapter_idx": 0, "claims": entries})])
+
+    def entry(self, local_id, parent):
+        return {"local_id": local_id, "parent": parent, "title": "Claim " + local_id,
+                "block_range": [0, 3], "anchor_block": 0,
+                "anchor_phrase": "topic 00", "body_md": BODY}
+
+    def test_a_self_parent_is_cut_and_reported(self):
+        result = self.claims([self.entry("a", "a")])
+        self.assertEqual(result.manifest["claims"][0]["parent"], "root")
+        self.assertEqual(M.validate(result.manifest), [])
+        details = [r["detail"] for r in result.report["repairs"]
+                   if r["kind"] == "parent"]
+        self.assertTrue(any("cycle" in d for d in details))
+
+    def test_a_two_claim_cycle_is_broken_at_one_edge(self):
+        result = self.claims([self.entry("a", "b"), self.entry("b", "a")])
+        parents = [c["parent"] for c in result.manifest["claims"]]
+        self.assertEqual(parents, ["root", "c-0-001"])
+        self.assertEqual(M.validate(result.manifest), [])
+        self.assertTrue(any("cycle" in r["detail"]
+                            for r in result.report["repairs"]))
+
+
+class PerFileLocalIdsTest(AssembleBase):
+    """Local ids are unique per FILE — one chapter may be fanned out over many."""
+
+    def payload(self, phrase_block):
+        return {"chapter_idx": 0, "claims": [
+            {"local_id": "x1", "parent": "root", "title": "Parent claim",
+             "block_range": [phrase_block, phrase_block + 1],
+             "anchor_block": phrase_block,
+             "anchor_phrase": "topic %02d" % phrase_block, "body_md": BODY},
+            {"local_id": "x2", "parent": "x1", "title": "Child claim",
+             "block_range": [phrase_block, phrase_block + 1],
+             "anchor_block": phrase_block,
+             "anchor_phrase": "topic %02d" % phrase_block, "body_md": BODY},
+        ]}
+
+    def test_colliding_local_ids_resolve_within_their_own_file(self):
+        result = self.build([("ch00-part1.json", self.payload(0)),
+                             ("ch00-part2.json", self.payload(4))])
+        by_id = M.claims_by_id(result.manifest)
+        self.assertEqual(by_id["c-0-002"]["parent"], "c-0-001")
+        # the second file's child must NOT adopt the first file's x1
+        self.assertEqual(by_id["c-0-004"]["parent"], "c-0-003")
+        self.assertFalse(
+            any("duplicate local_id" in w for w in result.report["warnings"])
+        )
+
+    def test_a_duplicate_inside_one_file_is_still_warned_about(self):
+        payload = self.payload(0)
+        payload["claims"][1]["local_id"] = "x1"
+        result = self.build([("ch00.json", payload)])
+        self.assertTrue(
+            any("duplicate local_id" in w for w in result.report["warnings"])
+        )
+
+
+class AssembleCoverageTest(AssembleBase):
+    def test_the_report_carries_the_coverage_ledger(self):
+        result = self.build()
+        coverage = result.report["coverage"]
+        self.assertIsInstance(coverage, list)
+        self.assertEqual(row_for(coverage, 1)["coverage_pct"], 66.7)
+        self.assertEqual([t["id"] for t in row_for(coverage, 0)["thin_claims"]],
+                         ["c-0-003"])
+        self.assertTrue(any("gap_audit" in row for row in coverage))
+
+    def test_coverage_is_none_and_warned_when_there_is_no_source(self):
+        home = tempfile.mkdtemp(prefix="dsr-assemble-nocov-")
+        self.addCleanup(shutil.rmtree, home, True)
+        with mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}):
+            result = self.build(html=None, blocks=None)
+        self.assertIsNone(result.report["coverage"])
+        self.assertTrue(
+            any("coverage could not be computed" in w
+                for w in result.report["warnings"])
+        )
+
+
+class ListItemCoverageTest(AssembleBase):
+    """A block that owns list items is content even when it renders empty."""
+
+    def test_an_empty_block_owning_a_list_item_counts_as_content(self):
+        html = ("<p>%s</p>" % paragraph(0)
+                + "<p></p><ul><li>A list item carrying real argument.</li></ul>"
+                + "<p>%s</p>" % paragraph(2))
+        blocks = slicer.slice_blocks(html)
+        chapters = [{"idx": 0, "title": "Only", "block_start": 0, "block_end": 3}]
+        manifest = M.new_manifest("s", {}, chapters)
+        manifest["claims"] = [
+            M.new_claim("c-1", "T", 0, "root", 0, block_range=[0, 0],
+                        anchor_block=0),
+        ]
+        row = row_for(A.coverage_report(manifest, blocks, chapters, html=html), 0)
+        # block 1 renders empty but owns the list, so it is in the denominator
+        self.assertEqual(row["content_blocks"], 3)
+        self.assertEqual(row["covered_blocks"], 1)
+        self.assertEqual(row["coverage_pct"], 33.3)
+
+    def test_a_truly_empty_block_is_still_excluded(self):
+        html = ("<p>%s</p><p></p><p>%s</p>" % (paragraph(0), paragraph(2)))
+        blocks = slicer.slice_blocks(html)
+        chapters = [{"idx": 0, "title": "Only", "block_start": 0, "block_end": 3}]
+        manifest = M.new_manifest("s", {}, chapters)
+        manifest["claims"] = [
+            M.new_claim("c-1", "T", 0, "root", 0, block_range=[0, 0],
+                        anchor_block=0),
+        ]
+        row = row_for(A.coverage_report(manifest, blocks, chapters, html=html), 0)
+        self.assertEqual(row["content_blocks"], 2)
+
+
+class ListItemAnchorTest(AssembleBase):
+    """slice.py tells extraction to cite a list item under the preceding block."""
+
+    ITEM = "the ledger method beats the budget method"
+
+    def assemble_with(self, phrase):
+        html = ("<p>%s</p><ul><li>%s</li></ul><p>%s</p>"
+                % (paragraph(0), self.ITEM, paragraph(1)))
+        blocks = slicer.slice_blocks(html)
+        chapters = slicer.chapters(html, blocks)
+        payload = {"chapter_idx": 0, "claims": [
+            {"local_id": "a", "parent": "root", "title": "Quotes the list",
+             "block_range": [0, 1], "anchor_block": 0,
+             "anchor_phrase": phrase, "body_md": BODY}]}
+        write_extractions(self.dir, [("ch00.json", payload)])
+        result = A.assemble("a-listy-book", SOURCE_META, chapters, self.dir,
+                            html=html, blocks=blocks)
+        return [f["kind"] for f in result.report["anchor_failures"]]
+
+    def test_a_phrase_from_a_list_item_gets_its_own_status(self):
+        kinds = self.assemble_with(self.ITEM)
+        self.assertEqual(kinds, ["anchor_in_list_item"])
+
+    def test_a_phrase_in_neither_is_still_a_plain_miss(self):
+        kinds = self.assemble_with("a phrase the author never wrote")
+        self.assertEqual(kinds, ["phrase_not_in_block"])
+
+    def test_a_phrase_in_the_block_itself_still_passes_clean(self):
+        kinds = self.assemble_with("topic 00")
+        self.assertEqual(kinds, [])
+
+
+class FrontMatterItemAnchorTest(AssembleBase):
+    """Items ABOVE the first p-block are cited against block 0 by instruction.
+
+    ``inter_block_items`` keys them -1 (nothing precedes them), but
+    ``chapter_text`` renders them at the top of the first chapter under a label
+    naming block 0 as the block to cite — so a claim that quotes one is doing
+    exactly what it was told, and must not read as a phrase that is not there.
+    """
+
+    ITEM = "a note about the edition and its translator"
+
+    def assemble_with(self, phrase, anchor_block=0):
+        html = ("<ul><li>%s</li></ul><p>%s</p><p>%s</p>"
+                % (self.ITEM, paragraph(0), paragraph(1)))
+        blocks = slicer.slice_blocks(html)
+        chapters = slicer.chapters(html, blocks)
+        payload = {"chapter_idx": 0, "claims": [
+            {"local_id": "a", "parent": "root", "title": "Quotes the front matter",
+             "block_range": [0, 1], "anchor_block": anchor_block,
+             "anchor_phrase": phrase, "body_md": BODY}]}
+        write_extractions(self.dir, [("ch00.json", payload)])
+        result = A.assemble("a-front-matter-book", SOURCE_META, chapters,
+                            self.dir, html=html, blocks=blocks)
+        return [f["kind"] for f in result.report["anchor_failures"]]
+
+    def test_the_pre_block_items_are_keyed_minus_one(self):
+        html = ("<ul><li>%s</li></ul><p>%s</p>" % (self.ITEM, paragraph(0)))
+        blocks = slicer.slice_blocks(html)
+        self.assertEqual(slicer.inter_block_items(html, blocks), {-1: [self.ITEM]})
+
+    def test_a_claim_quoting_a_front_matter_item_is_verified_not_missing(self):
+        kinds = self.assemble_with(self.ITEM)
+        self.assertEqual(kinds, ["anchor_in_list_item"])
+
+    def test_a_phrase_in_neither_is_still_a_plain_miss(self):
+        kinds = self.assemble_with("a phrase the author never wrote")
+        self.assertEqual(kinds, ["phrase_not_in_block"])
+
+    def test_the_exemption_does_not_spread_to_later_blocks(self):
+        # Only block 0 carries the front-matter instruction; quoting the same
+        # item against block 1 is a real miss.
+        kinds = self.assemble_with(self.ITEM, anchor_block=1)
+        self.assertEqual(kinds, ["phrase_not_in_block"])
+
+
+class SourceBindingTest(AssembleBase):
+    """manifest.source.html_sha256 binds the map to the html it verified."""
+
+    def test_the_manifest_carries_the_sha_of_the_supplied_html(self):
+        result = self.build()
+        self.assertEqual(
+            result.manifest["source"]["html_sha256"],
+            hashlib.sha256(HTML.encode("utf-8")).hexdigest(),
+        )
+
+    def test_the_sha_comes_from_the_cache_when_html_is_not_supplied(self):
+        home = tempfile.mkdtemp(prefix="dsr-assemble-bind-")
+        self.addCleanup(shutil.rmtree, home, True)
+        with mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}):
+            slicer.save_source(SOURCE_META["document_id"], HTML)
+            result = self.build(html=None, blocks=None)
+        self.assertEqual(
+            result.manifest["source"]["html_sha256"],
+            hashlib.sha256(HTML.encode("utf-8")).hexdigest(),
+        )
+
+    def test_no_source_leaves_the_manifest_unbound(self):
+        home = tempfile.mkdtemp(prefix="dsr-assemble-unbound-")
+        self.addCleanup(shutil.rmtree, home, True)
+        with mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}):
+            result = self.build(html=None, blocks=None)
+        self.assertEqual(result.manifest["source"]["html_sha256"], "")
+
+
+class MalformedSourceMetaTest(AssembleBase):
+    """Reader metadata is no more trusted than the extraction."""
+
+    def test_a_bad_word_count_and_category_are_repaired_not_raised(self):
+        meta = dict(SOURCE_META, word_count="unknown", category="books")
+        write_extractions(self.dir, [("ch00.json", CHAPTER_0)])
+        result = A.assemble("a-careful-book", meta, CHAPTERS, self.dir,
+                            html=HTML, blocks=BLOCKS)
+        self.assertEqual(result.manifest["source"]["word_count"], 0)
+        self.assertEqual(result.manifest["source"]["category"], "epub")
+        self.assertEqual(len(result.manifest["claims"]), 3)
+        self.assertEqual(M.validate(result.manifest), [])
 
 
 class TriageGlyphWarningTest(AssembleBase):

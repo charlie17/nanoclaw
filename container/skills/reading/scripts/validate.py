@@ -19,7 +19,9 @@ import re
 import canvas_build
 
 PRESET_COLORS = ("1", "2", "3", "4", "5", "6")
-HEX_COLOR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+# \Z, not $: Python's $ also matches just before a trailing newline, so "#fff\n"
+# would pass as a hex colour and reach the canvas file.
+HEX_COLOR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\Z")
 SIDES = ("top", "right", "bottom", "left")
 ENDS = ("none", "arrow")
 NODE_TYPES = ("text", "file", "link", "group")
@@ -67,10 +69,13 @@ def validate_canvas(canvas, jt_geometry_ids=None):
     """Return a list of violation strings.  Empty list = valid canvas.
 
     ``jt_geometry_ids`` — node ids whose position and size came from JT rather
-    than from the projection (see ``canvas_build.jt_geometry_ids``).  Those are
-    exempt from the overlap check ONLY: if he drags one card on top of another
-    that is his call, and a strict gate should not fail on it for ever.  Every
-    other check still applies to them.
+    than from the projection (see ``canvas_build.jt_geometry_ids``).  Geometry
+    he chose is his own call, so those nodes are exempt from the two checks
+    that judge geometry — the overlap check and the no-scroll (overflow) check:
+    if he drags one card on top of another, or shortens one until its text
+    clips, a strict gate should not fail on it for ever.  Every other check —
+    ids, types, colours, literal backslash-n, edge endpoints — still applies to
+    them in full.
     """
     violations = []
     if not isinstance(canvas, dict):

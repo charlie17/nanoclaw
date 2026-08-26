@@ -130,6 +130,14 @@ def file_sha256(path):
 # --------------------------------------------------------------------------
 
 def _blank_source():
+    """The source block of a fresh manifest.
+
+    ``html_sha256`` is this manifest's BINDING to the exact source html its
+    anchor block indexes mean: ``assemble()`` writes the sha256 of that string
+    once anchors are verified against it.  An empty string means the manifest
+    is unbound — legacy, or assembled with no source available — and a drift
+    check has nothing to compare against.
+    """
     return {
         "document_id": "",
         "title": "",
@@ -266,6 +274,29 @@ def validate(manifest):
     )
     _require(isinstance(manifest.get("source"), dict), "manifest.source: must be an object")
 
+    # The source block is persisted data that projection reads without guards —
+    # root_text() does int(word_count) — so it is typed here, at the boundary.
+    # Fields are checked only when present: an older manifest may predate one.
+    source = manifest["source"]
+    for field in ("document_id", "title", "author", "fetched_at", "html_sha256"):
+        _require(
+            field not in source or isinstance(source[field], str),
+            "manifest.source.%s: must be a string when present" % field,
+        )
+    if "category" in source:
+        _require(
+            source["category"] in CATEGORIES,
+            "manifest.source.category: %r is not one of %s"
+            % (source["category"], ", ".join(CATEGORIES)),
+        )
+    if "word_count" in source:
+        count = source["word_count"]
+        _require(
+            isinstance(count, int) and not isinstance(count, bool) and count >= 0,
+            "manifest.source.word_count: must be a whole number of words, got %r"
+            % (count,),
+        )
+
     chapters = manifest.get("chapters")
     _require(isinstance(chapters, list), "manifest.chapters: must be an array")
     seen_chapter_idx = set()
@@ -390,6 +421,44 @@ def validate(manifest):
             % (position, claim.get("id"), rel, ", ".join(REL_VOCABULARY)),
         )
 
+        # Core field types.  Every surface downstream reads these without a
+        # guard — body.strip(), int(order), 0 <= anchor_block — so a manifest
+        # that loads must already be one they can run on.
+        for field in ("title", "body_md", "locator", "anchor_phrase"):
+            _require(
+                isinstance(claim.get(field), str),
+                "claims[%d] (%s).%s: must be a string, got %s"
+                % (position, claim.get("id"), field,
+                   type(claim.get(field)).__name__),
+            )
+        for field in ("order", "chapter_idx"):
+            value = claim.get(field)
+            _require(
+                isinstance(value, int) and not isinstance(value, bool),
+                "claims[%d] (%s).%s: must be an integer, got %r"
+                % (position, claim.get("id"), field, value),
+            )
+        anchor_block = claim.get("anchor_block")
+        _require(
+            anchor_block is None
+            or (isinstance(anchor_block, int) and not isinstance(anchor_block, bool)),
+            "claims[%d] (%s).anchor_block: must be an integer or null, got %r"
+            % (position, claim.get("id"), anchor_block),
+        )
+
+        cite = claim.get("cite")
+        _require(
+            isinstance(cite, dict),
+            "claims[%d] (%s).cite: must be an object" % (position, claim.get("id")),
+        )
+        for field in ("highlight_id", "url"):
+            value = cite.get(field)
+            _require(
+                value is None or isinstance(value, str),
+                "claims[%d] (%s).cite.%s: must be a string or null"
+                % (position, claim.get("id"), field),
+            )
+
         # An overview claim (chapter_idx -1) summarises the book rather than a
         # passage, so it may carry no block range and no cite at all.
         is_overview = claim.get("chapter_idx") == OVERVIEW_IDX
@@ -412,8 +481,39 @@ def validate(manifest):
                 "claims[%d] (%s).block_range: [%r, %r] is not sane"
                 % (position, claim.get("id"), start, end),
             )
-        _require(isinstance(claim.get("jt"), dict), "claims[%d] (%s).jt: must be an object"
+        jt = claim.get("jt")
+        _require(isinstance(jt, dict), "claims[%d] (%s).jt: must be an object"
                  % (position, claim.get("id")))
+        # pruned is a deletion: a truthy string like "false" would silently
+        # remove the card, so only a real boolean counts.
+        _require(
+            isinstance(jt.get("pruned", False), bool),
+            "claims[%d] (%s).jt.pruned: must be true or false, got %r"
+            % (position, claim.get("id"), jt.get("pruned")),
+        )
+        for field in ("flags", "notes", "highlights"):
+            _require(
+                isinstance(jt.get(field, []), list),
+                "claims[%d] (%s).jt.%s: must be an array"
+                % (position, claim.get("id"), field),
+            )
+        for index, highlight in enumerate(jt.get("highlights") or []):
+            _require(
+                isinstance(highlight, dict),
+                "claims[%d] (%s).jt.highlights[%d]: must be an object"
+                % (position, claim.get("id"), index),
+            )
+        # The verbatim slots the canvas fills from JT's own typing.  Absent (or
+        # null) means he wrote nothing there; an empty string is a real value —
+        # it is how "JT deleted that section" is recorded — so only a non-string
+        # is refused.  Anything else would be rendered into the card as its repr.
+        for field in ("post_cite", "jt_section_override"):
+            value = jt.get(field)
+            _require(
+                value is None or isinstance(value, str),
+                "claims[%d] (%s).jt.%s: must be a string when present, got %r"
+                % (position, claim.get("id"), field, value),
+            )
 
         # Non-fatal guardrail: authored text must not open with a triage glyph.
         for field in ("title", "body_md"):
@@ -424,6 +524,20 @@ def validate(manifest):
                     "card must never start with one (it is read as JT's triage flag)"
                     % (position, claim.get("id"), field, glyph)
                 )
+
+    # The other persisted collections: the unmatched bin is read with
+    # item.get(...) and record_run() appends to runs, so both must be arrays.
+    unmatched = manifest.get("unmatched", [])
+    _require(isinstance(unmatched, list), "manifest.unmatched: must be an array")
+    for index, item in enumerate(unmatched):
+        _require(
+            isinstance(item, dict),
+            "manifest.unmatched[%d]: must be an object" % index,
+        )
+    _require(
+        isinstance(manifest.get("runs", []), list),
+        "manifest.runs: must be an array",
+    )
 
     # cycle check: a parent chain must terminate at "root".
     by_id = {claim["id"]: claim for claim in claims}

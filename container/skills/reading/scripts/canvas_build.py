@@ -82,7 +82,13 @@ LINE_H = 24
 # height doing most of the work.
 SAFETY_MARGIN = 1.05
 H_MIN = 620                         # nominal card, roughly 8.5x11 portrait
-H_MAX = 2400                        # tall enough for a legacy 1400-char body
+# H_MAX is a REFERENCE height, not a clamp: ordinary content never reaches it
+# (a legacy 1400-char body sits well under).  It used to cap card_height, which
+# made the builder emit a card shorter than its own no-scroll estimate as soon
+# as a body or the unmatched bin grew past it — the validator then failed every
+# subsequent write and the map froze.  Sizing must always satisfy the gate, so
+# tall content now gets a tall card.
+H_MAX = 2400
 H_ROUND = 10
 
 UNASSIGNED = "unassigned"
@@ -280,8 +286,23 @@ def body_text(claim):
     return claim.get("body_md") or ""
 
 
+def post_cite_text(claim):
+    """Anything JT wrote below the cite line, or '' when he wrote nothing.
+
+    The region under the citation is his: a paragraph appended there used to be
+    parsed away and dropped on the next rebuild, so it is now kept verbatim and
+    re-rendered in the same place.
+    """
+    value = (claim.get("jt") or {}).get("post_cite")
+    return value if isinstance(value, str) else ""
+
+
 def source_section(claim, include_flags=True):
-    """Title + body + cite — the part of a card that is source content."""
+    """Title + body + cite — the part of a card that is source content.
+
+    Plus, at the bottom, whatever JT appended below the cite line: it renders
+    where he put it, under the citation and above the — JT — rule.
+    """
     prefix = flag_prefix(claim) if include_flags else ""
     lines = ["# " + prefix + title_text(claim)]
     body = body_text(claim)
@@ -292,12 +313,26 @@ def source_section(claim, include_flags=True):
     if cite:
         lines.append("")
         lines.append(cite)
+    tail = post_cite_text(claim)
+    if tail.strip():
+        lines.append("")
+        lines.append(tail)
     return "\n".join(lines)
 
 
 def jt_section(claim):
-    """The fenced ``— JT —`` overlay block, or '' when there is no overlay."""
+    """The fenced ``— JT —`` overlay block, or '' when there is no overlay.
+
+    Normally projected from the manifest's stance, notes and highlights.  Once
+    JT has rewritten the block on the canvas his wording is authoritative and
+    is rendered verbatim instead — including an empty override, which means he
+    deleted the block and it is not recreated.
+    """
     jt = claim.get("jt") or {}
+    override = jt.get("jt_section_override")
+    if isinstance(override, str):
+        body = override.strip("\n")
+        return JT_SEP + body if body.strip() else ""
     stance = normalize_stance(jt.get("stance"))
     notes = [str(n).strip() for n in (jt.get("notes") or []) if str(n).strip()]
     highlights = jt.get("highlights") or []
@@ -360,9 +395,10 @@ def card_height(text):
     """Deterministic portrait-card height for a projected card text.
 
     Rounds UP to the grid so the result is never below the estimate — that is
-    what lets the validator use the same maths without false positives.
+    what lets the validator use the same maths without false positives.  There
+    is deliberately no upper clamp: see H_MAX.
     """
-    height = max(H_MIN, min(H_MAX, estimate_height(text)))
+    height = max(H_MIN, estimate_height(text))
     return ((height + H_ROUND - 1) // H_ROUND) * H_ROUND
 
 
@@ -1009,7 +1045,52 @@ def build_canvas(manifest, existing=None):
     )
     overview_w = o_content_w
     overview_h = o_content_h
-    chapter_x = SIDE_X + overview_w + CLUSTER_GAP
+
+    # --- Heatmap Sections: the map's index, in the top-left corner ----------
+    # It reads before the map does, so it anchors the canvas's minimum-x,
+    # minimum-y corner and the rest of the left rail flows down beneath it.
+    # Its geometry is settled FIRST because the shelf has to start clear of it:
+    # the block grows rightward a column at a time, and past ~20 chapters it
+    # reaches further right than the overview cluster does.
+    nodes = []
+    toc_cards = []
+    toc_group = None
+    # Exactly the chapters that render a hub, in the same order — the heatmap
+    # is an index of the map, so it must not list front matter the map omits.
+    entries = [(key, labels.get(key, str(key))) for key in keys]
+    l_x = SIDE_X - COL_GAP - CARD_W
+    rail_top = 0
+    toc_right = l_x
+    if entries:
+        toc_top = 0
+        inner_x = l_x + TOC_PAD
+        inner_y = toc_top + TOC_PAD
+        column_bottom = {}
+        for index, (key, label) in enumerate(entries):
+            column, _row = divmod(index, TOC_ROWS)
+            text = toc_text(manifest, key, label)
+            height = toc_card_height(text)
+            x = inner_x + column * (TOC_CARD_W + TOC_GAP)
+            y = column_bottom.get(column, inner_y)
+            toc_cards.append(_text_node(
+                node_id(slug, toc_key(key)), text, x, y, TOC_CARD_W, height,
+            ))
+            column_bottom[column] = y + height + TOC_GAP
+        columns_used = max(column_bottom) + 1
+        toc_width = (columns_used * TOC_CARD_W
+                     + (columns_used - 1) * TOC_GAP + 2 * TOC_PAD)
+        toc_bottom = max(column_bottom.values()) - TOC_GAP + TOC_PAD
+        toc_group = _group_node(
+            node_id(slug, TOC_GROUP_KEY), TOC_LABEL,
+            l_x, toc_top, toc_width, toc_bottom - toc_top, TOC_COLOR,
+        )
+        rail_top = toc_bottom + SIDE_GAP
+        toc_right = l_x + toc_width
+
+    # The shelf clears BOTH left-hand blocks: the overview cluster below and
+    # the heatmap above.  Taking only the overview into account put chapter
+    # cards underneath the heatmap's later columns at 21+ chapters.
+    chapter_x = max(SIDE_X + overview_w + CLUSTER_GAP, toc_right + CLUSTER_GAP)
 
     # Chapters sit on a horizontal shelf, top-aligned at y = 0 and advancing
     # left to right in book order.  Stacking them vertically made a book-scale
@@ -1049,40 +1130,8 @@ def build_canvas(manifest, existing=None):
         cursor_x += layout["content_w"] + CHAPTER_GAP
         tallest = max(tallest, layout["content_h"])
 
-    # --- Heatmap Sections: the map's index, in the top-left corner ----------
-    # It reads before the map does, so it anchors the canvas's minimum-x,
-    # minimum-y corner and the rest of the left rail flows down beneath it.
-    nodes = []
-    toc_cards = []
-    # Exactly the chapters that render a hub, in the same order — the heatmap
-    # is an index of the map, so it must not list front matter the map omits.
-    entries = [(key, labels.get(key, str(key))) for key in keys]
-    l_x = SIDE_X - COL_GAP - CARD_W
-    rail_top = 0
-    if entries:
-        toc_top = 0
-        inner_x = l_x + TOC_PAD
-        inner_y = toc_top + TOC_PAD
-        column_bottom = {}
-        for index, (key, label) in enumerate(entries):
-            column, _row = divmod(index, TOC_ROWS)
-            text = toc_text(manifest, key, label)
-            height = toc_card_height(text)
-            x = inner_x + column * (TOC_CARD_W + TOC_GAP)
-            y = column_bottom.get(column, inner_y)
-            toc_cards.append(_text_node(
-                node_id(slug, toc_key(key)), text, x, y, TOC_CARD_W, height,
-            ))
-            column_bottom[column] = y + height + TOC_GAP
-        columns_used = max(column_bottom) + 1
-        toc_width = (columns_used * TOC_CARD_W
-                     + (columns_used - 1) * TOC_GAP + 2 * TOC_PAD)
-        toc_bottom = max(column_bottom.values()) - TOC_GAP + TOC_PAD
-        nodes.append(_group_node(
-            node_id(slug, TOC_GROUP_KEY), TOC_LABEL,
-            l_x, toc_top, toc_width, toc_bottom - toc_top, TOC_COLOR,
-        ))
-        rail_top = toc_bottom + SIDE_GAP
+    if toc_group is not None:
+        nodes.append(toc_group)
 
     # --- far-left rail below it: legend, root + overview claims, then bin ---
     # The legend is centred on the root card and is usually the taller of the
@@ -1159,13 +1208,16 @@ def build_canvas(manifest, existing=None):
         if claim_id in top_level_overview:
             # an overview claim hangs directly off the root card
             from_node = root_ident
+        elif parent != "root" and parent in live_ids:
+            # A live parent owns the edge even when it sits in another chapter:
+            # _forest makes such a child a local root for LAYOUT only, and the
+            # hub must not quietly stand in for the real parent.
+            from_node = claim_node_id(slug, parent)
         elif claim_id in hub_of:
             # a chapter's top-level claim hangs off that chapter's hub card
             from_node = hub_of[claim_id]
-        elif parent == "root" or parent not in live_ids:
-            continue
         else:
-            from_node = claim_node_id(slug, parent)
+            continue
         edges.append(_edge(
             node_id(slug, edge_key(claim_id)),
             from_node,

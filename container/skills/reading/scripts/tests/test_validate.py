@@ -7,6 +7,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import canvas_build  # noqa: E402
+import manifest as M  # noqa: E402
 from validate import assert_valid, validate_canvas  # noqa: E402
 
 
@@ -37,6 +38,33 @@ def clean_canvas():
 
 def only(violations, needle):
     return [v for v in violations if needle in v]
+
+
+def oversized_manifest(body_chars=0, unmatched=0):
+    """A one-chapter map whose machine content is deliberately unbounded.
+
+    Both levers grow a generated card past the old H_MAX clamp: a very long
+    edited body, and an unmatched-highlights bin that accumulates for ever.
+    """
+    m = M.new_manifest(
+        "oversized", {"title": "Oversized", "author": "A. Writer"},
+        [{"idx": 0, "title": "The Only Chapter", "block_start": 0, "block_end": 50}],
+    )
+    filler = ("Each year's spending has to come out of some account, and which "
+              "account it comes out of is the decision. ")
+    m["claims"] = [
+        M.new_claim("c-0001", "A claim with a very long body", 0, "root", 0,
+                    locator="Ch 1", block_range=[0, 1], anchor_block=0,
+                    anchor_phrase="some account",
+                    body_md=(filler * 100)[:body_chars] if body_chars else "short."),
+    ]
+    m["unmatched"] = [
+        M.new_highlight("h-%04d" % i, "https://readwise.io/open/%d" % i,
+                        filler[:90] + " (%d)" % i, "a note about it")
+        for i in range(unmatched)
+    ]
+    M.validate(m)
+    return m
 
 
 class CleanCanvasTest(unittest.TestCase):
@@ -122,6 +150,14 @@ class BadColorTest(unittest.TestCase):
         canvas = clean_canvas()
         canvas["nodes"][1]["color"] = "#ff00"
         self.assertTrue(only(validate_canvas(canvas), "is not a preset"))
+
+    def test_a_hex_with_trailing_content_is_rejected(self):
+        # Python's $ matches before a final newline, so "#fff\n" used to pass.
+        for color in ("#fff\n", "#ff0000\n", "#fff\n#000"):
+            canvas = clean_canvas()
+            canvas["nodes"][1]["color"] = color
+            self.assertTrue(only(validate_canvas(canvas), "is not a preset"),
+                            "accepted %r as a colour" % color)
 
     def test_non_string_color_is_rejected(self):
         canvas = clean_canvas()
@@ -245,13 +281,37 @@ class OverflowTest(unittest.TestCase):
         self.assertEqual(only(validate_canvas(canvas), "text likely overflows"), [])
 
     def test_builder_sizing_always_satisfies_the_validator(self):
+        # The last two shapes are the ones the old H_MAX clamp under-sized: a
+        # long edited body and a bin that has been accumulating for months.
+        # Under-sizing there failed the gate, and project() then refused every
+        # later write, freezing the map for good.
+        bin_60 = canvas_build.bin_text(oversized_manifest(unmatched=60))
         for text in ("# T\n\nshort.",
                      "# A somewhat longer title that wraps\n\n" + self.LONG,
                      "# T\n\n" + self.LONG * 5,
-                     "# T\n\n" + "\n\n".join([self.LONG[:80]] * 6)):
+                     "# T\n\n" + "\n\n".join([self.LONG[:80]] * 6),
+                     "# T\n\n" + (self.LONG * 30)[:6000],
+                     bin_60):
             height = canvas_build.card_height(text)
             self.assertGreaterEqual(height, canvas_build.estimate_height(text),
                                     "builder under-sized: %r" % text[:40])
+
+    def test_a_6000_char_body_still_projects_to_a_writable_canvas(self):
+        m = oversized_manifest(body_chars=6000)
+        canvas = canvas_build.build_canvas(m)
+        self.assertEqual(validate_canvas(canvas), [])
+
+    def test_a_sixty_item_bin_still_projects_to_a_writable_canvas(self):
+        m = oversized_manifest(unmatched=60)
+        canvas = canvas_build.build_canvas(m)
+        self.assertEqual(validate_canvas(canvas), [])
+        bin_node = [n for n in canvas["nodes"]
+                    if n["id"] == canvas_build.node_id(m["slug"], "bin")][0]
+        self.assertGreater(bin_node["height"], canvas_build.H_MAX)
+
+    def test_generated_heights_are_not_clamped(self):
+        text = "# T\n\n" + (self.LONG * 30)[:6000]
+        self.assertGreater(canvas_build.card_height(text), canvas_build.H_MAX)
 
     def test_jt_resized_nodes_are_exempt_from_overflow(self):
         canvas = clean_canvas()

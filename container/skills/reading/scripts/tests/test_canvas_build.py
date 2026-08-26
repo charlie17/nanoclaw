@@ -245,8 +245,44 @@ def front_matter_manifest():
     return m
 
 
+def many_chapters_manifest(chapters=26, overview=0, per_chapter=2):
+    """A long book: every chapter carries claims, so every one gets a TOC card.
+
+    The heatmap wraps every TOC_ROWS entries into a new 320-wide column, so
+    chapter count — not claim count — is what drives the block rightward.
+    """
+    m = M.new_manifest(
+        "long-book", {"title": "A Long Book", "author": "A. Writer"},
+        [{"idx": i, "title": "Chapter %d" % (i + 1),
+          "block_start": i * 20, "block_end": (i + 1) * 20}
+         for i in range(chapters)],
+    )
+    claims = [
+        M.new_claim("o-%04d" % (i + 1), "Overview card %d" % (i + 1), -1, "root", i,
+                    body_md=LOREM[:180])
+        for i in range(overview)
+    ]
+    counter = 0
+    for chapter in range(chapters):
+        for position in range(per_chapter):
+            counter += 1
+            claims.append(M.new_claim(
+                "c-%04d" % counter, "Claim %d" % counter, chapter, "root", position,
+                locator="Ch %d §%d" % (chapter + 1, position),
+                block_range=[chapter * 20 + position, chapter * 20 + position + 1],
+                anchor_block=chapter * 20 + position, anchor_phrase="anchor",
+                body_md=LOREM[:200]))
+    m["claims"] = claims
+    M.validate(m)
+    return m
+
+
 def nodes_by_id(canvas):
     return dict((n["id"], n) for n in canvas["nodes"])
+
+
+def only_overlaps(violations):
+    return [v for v in violations if v.startswith("overlap:")]
 
 
 def toc_ids(m):
@@ -898,6 +934,47 @@ class HeatmapTocTest(unittest.TestCase):
             self.assertLessEqual(card["y"] + card["height"],
                                  group["y"] + group["height"])
 
+    def test_a_long_book_does_not_run_the_shelf_under_the_heatmap(self):
+        """21+ chapters push the heatmap past where the shelf used to start.
+
+        The block grows rightward in 320px columns from x=-600; the shelf used
+        to start at a fixed SIDE_X + overview_w + CLUSTER_GAP, so the fifth TOC
+        column landed on top of the first chapter's cards near y=0 and every
+        write failed validation from then on.
+        """
+        for chapters, overview in ((21, 0), (26, 3), (26, 0), (31, 3)):
+            m = many_chapters_manifest(chapters, overview)
+            canvas = cb.build_canvas(m)
+            self.assertEqual(
+                only_overlaps(validate_canvas(canvas)), [],
+                "%d chapters / %d overview cards overlap" % (chapters, overview))
+
+    def test_the_shelf_starts_clear_of_the_heatmap_block(self):
+        m = many_chapters_manifest(26, 3)
+        canvas = cb.build_canvas(m)
+        group = nodes_by_id(canvas)[cb.node_id(m["slug"], cb.TOC_GROUP_KEY)]
+        first = chapter_extents(m, canvas)[0]
+        self.assertEqual(first["x0"], group["x"] + group["width"] + cb.CLUSTER_GAP)
+        # and clear of the overview cluster as well
+        self.assertGreaterEqual(first["x0"], overview_extent(m, canvas)["x1"])
+
+    def test_a_pilot_shaped_map_keeps_the_overview_driven_shelf_start(self):
+        """15 rendered chapters + 5 overview claims — the ratified layout.
+
+        The heatmap is only three columns wide there, so its right edge is well
+        left of the overview cluster's and the new max() must be a no-op.
+        """
+        m = many_chapters_manifest(15, 5)
+        canvas = cb.build_canvas(m)
+        group = nodes_by_id(canvas)[cb.node_id(m["slug"], cb.TOC_GROUP_KEY)]
+        overview = overview_extent(m, canvas)
+        first = chapter_extents(m, canvas)[0]
+        self.assertGreater(overview["x1"] + cb.CLUSTER_GAP,
+                           group["x"] + group["width"] + cb.CLUSTER_GAP)
+        self.assertEqual(first["x0"],
+                         cb.SIDE_X + (overview["x1"] - cb.SIDE_X) + cb.CLUSTER_GAP)
+        self.assertEqual(validate_canvas(canvas), [])
+
     def test_no_edges_touch_the_toc(self):
         m = small_manifest()
         canvas = cb.build_canvas(m)
@@ -1266,6 +1343,50 @@ class ShelfLayoutTest(unittest.TestCase):
         edge = [e for e in canvas["edges"]
                 if e["id"] == cb.node_id(SLUG, "edge:c-0001")][0]
         self.assertEqual(edge["fromNode"], hub0)
+
+    def test_a_cross_chapter_parent_keeps_its_own_edge(self):
+        """_forest makes a cross-chapter child a local root for LAYOUT only.
+
+        Membership in hub_of used to win here, so the hub silently stood in for
+        the real parent and the cross-chapter relationship vanished from the
+        map even though the docstring promised it was still drawn.
+        """
+        m = small_manifest()
+        # c-0004 lives in chapter 1; parent it to c-0001, which lives in chapter 0
+        m["claims"][3]["parent"] = "c-0001"
+        m["claims"][3]["rel"] = "objection"
+        M.validate(m)
+        canvas = cb.build_canvas(m)
+        edge = [e for e in canvas["edges"]
+                if e["id"] == cb.node_id(SLUG, "edge:c-0004")][0]
+        self.assertEqual(edge["fromNode"], cb.claim_node_id(SLUG, "c-0001"))
+        self.assertNotEqual(edge["fromNode"], cb.node_id(SLUG, cb.hub_key(1)))
+        self.assertEqual(edge["label"], "objection")
+        # the layout still keeps it inside its own chapter, and stays valid
+        first, second = chapter_extents(m, canvas)[0], chapter_extents(m, canvas)[1]
+        child = nodes_by_id(canvas)[cb.claim_node_id(SLUG, "c-0004")]
+        self.assertGreaterEqual(child["x"], second["x0"])
+        self.assertGreaterEqual(second["x0"], first["x1"])
+        self.assertEqual(validate_canvas(canvas), [])
+
+    def test_a_pruned_cross_chapter_parent_falls_back_to_the_hub(self):
+        m = small_manifest()
+        m["claims"][3]["parent"] = "c-0001"
+        m["claims"][0]["jt"]["pruned"] = True
+        M.validate(m)
+        canvas = cb.build_canvas(m)
+        edge = [e for e in canvas["edges"]
+                if e["id"] == cb.node_id(SLUG, "edge:c-0004")][0]
+        self.assertEqual(edge["fromNode"], cb.node_id(SLUG, cb.hub_key(1)))
+
+    def test_a_same_chapter_top_level_claim_still_hangs_off_its_hub(self):
+        m = small_manifest()
+        canvas = cb.build_canvas(m)
+        for claim_id, chapter in (("c-0001", 0), ("c-0004", 1)):
+            edge = [e for e in canvas["edges"]
+                    if e["id"] == cb.node_id(SLUG, "edge:" + claim_id)][0]
+            self.assertEqual(edge["fromNode"],
+                             cb.node_id(SLUG, cb.hub_key(chapter)))
 
     def test_legacy_hub_spokes_are_dropped_not_carried_forward(self):
         m = small_manifest()

@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import email.message
 import email.utils
+import http.client
 import io
 import json
 import os
@@ -330,6 +331,199 @@ class RequestRetryTests(unittest.TestCase):
             with self.assertRaises(readerapi.ReaderAPIError) as caught:
                 readerapi._request("https://readwise.io/api/v3/list/?id=secretish")
         self.assertNotIn("secretish", str(caught.exception))
+
+
+class MutationRetryTests(unittest.TestCase):
+    """A create that may already have committed must never be replayed."""
+
+    def setUp(self):
+        self.slept = []
+        patcher = mock.patch.object(readerapi, "_sleep", self.slept.append)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        readerapi.reset_mcp_state()
+        readerapi.reset_pacing()
+        self.addCleanup(readerapi.reset_mcp_state)
+        self.addCleanup(readerapi.reset_pacing)
+        env = mock.patch.dict(os.environ, {readerapi.ENV_TOKEN_VAR: DUMMY_TOKEN})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def _post(self, responses, **kwargs):
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            calls.append(request)
+            item = responses.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            result = readerapi._request(
+                readerapi.MCP_URL, method="POST", body="{}", **kwargs
+            )
+        return calls, result
+
+    def test_a_mutating_post_is_not_replayed_after_a_5xx(self):
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            calls.append(request)
+            raise http_error(503)
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(readerapi.ReaderAPIError) as caught:
+                readerapi._request(readerapi.MCP_URL, method="POST", body="{}")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.slept, [])
+        self.assertIn("may already have taken effect", str(caught.exception))
+
+    def test_a_mutating_post_is_not_replayed_after_a_transport_timeout(self):
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            calls.append(request)
+            raise urllib.error.URLError(TimeoutError("timed out"))
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(readerapi.ReaderAPIError) as caught:
+                readerapi._request(readerapi.MCP_URL, method="POST", body="{}")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.slept, [])
+        self.assertIn("may already have taken effect", str(caught.exception))
+
+    def test_a_mutating_post_is_still_retried_on_429(self):
+        # The server refused before doing the work, so nothing was committed.
+        calls, (status, _headers, _text) = self._post(
+            [http_error(429, {"Retry-After": "2"}), FakeResponse("{}")]
+        )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.slept, [2.0])
+
+    def test_a_read_carried_over_post_is_still_retried(self):
+        calls, _result = self._post(
+            [http_error(503), FakeResponse("{}")], mutating=False
+        )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.slept, [1.0])
+
+    def test_only_the_state_changing_tools_are_classified_as_mutating(self):
+        self.assertTrue(readerapi.is_mutating_tool("reader_create_highlight"))
+        self.assertTrue(readerapi.is_mutating_tool("readwise_delete_highlight"))
+        self.assertFalse(readerapi.is_mutating_tool("reader_get_document_highlights"))
+        self.assertFalse(readerapi.is_mutating_tool("readwise_list_highlights"))
+
+    def test_a_create_tool_call_reaches_the_transport_as_a_mutation(self):
+        attempts = []
+
+        def fake_urlopen(request, timeout=None):
+            body = json.loads(request.data.decode("utf-8"))
+            if "id" not in body:
+                return FakeResponse("", {"Content-Type": "application/json"}, status=202)
+            if body["method"] == "initialize":
+                return FakeResponse(
+                    sse({"jsonrpc": "2.0", "id": body["id"], "result": {}}),
+                    {"Content-Type": "text/event-stream"},
+                )
+            attempts.append(body["params"]["name"])
+            raise http_error(500)
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(readerapi.ReaderAPIError):
+                readerapi.create_highlight(
+                    "doc-1", "<p>a</p>", tags=["daystrom-claim"]
+                )
+        self.assertEqual(attempts, ["reader_create_highlight"])
+
+    def test_a_read_tool_call_is_still_replayed(self):
+        attempts = []
+
+        def fake_urlopen(request, timeout=None):
+            body = json.loads(request.data.decode("utf-8"))
+            if "id" not in body:
+                return FakeResponse("", {"Content-Type": "application/json"}, status=202)
+            if body["method"] == "initialize":
+                return FakeResponse(
+                    sse({"jsonrpc": "2.0", "id": body["id"], "result": {}}),
+                    {"Content-Type": "text/event-stream"},
+                )
+            attempts.append(body["params"]["name"])
+            if len(attempts) == 1:
+                raise http_error(503)
+            return FakeResponse(
+                sse({
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"content": [{"type": "text", "text": "[]"}]},
+                }),
+                {"Content-Type": "text/event-stream"},
+            )
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            payload = readerapi.get_document_highlights("doc-1")
+        self.assertEqual(payload, [])
+        self.assertEqual(len(attempts), 2)
+
+
+class ResponseReadFailureTests(unittest.TestCase):
+    """A body that dies mid-read is a transport failure, not an escape hatch."""
+
+    def setUp(self):
+        self.slept = []
+        patcher = mock.patch.object(readerapi, "_sleep", self.slept.append)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _breaking_response(self, error):
+        class BreakingResponse(FakeResponse):
+            def read(self):
+                raise error
+
+        return BreakingResponse("", {"Content-Type": "application/json"})
+
+    def test_a_read_timeout_on_a_get_is_retried_then_succeeds(self):
+        responses = [
+            self._breaking_response(TimeoutError("timed out")),
+            self._breaking_response(TimeoutError("timed out")),
+            FakeResponse('{"ok":true}', {"Content-Type": "application/json"}),
+        ]
+
+        def fake_urlopen(request, timeout=None):
+            return responses.pop(0)
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            status, _headers, text = readerapi._request(
+                "https://readwise.io/api/v3/list/"
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(text, '{"ok":true}')
+        self.assertEqual(self.slept, [1.0, 2.0])
+
+    def test_an_incomplete_read_is_wrapped_once_retries_run_out(self):
+        def fake_urlopen(request, timeout=None):
+            return self._breaking_response(http.client.IncompleteRead(b"partial"))
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(readerapi.ReaderAPIError) as caught:
+                readerapi._request("https://readwise.io/api/v3/list/", max_retries=1)
+        self.assertIn("Network error", str(caught.exception))
+        self.assertEqual(len(self.slept), 1)
+
+    def test_a_read_timeout_on_a_mutation_is_wrapped_not_replayed(self):
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            calls.append(request)
+            return self._breaking_response(TimeoutError("timed out"))
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(readerapi.ReaderAPIError) as caught:
+                readerapi._request(readerapi.MCP_URL, method="POST", body="{}")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.slept, [])
+        self.assertIn("may already have taken effect", str(caught.exception))
 
 
 # --------------------------------------------------------------------------

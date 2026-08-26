@@ -4,6 +4,9 @@ Strictly offline: readerapi.get_document_highlights is mocked at the function
 boundary.
 """
 
+import contextlib
+import io
+import json
 import os
 import shutil
 import sys
@@ -80,11 +83,13 @@ BASE_HIGHLIGHTS = [
 ]
 
 
-def build_manifest():
+def build_manifest(html_sha256=None):
     manifest = M.new_manifest(
         SLUG,
         {"document_id": DOC_ID, "title": "A Read Book", "author": "An Author",
-         "category": "epub"},
+         "category": "epub",
+         "html_sha256": slicer.sha256_text(HTML) if html_sha256 is None
+                        else html_sha256},
         [{"idx": 0, "title": "The whole thing", "block_start": 0,
           "block_end": len(BLOCKS)}],
     )
@@ -121,8 +126,11 @@ class RefreshTestCase(unittest.TestCase):
         M.save(self.manifest, ARM.manifest_path(self.manifest, self.vault))
 
     def run_refresh(self, highlights, manifest=None):
+        # a list is copied so a test's fixture cannot be mutated; an envelope
+        # dict is handed through exactly as the API would return it
+        payload = list(highlights) if isinstance(highlights, list) else highlights
         with mock.patch.object(readerapi, "get_document_highlights",
-                               return_value=list(highlights)):
+                               return_value=payload):
             return R.refresh(manifest or self.manifest, DOC_ID, self.vault)
 
     def canvas_path(self):
@@ -257,6 +265,100 @@ class IdempotenceTest(RefreshTestCase):
         self.assertEqual(self.canvas_bytes(), first)
 
 
+class MidRunCanvasEditTest(RefreshTestCase):
+    """JT keeps working in Obsidian while the sweep is out on the network.
+
+    The canvas then differs from the run-start snapshot, so ``project`` folds
+    it a second time — and that fold compares the PRE-run canvas against a
+    manifest which has already absorbed this run's new highlights.  Every card
+    reads as rewritten, and a card that just gained a highlight has its — JT —
+    section frozen at the empty text the canvas still showed, permanently.
+    """
+
+    RETITLED = "Timing is the last big lever, rethought"
+
+    def sweep_while_jt_retitles(self, highlights, claim_id="r3"):
+        """Run refresh; JT retitles *claim_id* during the network call."""
+        def call(*args, **kwargs):
+            canvas = cb.read_canvas(self.canvas_path())
+            target = cb.claim_node_id(SLUG, claim_id)
+            for node in canvas["nodes"]:
+                if node["id"] == target:
+                    lines = node["text"].split("\n")
+                    lines[0] = lines[0] + ", rethought"
+                    node["text"] = "\n".join(lines)
+            M.atomic_write_text(self.canvas_path(), cb.dumps_canvas(canvas))
+            return list(highlights)
+
+        with mock.patch.object(readerapi, "get_document_highlights",
+                               side_effect=call):
+            return R.refresh(self.manifest, DOC_ID, self.vault)
+
+    def test_a_card_that_gained_a_highlight_is_not_frozen(self):
+        report = self.sweep_while_jt_retitles(
+            [jt_highlight("h1", PARAGRAPHS[2], "✅ solid")]
+        )
+        self.assertEqual(report["matched"], {"r1": ["h1"]})
+
+        jt = M.claims_by_id(self.manifest)["r1"]["jt"]
+        self.assertNotIn("jt_section_override", jt)
+        self.assertIsNone(jt["title_override"])
+        self.assertEqual(
+            [w for w in report["warnings"] if "JT" in w and "edited" in w], []
+        )
+
+        node = self.node_text("r1")
+        self.assertIn(PARAGRAPHS[2], node["text"])
+        self.assertIn("solid", node["text"])
+
+    def test_the_mid_run_retitle_itself_still_lands(self):
+        self.sweep_while_jt_retitles([jt_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+        jt = M.claims_by_id(self.manifest)["r3"]["jt"]
+        self.assertEqual(jt["title_override"], self.RETITLED)
+        self.assertIn(self.RETITLED, self.node_text("r3")["text"])
+
+    def test_no_untouched_card_is_reported_as_edited(self):
+        report = self.sweep_while_jt_retitles(
+            [jt_highlight("h1", PARAGRAPHS[2], "✅ solid")]
+        )
+        self.assertEqual([w for w in report["warnings"] if "cite line" in w], [])
+        by_id = M.claims_by_id(self.manifest)
+        for claim_id in ("r1", "r2"):
+            jt = by_id[claim_id]["jt"]
+            self.assertNotIn("post_cite", jt, claim_id)
+            self.assertNotIn("jt_section_override", jt, claim_id)
+            self.assertIsNone(jt["title_override"], claim_id)
+            self.assertIsNone(jt["body_override"], claim_id)
+
+    def test_the_card_still_takes_highlights_on_a_later_run(self):
+        # The freeze was permanent: prove the card is still live afterwards.
+        self.sweep_while_jt_retitles([jt_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+        self.run_refresh([
+            jt_highlight("h1", PARAGRAPHS[2], "✅ solid"),
+            jt_highlight("h5", PARAGRAPHS[3], "and this too"),
+        ])
+        self.assertIn(PARAGRAPHS[3], self.node_text("r1")["text"])
+
+    def test_a_real_pre_run_jt_section_edit_still_wins(self):
+        # The guard only silences cards byte-identical to the run-start canvas.
+        # An edit JT made BEFORE the run is caught by the first fold and stands.
+        self.run_refresh([jt_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+        canvas = cb.read_canvas(self.canvas_path())
+        target = cb.claim_node_id(SLUG, "r1")
+        for node in canvas["nodes"]:
+            if node["id"] == target:
+                node["text"] = node["text"].replace("solid", "MY OWN WORDS")
+        M.atomic_write_text(self.canvas_path(), cb.dumps_canvas(canvas))
+
+        self.sweep_while_jt_retitles([
+            jt_highlight("h1", PARAGRAPHS[2], "✅ solid"),
+            jt_highlight("h5", PARAGRAPHS[3], "a new one"),
+        ])
+        jt = M.claims_by_id(self.manifest)["r1"]["jt"]
+        self.assertIn("MY OWN WORDS", jt["jt_section_override"])
+        self.assertIn("MY OWN WORDS", self.node_text("r1")["text"])
+
+
 class StanceChangeTest(RefreshTestCase):
     def test_a_later_contrary_stance_overwrites_and_warns(self):
         self.run_refresh(BASE_HIGHLIGHTS)
@@ -293,6 +395,162 @@ class StanceChangeTest(RefreshTestCase):
         self.assertEqual(self.node_text("r1").get("color"), "1")
 
 
+class KnownHighlightEditTest(RefreshTestCase):
+    """[36] a note JT writes in Reader AFTER the first sweep still lands."""
+
+    def test_a_note_added_to_a_known_highlight_updates_the_record(self):
+        plain = jt_highlight("h1", PARAGRAPHS[2])
+        self.run_refresh([plain])
+        by_id = M.claims_by_id(self.manifest)
+        self.assertEqual(by_id["r1"]["jt"]["highlights"][0]["note"], "")
+        self.assertIsNone(by_id["r1"]["jt"]["stance"])
+
+        report = self.run_refresh([jt_highlight("h1", PARAGRAPHS[2], "❌ revised")])
+
+        by_id = M.claims_by_id(self.manifest)
+        self.assertEqual(report["updated"], ["h1"])
+        self.assertEqual(report["skipped_known"], 0)
+        self.assertEqual(report["new_highlights"], 0)
+        self.assertEqual(by_id["r1"]["jt"]["stance"], "dispute")
+        highlights = by_id["r1"]["jt"]["highlights"]
+        self.assertEqual(len(highlights), 1)          # updated, never duplicated
+        self.assertEqual(highlights[0]["note"], "revised")
+
+    def test_a_changed_stance_on_a_known_highlight_warns(self):
+        self.run_refresh(BASE_HIGHLIGHTS)             # h1 is "✅ solid"
+        edited = [h for h in BASE_HIGHLIGHTS if h["id"] != "h1"]
+        edited.append(jt_highlight("h1", PARAGRAPHS[2], "❌ changed my mind"))
+        report = self.run_refresh(edited)
+
+        self.assertEqual(M.claims_by_id(self.manifest)["r1"]["jt"]["stance"],
+                         "dispute")
+        self.assertEqual(report["stance_changes"], [
+            {"claim_id": "r1", "from": "agree", "to": "dispute", "reader_id": "h1"},
+        ])
+
+    def test_the_recolored_card_follows_the_edited_note(self):
+        self.run_refresh(BASE_HIGHLIGHTS)
+        self.assertEqual(self.node_text("r1").get("color"), "4")     # agree
+        edited = [h for h in BASE_HIGHLIGHTS if h["id"] != "h1"]
+        edited.append(jt_highlight("h1", PARAGRAPHS[2], "❌ changed my mind"))
+        self.run_refresh(edited)
+        self.assertEqual(self.node_text("r1").get("color"), "1")     # dispute
+        self.assertIn("changed my mind", self.node_text("r1")["text"])
+
+    def test_an_edited_note_on_a_binned_highlight_updates_the_bin(self):
+        self.run_refresh(BASE_HIGHLIGHTS)             # h3 straddles -> bin
+        self.assertEqual(self.manifest["unmatched"][0]["note"],
+                         "no idea where this goes")
+        edited = [h for h in BASE_HIGHLIGHTS if h["id"] != "h3"]
+        edited.append(jt_highlight("h3", STRADDLE, "still no idea, but louder"))
+        report = self.run_refresh(edited)
+
+        self.assertEqual(report["updated"], ["h3"])
+        self.assertEqual(len(self.manifest["unmatched"]), 1)
+        self.assertEqual(self.manifest["unmatched"][0]["note"],
+                         "still no idea, but louder")
+
+    def test_an_identical_replay_updates_nothing(self):
+        self.run_refresh(BASE_HIGHLIGHTS)
+        first = self.canvas_bytes()
+        report = self.run_refresh(BASE_HIGHLIGHTS)
+        self.assertEqual(report["updated"], [])
+        self.assertEqual(report["skipped_known"], 3)
+        self.assertEqual(self.canvas_bytes(), first)
+
+
+class SourceDriftTest(RefreshTestCase):
+    """[37] the cached html has to be the html the map was built against."""
+
+    def test_a_drifted_cache_aborts_matching_with_a_warning(self):
+        drifted = build_manifest(html_sha256=slicer.sha256_text("<p>other</p>"))
+        cb.write_canvas(drifted, cb.build_canvas(drifted), self.vault)
+        report = self.run_refresh(BASE_HIGHLIGHTS, manifest=drifted)
+
+        warning = [w for w in report["warnings"] if "source drift" in w]
+        self.assertEqual(len(warning), 1)
+        self.assertIn(DOC_ID, warning[0])
+        self.assertEqual(report["matched"], {})
+        self.assertEqual(report["new_highlights"], 0)
+        self.assertEqual(drifted["unmatched"], [])
+        for claim in drifted["claims"]:
+            self.assertEqual(claim["jt"]["highlights"], [])
+
+    def test_an_empty_hash_proceeds_with_an_unbound_warning(self):
+        unbound = build_manifest(html_sha256="")
+        cb.write_canvas(unbound, cb.build_canvas(unbound), self.vault)
+        report = self.run_refresh(BASE_HIGHLIGHTS, manifest=unbound)
+
+        warning = [w for w in report["warnings"] if "unbound source" in w]
+        self.assertEqual(len(warning), 1)
+        self.assertEqual(report["matched"], {"r1": ["h1"], "r2": ["h2"]})
+
+    def test_a_matching_hash_warns_about_nothing(self):
+        report = self.run_refresh(BASE_HIGHLIGHTS)
+        self.assertEqual(
+            [w for w in report["warnings"]
+             if "source drift" in w or "unbound source" in w],
+            [],
+        )
+
+
+class UnknownEnvelopeTest(RefreshTestCase):
+    """[38] processing nothing must not read as having found nothing."""
+
+    def test_an_unrecognised_envelope_warns_loudly(self):
+        report = self.run_refresh({"data_v2": {"items": [jt_highlight("h1", "x")]}})
+        warning = [w for w in report["warnings"] if "UNRECOGNISED" in w]
+        self.assertEqual(len(warning), 1)
+        self.assertIn("data_v2", warning[0])
+        self.assertEqual(report["new_highlights"], 0)
+
+    def test_a_recognised_empty_envelope_does_not_warn(self):
+        report = self.run_refresh({"result": []})
+        self.assertEqual(
+            [w for w in report["warnings"] if "UNRECOGNISED" in w], []
+        )
+        self.assertEqual(report["new_highlights"], 0)
+
+    def test_the_singular_result_envelope_is_read(self):
+        # ESCALATED: the live MCP gateway returned {"result": [...]} — without
+        # this key every sweep reads zero highlights and reports a clean run.
+        report = self.run_refresh({"result": list(BASE_HIGHLIGHTS)})
+        self.assertEqual(report["matched"], {"r1": ["h1"], "r2": ["h2"]})
+        self.assertEqual(report["machine_highlights"], 1)
+
+
+class LiveDumpEnvelopeTest(unittest.TestCase):
+    """[4] recognised-and-empty is a clean 0, not an unknown envelope."""
+
+    def dump(self, payload, argv=None):
+        import live_dump_highlights as dump_mod
+        buffer = io.StringIO()
+        with mock.patch.dict(os.environ, {"RUN_LIVE": "1"}), \
+                mock.patch.object(readerapi, "get_document_highlights",
+                                  return_value=payload), \
+                contextlib.redirect_stdout(buffer):
+            code = dump_mod.main(argv or ["--doc", "d"])
+        return code, buffer.getvalue()
+
+    def test_a_recognised_empty_payload_succeeds(self):
+        code, out = self.dump({"result": []})
+        self.assertEqual(code, 0)
+        self.assertIn("highlights   : 0", out)
+        self.assertNotIn("_LIST_KEYS", out)
+
+    def test_an_unrecognised_payload_still_fails_with_advice(self):
+        code, out = self.dump({"data_v2": {}})
+        self.assertEqual(code, 1)
+        self.assertIn("_LIST_KEYS", out)
+
+    def test_raw_prints_the_whole_payload(self):
+        # [5] --raw promised the full payload and truncated it at 16000 chars.
+        payload = [{"id": "h%d" % n, "text": "x" * 400} for n in range(80)]
+        code, out = self.dump(payload, argv=["--doc", "d", "--raw"])
+        self.assertEqual(code, 0)
+        self.assertIn(json.dumps(payload, ensure_ascii=False, indent=2), out)
+
+
 class PayloadShapeTest(unittest.TestCase):
     def test_a_bare_list(self):
         self.assertEqual(len(R.as_highlight_list([{"id": 1}, {"id": 2}])), 2)
@@ -301,9 +559,19 @@ class PayloadShapeTest(unittest.TestCase):
         self.assertEqual(len(R.as_highlight_list({"highlights": [{"id": 1}]})), 1)
         self.assertEqual(len(R.as_highlight_list({"results": [{"id": 1}]})), 1)
 
+    def test_the_singular_result_envelope(self):
+        # what the live gateway actually returned on 2026-08-26
+        self.assertEqual(len(R.as_highlight_list({"result": [{"id": 1}]})), 1)
+        self.assertEqual(R.coerce_highlights({"result": []}), ([], True))
+
     def test_an_unknown_shape_is_empty_not_an_exception(self):
         self.assertEqual(R.as_highlight_list("nonsense"), [])
         self.assertEqual(R.as_highlight_list({"count": 3}), [])
+
+    def test_coerce_reports_whether_the_shape_was_recognised(self):
+        self.assertEqual(R.coerce_highlights([]), ([], True))
+        self.assertEqual(R.coerce_highlights({"count": 3}), ([], False))
+        self.assertEqual(R.coerce_highlights("nonsense"), ([], False))
 
     def test_the_accessor_reads_alternate_field_names(self):
         view = R.highlight_view(
