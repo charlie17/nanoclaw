@@ -13,6 +13,11 @@ python3 stdlib only.
 
 import re
 
+# The overflow check has to use exactly the sizing maths the builder used, or
+# it would disagree with its own output.  canvas_build imports nothing from
+# here, so this direction is safe.
+import canvas_build
+
 PRESET_COLORS = ("1", "2", "3", "4", "5", "6")
 HEX_COLOR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 SIDES = ("top", "right", "bottom", "left")
@@ -123,6 +128,16 @@ def validate_canvas(canvas, jt_geometry_ids=None):
             if not isinstance(node.get("text"), str):
                 violations.append("%s: a text node requires a \"text\" string" % label)
             _check_text_field(node.get("text"), "%s.text" % label, violations)
+            # No-scroll rule: a clipped card is a silently lost claim.  Skip
+            # nodes JT sized himself — his resize is his own call.
+            if (geometry_ok and isinstance(node.get("text"), str)
+                    and ident not in exempt):
+                needed = canvas_build.estimate_height(node["text"])
+                if node["height"] < needed:
+                    violations.append(
+                        "%s: text likely overflows node (height %d, needs ~%d)"
+                        % (label, node["height"], needed)
+                    )
         elif node_type == "file":
             if not isinstance(node.get("file"), str) or not node.get("file"):
                 violations.append("%s: a file node requires a \"file\" path" % label)

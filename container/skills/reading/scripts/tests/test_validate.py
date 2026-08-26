@@ -6,6 +6,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import canvas_build  # noqa: E402
 from validate import assert_valid, validate_canvas  # noqa: E402
 
 
@@ -216,6 +217,69 @@ class JtGeometryExemptionTest(unittest.TestCase):
 
     def test_a_list_works_as_well_as_a_set(self):
         self.assertEqual(validate_canvas(self.overlapping(), ["n3"]), [])
+
+
+class OverflowTest(unittest.TestCase):
+    """No-scroll rule: a card too short for its text is a lost claim."""
+
+    LONG = ("The author argues that the retirement decision is not a single number "
+            "but a sequence of cash flows, each of which has to be sourced from an "
+            "account with its own tax treatment, and that treating it as a lump sum "
+            "obscures the sequencing problem entirely, which is the whole point.")
+
+    def test_a_too_short_node_is_caught(self):
+        canvas = clean_canvas()
+        canvas["nodes"][1]["text"] = "# A long card\n\n" + self.LONG
+        canvas["nodes"][1]["height"] = 220
+        violations = validate_canvas(canvas)
+        self.assertTrue(only(violations, "text likely overflows node"))
+
+    def test_a_properly_sized_node_passes(self):
+        canvas = clean_canvas()
+        text = "# A long card\n\n" + self.LONG
+        canvas["nodes"][1]["text"] = text
+        canvas["nodes"][1]["height"] = canvas_build.card_height(text)
+        # move the neighbours out of the way of the now-taller card
+        canvas["nodes"][2]["y"] = 4000
+        canvas["nodes"][3]["y"] = 6000
+        self.assertEqual(only(validate_canvas(canvas), "text likely overflows"), [])
+
+    def test_builder_sizing_always_satisfies_the_validator(self):
+        for text in ("# T\n\nshort.",
+                     "# A somewhat longer title that wraps\n\n" + self.LONG,
+                     "# T\n\n" + self.LONG * 5,
+                     "# T\n\n" + "\n\n".join([self.LONG[:80]] * 6)):
+            height = canvas_build.card_height(text)
+            self.assertGreaterEqual(height, canvas_build.estimate_height(text),
+                                    "builder under-sized: %r" % text[:40])
+
+    def test_jt_resized_nodes_are_exempt_from_overflow(self):
+        canvas = clean_canvas()
+        canvas["nodes"][1]["text"] = "# A long card\n\n" + self.LONG
+        canvas["nodes"][1]["height"] = 220
+        self.assertTrue(only(validate_canvas(canvas), "text likely overflows"))
+        self.assertEqual(
+            only(validate_canvas(canvas, {"n1"}), "text likely overflows"), [])
+
+    def test_a_legacy_length_body_still_gets_a_tall_enough_card(self):
+        body = self.LONG * 5          # ~1400 characters
+        text = "# A legacy card\n\n" + body + "\n\n↳ cite: Ch 1 — “anchor phrase”"
+        height = canvas_build.card_height(text)
+        self.assertLessEqual(height, canvas_build.H_MAX)
+        self.assertGreaterEqual(height, canvas_build.estimate_height(text))
+
+    def test_a_450_char_body_fits_well_inside_the_cap(self):
+        body = (self.LONG * 2)[:450]
+        text = "# A typical v2 card\n\n" + body + "\n\n↳ cite: Ch 2 — “anchor”"
+        height = canvas_build.card_height(text)
+        self.assertGreaterEqual(height, canvas_build.estimate_height(text))
+        self.assertLess(height, canvas_build.H_MAX)
+
+    def test_a_cite_url_does_not_inflate_the_card(self):
+        plain = "# T\n\nbody\n\n↳ cite: Ch 1 — “anchor”"
+        linked = plain + " [link](https://readwise.io/open/%s)" % ("x" * 120)
+        self.assertLessEqual(canvas_build.card_height(linked),
+                             canvas_build.card_height(plain) + canvas_build.LINE_H * 2)
 
 
 class LiteralNewlineTest(unittest.TestCase):

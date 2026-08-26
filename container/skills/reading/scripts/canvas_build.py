@@ -16,6 +16,7 @@ import hashlib
 import json
 import math
 import os
+import re
 
 import manifest as manifest_mod
 
@@ -27,25 +28,39 @@ CARD_W = 340
 COL_GAP = 120
 COL_PITCH = CARD_W + COL_GAP        # 460
 SIB_GAP = 60
-GROUP_PAD = 40
-GROUP_GAP = 120
+CHAPTER_GAP = 480                   # whitespace between chapters (no group boxes)
+CLUSTER_GAP = 240                   # overview cluster -> first chapter
 
-SIDE_X = 0                          # overview group / legend / bin column, far left
+SIDE_X = 0                          # overview cluster / legend / bin column, far left
 SIDE_GAP = 60
-GROUP_GAP_X = 240                   # overview group -> first chapter group column
 
 OVERVIEW_IDX = manifest_mod.OVERVIEW_IDX
 OVERVIEW_LABEL = "Overview"
 ROOT_SLOT = "\x00root"              # the root card's slot in the overview tree
+HUB_SLOT = "\x00hub"                # the hub card's slot in a chapter's tree
 
-BASE_H = 140
-LINE_H = 22
-CHARS_PER_LINE = 42
+RIGHT = 1
+LEFT = -1
+
+# --- no-scroll sizing -----------------------------------------------------
+# A card must never need scrolling: the map is read at a glance, and a clipped
+# card is a silently lost claim.  Every constant here is deliberately
+# pessimistic — an over-tall card costs whitespace, a short one costs meaning.
+CHARS_PER_LINE = 34                 # at width 340, body text
+TITLE_CHARS_PER_LINE = 26           # headings render larger, so they wrap sooner
+TITLE_LINE_WEIGHT = 2               # ...and each heading line is ~2 body lines tall
+BASE_H = 48                         # padding and chrome
+LINE_H = 24
+SAFETY_MARGIN = 1.15
 H_MIN = 220
-H_MAX = 680
+H_MAX = 2400                        # tall enough for a legacy 1400-char body
 H_ROUND = 10
 
 UNASSIGNED = "unassigned"
+
+# A markdown link renders as its label, so measure the label, not the URL —
+# otherwise an armed card with a long cite URL balloons to nonsense.
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 
 # JSON Canvas preset colors: 1 red, 2 orange, 3 yellow, 4 green, 5 cyan, 6 purple.
 COLOR_ROOT = "5"
@@ -118,6 +133,14 @@ def group_edge_key(chapter_idx):
     return "edge:group:%s" % chapter_idx
 
 
+def hub_key(chapter_idx):
+    return "hub:%s" % chapter_idx
+
+
+def hub_edge_key(chapter_idx):
+    return "edge:hub:%s" % chapter_idx
+
+
 def known_ids(manifest):
     """Every node and edge id this manifest could own, pruned claims included.
 
@@ -125,13 +148,21 @@ def known_ids(manifest):
     an edge he drew — and is carried through untouched rather than deleted.
     """
     slug = manifest["slug"]
+    # group_* keys are no longer emitted — v2 uses hub cards — but they stay in
+    # the known set so that groups left over in an older canvas are recognised
+    # as ours rather than mistaken for cards JT added by hand.
     keys = ["root", "legend", "bin", group_key(OVERVIEW_IDX)]
     for chapter in manifest.get("chapters", []):
         idx = chapter.get("idx", 0)
         keys.append(group_key(idx))
         keys.append(group_edge_key(idx))
-    keys.append(group_key(UNASSIGNED))
-    keys.append(group_edge_key(UNASSIGNED))
+        keys.append(hub_key(idx))
+        keys.append(hub_edge_key(idx))
+    for idx in (UNASSIGNED, OVERVIEW_IDX):
+        keys.append(group_key(idx))
+        keys.append(group_edge_key(idx))
+        keys.append(hub_key(idx))
+        keys.append(hub_edge_key(idx))
     for claim in manifest.get("claims", []):
         keys.append(claim["id"])
         keys.append(edge_key(claim["id"]))
@@ -233,27 +264,43 @@ def card_text(claim):
     return source_section(claim) + jt_section(claim)
 
 
-def _plain(text):
-    """Strip the markdown furniture so sizing measures readable characters."""
-    out = []
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("# "):
-            stripped = stripped[2:]
-        elif stripped.startswith("- "):
-            stripped = stripped[2:]
-        elif stripped == "---":
-            stripped = ""
-        out.append(stripped)
-    return "\n".join(out)
+def estimate_lines(text):
+    """Rendered line count for a card, counted pessimistically.
+
+    Each paragraph wraps at CHARS_PER_LINE; a blank line still occupies one;
+    a heading wraps sooner and each of its lines is worth two body lines.
+    """
+    total = 0
+    for raw in (text or "").split("\n"):
+        line = _MD_LINK.sub(r"\1", raw.strip())
+        if not line:
+            total += 1
+            continue
+        if line.startswith("# "):
+            heading = line[2:].strip()
+            wrapped = max(1, int(math.ceil(len(heading) / float(TITLE_CHARS_PER_LINE))))
+            total += TITLE_LINE_WEIGHT * wrapped
+            continue
+        if line.startswith("- "):
+            line = line[2:]
+        total += max(1, int(math.ceil(len(line) / float(CHARS_PER_LINE))))
+    return total
+
+
+def estimate_height(text):
+    """Height a card needs so that nothing has to be scrolled, before clamping."""
+    raw = BASE_H + LINE_H * estimate_lines(text)
+    return int(math.ceil(raw * SAFETY_MARGIN))
 
 
 def card_height(text):
-    """Deterministic portrait-card height for a projected card text."""
-    chars = len(_plain(text))
-    height = BASE_H + LINE_H * int(math.ceil(chars / float(CHARS_PER_LINE)))
-    height = max(H_MIN, min(H_MAX, height))
-    return ((height + H_ROUND // 2) // H_ROUND) * H_ROUND
+    """Deterministic portrait-card height for a projected card text.
+
+    Rounds UP to the grid so the result is never below the estimate — that is
+    what lets the validator use the same maths without false positives.
+    """
+    height = max(H_MIN, min(H_MAX, estimate_height(text)))
+    return ((height + H_ROUND - 1) // H_ROUND) * H_ROUND
 
 
 def card_color(claim):
@@ -266,14 +313,36 @@ def card_color(claim):
 # --------------------------------------------------------------------------
 
 EDITABLE_FURNITURE = manifest_mod.EDITABLE_FURNITURE
+is_editable_furniture = manifest_mod.is_editable_furniture
 
 
 def furniture_override(manifest, key):
     """JT's own wording for a furniture card, if he has rewritten it."""
-    if key not in EDITABLE_FURNITURE:
+    if not is_editable_furniture(key):
         return None
     value = (manifest.get("jt_furniture") or {}).get(key)
     return value if isinstance(value, str) else None
+
+
+def chapter_by_idx(manifest):
+    return dict((c.get("idx"), c) for c in manifest.get("chapters", []))
+
+
+def hub_text(manifest, chapter_idx, label, chapter=None):
+    """A chapter's hub card: its title, plus a gloss when the manifest has one.
+
+    The hub is presentational — it names the chapter and anchors its branches.
+    JT may rewrite it, and his wording then persists like the root and legend.
+    """
+    override = furniture_override(manifest, hub_key(chapter_idx))
+    if override is not None:
+        return override
+    lines = ["# " + (label or "")]
+    gloss = (chapter or {}).get("gloss")
+    if gloss:
+        lines.append("")
+        lines.append(gloss)
+    return "\n".join(lines)
 
 
 def legend_text(manifest):
@@ -411,6 +480,93 @@ def _spans(roots, children, heights):
     return spans
 
 
+def _balance_sides(roots, spans):
+    """Split top-level branches between right and left, largest first.
+
+    Each branch goes to whichever side is currently lighter, measured in
+    vertical span, so the two wings finish roughly the same height instead of
+    one long tail.  Ties break on order then id, so the split is deterministic.
+    """
+    ordered = sorted(
+        roots, key=lambda c: (-spans[c["id"]], c.get("order", 0), c["id"])
+    )
+    sides = {RIGHT: [], LEFT: []}
+    weight = {RIGHT: 0, LEFT: 0}
+    for claim in ordered:
+        side = RIGHT if weight[RIGHT] <= weight[LEFT] else LEFT
+        sides[side].append(claim)
+        weight[side] += spans[claim["id"]] + SIB_GAP
+    order_key = lambda c: (c.get("order", 0), c["id"])
+    return sorted(sides[RIGHT], key=order_key), sorted(sides[LEFT], key=order_key)
+
+
+def _stack_height(branches, spans):
+    if not branches:
+        return 0
+    return (sum(spans[c["id"]] for c in branches)
+            + SIB_GAP * (len(branches) - 1))
+
+
+def _layout_chapter(hub_height, roots, children, heights):
+    """Bilateral radial layout: the hub in the middle, branches either side.
+
+    Right-hand branches grow rightward exactly as before; left-hand branches
+    mirror them, with columns at decreasing x.  Because the two wings occupy
+    disjoint column ranges and each branch owns a disjoint vertical band,
+    nothing can overlap.
+    """
+    spans = _spans(roots, children, heights)
+    right, left = _balance_sides(roots, spans)
+    right_h = _stack_height(right, spans)
+    left_h = _stack_height(left, spans)
+    content_h = max(hub_height, right_h, left_h)
+
+    positions = {}
+    sides = {}
+    order = []
+
+    def place(claim, depth, top, side):
+        claim_id = claim["id"]
+        span = spans[claim_id]
+        own = heights[claim_id]
+        column = (depth + 1) * COL_PITCH
+        positions[claim_id] = (column if side == RIGHT else -column,
+                               top + (span - own) // 2)
+        sides[claim_id] = side
+        order.append(claim_id)
+        kids = children.get(claim_id, [])
+        if kids:
+            kids_span = sum(spans[k["id"]] for k in kids) + SIB_GAP * (len(kids) - 1)
+            cursor = top + (span - kids_span) // 2
+            for kid in kids:
+                place(kid, depth + 1, cursor, side)
+                cursor += spans[kid["id"]] + SIB_GAP
+
+    for branches, side, stack in ((right, RIGHT, right_h), (left, LEFT, left_h)):
+        cursor = (content_h - stack) // 2
+        for claim in branches:
+            place(claim, 0, cursor, side)
+            cursor += spans[claim["id"]] + SIB_GAP
+
+    positions[HUB_SLOT] = (0, (content_h - hub_height) // 2)
+
+    # Normalise so the chapter's own extent starts at x = 0.
+    left_edge = min(x for x, _y in positions.values())
+    right_edge = max(x + CARD_W for x, _y in positions.values())
+    if left_edge:
+        positions = dict(
+            (key, (x - left_edge, y)) for key, (x, y) in positions.items()
+        )
+    return {
+        "positions": positions,
+        "sides": sides,
+        "order": order,
+        "top_level": [c["id"] for c in right] + [c["id"] for c in left],
+        "content_w": right_edge - left_edge,
+        "content_h": content_h,
+    }
+
+
 def _layout_bucket(roots, children, heights, spans):
     """Place one chapter's forest in local coordinates starting at (0, 0)."""
     positions = {}
@@ -472,13 +628,14 @@ def _group_node(node_ident, label, x, y, width, height):
     }
 
 
-def _edge(edge_ident, from_node, to_node, label=None):
+def _edge(edge_ident, from_node, to_node, label=None, side=RIGHT):
+    """A parent -> child edge.  A left-wing edge is the mirror of a right one."""
     edge = {
         "id": edge_ident,
         "fromNode": from_node,
-        "fromSide": "right",
+        "fromSide": "right" if side == RIGHT else "left",
         "toNode": to_node,
-        "toSide": "left",
+        "toSide": "left" if side == RIGHT else "right",
         "toEnd": "arrow",
     }
     if label:
@@ -558,52 +715,54 @@ def build_canvas(manifest, existing=None):
     o_positions, o_order, o_content_w, o_content_h, o_top_level = _overview_layout(
         overview_claims, live_ids, heights, r_h
     )
-    overview_w = o_content_w + 2 * GROUP_PAD
-    overview_h = o_content_h + 2 * GROUP_PAD
-    chapter_x = SIDE_X + overview_w + GROUP_GAP_X
+    overview_w = o_content_w
+    overview_h = o_content_h
+    chapter_x = SIDE_X + overview_w + CLUSTER_GAP
 
-    # Chapter groups sit on a horizontal shelf: top-aligned at y = 0, advancing
-    # left to right in chapter order.  Stacking them vertically instead makes a
-    # book-scale map absurdly tall — 987 claims over 15 chapters measured 1:112,
-    # unreadable at fit-to-view — whereas a shelf keeps the aspect workable and
-    # matches the left-to-right reading direction the tree already uses.
-    groups = []
+    # Chapters sit on a horizontal shelf, top-aligned at y = 0 and advancing
+    # left to right in book order.  Stacking them vertically made a book-scale
+    # map 1:112 and unreadable at fit-to-view.  Within a chapter the branches
+    # fan out both sides of a hub card, which halves the width a chapter needs
+    # and keeps the whole map close to a screen's aspect.  Whitespace separates
+    # chapters — there are no group boxes.
+    chapter_by = chapter_by_idx(manifest)
+    hubs = []
     placed = {}          # claim id -> (x, y)
     chapter_order = []
+    sides = {}
     cursor_x = chapter_x
     tallest = 0
     for key in keys:
         bucket_claims = buckets[key]
         bucket_ids = set(c["id"] for c in bucket_claims)
         roots, children = _forest(bucket_claims, live_ids, bucket_ids)
-        spans = _spans(roots, children, heights)
-        positions, order, content_w, content_h = _layout_bucket(
-            roots, children, heights, spans
-        )
-        group_w = content_w + 2 * GROUP_PAD
-        group_h = content_h + 2 * GROUP_PAD
-        offset_x = cursor_x + GROUP_PAD
-        offset_y = GROUP_PAD
-        for claim_id, (x, y) in positions.items():
-            placed[claim_id] = (x + offset_x, y + offset_y)
-        chapter_order.extend(order)
-        groups.append({
+        h_text = hub_text(manifest, key, labels.get(key, str(key)), chapter_by.get(key))
+        h_h = card_height(h_text)
+        layout = _layout_chapter(h_h, roots, children, heights)
+        for claim_id, (x, y) in layout["positions"].items():
+            if claim_id == HUB_SLOT:
+                continue
+            placed[claim_id] = (x + cursor_x, y)
+        hub_x, hub_y = layout["positions"][HUB_SLOT]
+        hubs.append({
             "key": key,
-            "label": labels.get(key, str(key)),
-            "x": cursor_x,
-            "y": 0,
-            "width": group_w,
-            "height": group_h,
+            "text": h_text,
+            "x": hub_x + cursor_x,
+            "y": hub_y,
+            "height": h_h,
+            "top_level": layout["top_level"],
         })
-        cursor_x += group_w + GROUP_GAP
-        tallest = max(tallest, group_h)
+        sides.update(layout["sides"])
+        chapter_order.extend(layout["order"])
+        cursor_x += layout["content_w"] + CHAPTER_GAP
+        tallest = max(tallest, layout["content_h"])
 
     map_height = tallest
 
-    # --- far-left column: Overview group, then legend, then bin -----------
+    # --- far-left cluster: root + overview claims, then legend, then bin ---
     overview_y = (map_height - overview_h) // 2
-    o_offset_x = SIDE_X + GROUP_PAD
-    o_offset_y = overview_y + GROUP_PAD
+    o_offset_x = SIDE_X
+    o_offset_y = overview_y
     for claim_id, (x, y) in o_positions.items():
         if claim_id == ROOT_SLOT:
             continue
@@ -619,16 +778,6 @@ def build_canvas(manifest, existing=None):
     card_order = list(o_order) + chapter_order
 
     nodes = []
-    nodes.append(_group_node(
-        node_id(slug, group_key(OVERVIEW_IDX)), OVERVIEW_LABEL,
-        SIDE_X, overview_y, overview_w, overview_h,
-    ))
-    for group in groups:
-        nodes.append(_group_node(
-            node_id(slug, group_key(group["key"])),
-            group["label"], group["x"], group["y"], group["width"], group["height"],
-        ))
-
     root_ident = node_id(slug, "root")
     nodes.append(_text_node(root_ident, r_text, root_x, root_y, CARD_W, r_h, COLOR_ROOT))
     nodes.append(_text_node(
@@ -642,6 +791,12 @@ def build_canvas(manifest, existing=None):
             node_id(slug, "bin"), b_text, SIDE_X, b_y, CARD_W, b_h, COLOR_BIN
         ))
 
+    for hub in hubs:
+        nodes.append(_text_node(
+            node_id(slug, hub_key(hub["key"])), hub["text"],
+            hub["x"], hub["y"], CARD_W, hub["height"],
+        ))
+
     by_id = manifest_mod.claims_by_id(manifest)
     for claim_id in card_order:
         claim = by_id[claim_id]
@@ -653,12 +808,16 @@ def build_canvas(manifest, existing=None):
 
     # --- edges ------------------------------------------------------------
     edges = []
-    for group in groups:
+    hub_of = {}
+    for hub in hubs:
         edges.append(_edge(
-            node_id(slug, group_edge_key(group["key"])),
+            node_id(slug, hub_edge_key(hub["key"])),
             root_ident,
-            node_id(slug, group_key(group["key"])),
+            node_id(slug, hub_key(hub["key"])),
         ))
+        for claim_id in hub["top_level"]:
+            hub_of[claim_id] = node_id(slug, hub_key(hub["key"]))
+
     top_level_overview = set(c["id"] for c in o_top_level)
     for claim_id in card_order:
         claim = by_id[claim_id]
@@ -666,8 +825,10 @@ def build_canvas(manifest, existing=None):
         if claim_id in top_level_overview:
             # an overview claim hangs directly off the root card
             from_node = root_ident
+        elif claim_id in hub_of:
+            # a chapter's top-level claim hangs off that chapter's hub card
+            from_node = hub_of[claim_id]
         elif parent == "root" or parent not in live_ids:
-            # a chapter claim's top level hangs off its group, which root feeds
             continue
         else:
             from_node = claim_node_id(slug, parent)
@@ -676,6 +837,7 @@ def build_canvas(manifest, existing=None):
             from_node,
             claim_node_id(slug, claim_id),
             _rel_label(claim),
+            sides.get(claim_id, RIGHT),
         ))
 
     canvas = {"nodes": nodes, "edges": edges}
@@ -687,19 +849,25 @@ def build_canvas(manifest, existing=None):
 
 
 def furniture_text(manifest):
-    """The three furniture cards as they would be projected right now.
+    """Every furniture card as it would be projected right now.
 
     Cheaper than a full build, and it already reflects any wording of JT's that
     has been folded in, so comparing a canvas against it is idempotent.
     """
     claims = manifest_mod.live_claims(manifest)
     chapter_claims = [c for c in claims if not manifest_mod.is_overview(c)]
-    keys, _labels, _buckets = _chapter_buckets(manifest, chapter_claims)
-    return {
+    keys, labels, _buckets = _chapter_buckets(manifest, chapter_claims)
+    chapter_by = chapter_by_idx(manifest)
+    out = {
         "root": root_text(manifest, len(claims), len(keys)),
         "legend": legend_text(manifest),
         "bin": bin_text(manifest),
     }
+    for key in keys:
+        out[hub_key(key)] = hub_text(
+            manifest, key, labels.get(key, str(key)), chapter_by.get(key)
+        )
+    return out
 
 
 def jt_geometry_ids(manifest, existing):

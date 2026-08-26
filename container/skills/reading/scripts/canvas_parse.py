@@ -298,7 +298,7 @@ def parse_overlay(manifest, canvas_dict):
     # in full instead, so nothing he wrote is lost.
     furniture = cb.furniture_text(manifest)
     furniture_nodes = dict(
-        (cb.node_id(slug, key), key) for key in ("root", "legend", "bin")
+        (cb.node_id(slug, key), key) for key in furniture
     )
 
     for ident, node in by_node.items():
@@ -437,6 +437,6 @@ def apply_overlay(manifest, overlay):
     if edits:
         furniture = manifest.setdefault("jt_furniture", {})
         for key, text in edits.items():
-            if key in cb.EDITABLE_FURNITURE:
+            if cb.is_editable_furniture(key):
                 furniture[key] = text
     return manifest

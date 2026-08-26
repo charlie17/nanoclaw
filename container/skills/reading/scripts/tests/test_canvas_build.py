@@ -64,6 +64,105 @@ def small_manifest(with_unmatched=False, with_overview=False):
     return m
 
 
+def branching_manifest():
+    """One chapter with six top-level branches of varied weight, depth 3.
+
+    Enough branches for the balancer to have real work to do.
+    """
+    m = M.new_manifest(
+        "branching", {"title": "Branching", "author": "A. Writer"},
+        [{"idx": 0, "title": "The Only Chapter", "block_start": 0, "block_end": 200}],
+    )
+    claims = []
+    counter = 0
+    for branch in range(6):
+        counter += 1
+        root_id = "c-%04d" % counter
+        claims.append(M.new_claim(
+            root_id, "Branch %d" % branch, 0, "root", branch,
+            locator="Ch 1 §%d" % branch, block_range=[branch * 10, branch * 10 + 1],
+            anchor_block=branch * 10, anchor_phrase="anchor %d" % branch,
+            body_md=LOREM[:120 + branch * 40]))
+        # varied subtree weight so balancing is not trivially symmetric
+        for child in range(1 + branch % 3):
+            counter += 1
+            child_id = "c-%04d" % counter
+            claims.append(M.new_claim(
+                child_id, "Branch %d child %d" % (branch, child), 0, root_id, child,
+                locator="Ch 1 §%d.%d" % (branch, child),
+                block_range=[branch * 10 + child + 1, branch * 10 + child + 2],
+                anchor_block=branch * 10 + child + 1, anchor_phrase="a",
+                body_md=LOREM[:150]))
+            for grand in range(branch % 2):
+                counter += 1
+                claims.append(M.new_claim(
+                    "c-%04d" % counter, "Branch %d leaf %d" % (branch, grand),
+                    0, child_id, grand,
+                    locator="Ch 1 §%d.%d.%d" % (branch, child, grand),
+                    block_range=[branch * 10 + child + 3, branch * 10 + child + 4],
+                    anchor_block=branch * 10 + child + 3, anchor_phrase="b",
+                    body_md=LOREM[:130]))
+    m["claims"] = claims
+    M.validate(m)
+    return m
+
+
+def nodes_by_id(canvas):
+    return dict((n["id"], n) for n in canvas["nodes"])
+
+
+def chapter_extents(m, canvas):
+    """Per-chapter bounding boxes, derived from the hub and its member cards.
+
+    v2 emits no group boxes — whitespace separates chapters — so a chapter's
+    extent has to be measured from the cards that belong to it.
+    """
+    by_id = nodes_by_id(canvas)
+    slug = m["slug"]
+    out = []
+    for chapter in sorted(m["chapters"], key=lambda c: c["idx"]):
+        idx = chapter["idx"]
+        hub = by_id.get(cb.node_id(slug, cb.hub_key(idx)))
+        if hub is None:
+            continue
+        members = [hub]
+        for claim in m["claims"]:
+            if claim["chapter_idx"] == idx and not claim["jt"]["pruned"]:
+                node = by_id.get(cb.claim_node_id(slug, claim["id"]))
+                if node is not None:
+                    members.append(node)
+        out.append({
+            "idx": idx,
+            "label": chapter["title"],
+            "hub": hub,
+            "members": members,
+            "x0": min(n["x"] for n in members),
+            "x1": max(n["x"] + n["width"] for n in members),
+            "y0": min(n["y"] for n in members),
+            "y1": max(n["y"] + n["height"] for n in members),
+        })
+    return out
+
+
+def overview_extent(m, canvas):
+    """Bounding box of the far-left cluster: root card plus overview claims."""
+    by_id = nodes_by_id(canvas)
+    slug = m["slug"]
+    members = [by_id[cb.node_id(slug, "root")]]
+    for claim in m["claims"]:
+        if claim["chapter_idx"] == -1 and not claim["jt"]["pruned"]:
+            node = by_id.get(cb.claim_node_id(slug, claim["id"]))
+            if node is not None:
+                members.append(node)
+    return {
+        "members": members,
+        "x0": min(n["x"] for n in members),
+        "x1": max(n["x"] + n["width"] for n in members),
+        "y0": min(n["y"] for n in members),
+        "y1": max(n["y"] + n["height"] for n in members),
+    }
+
+
 def big_manifest(claim_count=60, chapters=3):
     """3 overview cards + 3 chapters, depth 3, varied bodies — the stress case."""
     m = M.new_manifest(
@@ -136,13 +235,13 @@ class DeterminismTest(unittest.TestCase):
         ids = [n["id"] for n in canvas["nodes"]]
         self.assertIn(cb.node_id(SLUG, "root"), ids)
         self.assertIn(cb.node_id(SLUG, "legend"), ids)
-        self.assertIn(cb.node_id(SLUG, "group:0"), ids)
+        self.assertIn(cb.node_id(SLUG, "hub:0"), ids)
         self.assertIn(cb.node_id(SLUG, "c-0002"), ids)
         for ident in ids:
             self.assertEqual(len(ident), 16)
         edge_ids = [e["id"] for e in canvas["edges"]]
         self.assertIn(cb.node_id(SLUG, "edge:c-0002"), edge_ids)
-        self.assertIn(cb.node_id(SLUG, "edge:group:0"), edge_ids)
+        self.assertIn(cb.node_id(SLUG, "edge:hub:0"), edge_ids)
 
     def test_no_literal_backslash_n_in_written_json(self):
         directory = tempfile.mkdtemp(prefix="dsr-nl-")
@@ -154,9 +253,9 @@ class DeterminismTest(unittest.TestCase):
         for node in data["nodes"]:
             self.assertNotIn("\\n", node.get("text", ""))
             self.assertNotIn("\\n", node.get("label", ""))
-            if node["type"] == "text":
-                # real newlines survived the JSON round trip
-                self.assertIn("\n", node["text"])
+        # real newlines survived the JSON round trip on a multi-line card
+        root = [n for n in data["nodes"] if n["id"] == cb.node_id(SLUG, "root")][0]
+        self.assertIn("\n", root["text"])
 
 
 class GeometryKeepingTest(unittest.TestCase):
@@ -429,10 +528,11 @@ class LayoutTest(unittest.TestCase):
         overlaps = [v for v in violations if v.startswith("overlap:")]
         self.assertEqual(overlaps, [])
         cards = [n for n in canvas["nodes"] if n["type"] == "text"]
-        self.assertEqual(len(cards), 63 + 2)  # + root + legend, no bin
-        groups = [n for n in canvas["nodes"] if n["type"] == "group"]
-        self.assertEqual([g["label"] for g in groups],
-                         ["Overview", "Chapter 1", "Chapter 2", "Chapter 3"])
+        # 63 claims + root + legend + one hub per chapter, no bin, no groups
+        self.assertEqual(len(cards), 63 + 2 + 3)
+        self.assertEqual([n for n in canvas["nodes"] if n["type"] == "group"], [])
+        self.assertEqual([c["label"] for c in chapter_extents(m, canvas)],
+                         ["Chapter 1", "Chapter 2", "Chapter 3"])
 
     def test_tree_depth_maps_to_x_columns(self):
         m = small_manifest()
@@ -456,33 +556,32 @@ class LayoutTest(unittest.TestCase):
         parent_mid = parent["y"] + parent["height"] / 2.0
         self.assertLessEqual(abs(span_mid - parent_mid), 1.0)
 
-    def test_groups_come_first_and_carry_chapter_titles(self):
+    def test_every_node_is_a_card_and_chapters_are_named_by_hubs(self):
         m = small_manifest()
         canvas = cb.build_canvas(m)
-        types = [n["type"] for n in canvas["nodes"]]
-        self.assertEqual(types[:3], ["group", "group", "group"])
-        self.assertNotIn("group", types[3:])
-        labels = [n["label"] for n in canvas["nodes"] if n["type"] == "group"]
-        self.assertEqual(labels, ["Overview", "Ch 1 — Cash Flow", "Ch 2 — Taxes"])
+        self.assertEqual(set(n["type"] for n in canvas["nodes"]), {"text"})
+        by_id = nodes_by_id(canvas)
+        self.assertEqual(by_id[cb.node_id(SLUG, cb.hub_key(0))]["text"],
+                         "# Ch 1 — Cash Flow")
+        self.assertEqual(by_id[cb.node_id(SLUG, cb.hub_key(1))]["text"],
+                         "# Ch 2 — Taxes")
 
-    def test_cards_sit_inside_their_chapter_group(self):
+    def test_each_card_falls_in_exactly_one_chapter_band(self):
         m = big_manifest()
         canvas = cb.build_canvas(m)
-        groups = [n for n in canvas["nodes"] if n["type"] == "group"]
-        cards = [n for n in canvas["nodes"] if n["type"] == "text"]
-        # every card belongs to exactly one group — the root card included,
-        # since it lives in the Overview group.  Only legend and bin sit loose.
-        side_ids = {cb.node_id(m["slug"], "legend"), cb.node_id(m["slug"], "bin")}
-        for card in cards:
-            if card["id"] in side_ids:
+        chapters = chapter_extents(m, canvas)
+        loose = {cb.node_id(m["slug"], "legend"), cb.node_id(m["slug"], "bin"),
+                 cb.node_id(m["slug"], "root")}
+        overview_ids = set(cb.claim_node_id(m["slug"], c["id"])
+                           for c in m["claims"] if c["chapter_idx"] == -1)
+        for card in canvas["nodes"]:
+            if card["id"] in loose or card["id"] in overview_ids:
                 continue
-            inside = [
-                g for g in groups
-                if g["x"] <= card["x"] and g["y"] <= card["y"]
-                and card["x"] + card["width"] <= g["x"] + g["width"]
-                and card["y"] + card["height"] <= g["y"] + g["height"]
-            ]
-            self.assertEqual(len(inside), 1, "card %s is in %d groups" % (card["id"], len(inside)))
+            bands = [c for c in chapters
+                     if c["x0"] <= card["x"] and card["x"] + card["width"] <= c["x1"]]
+            self.assertEqual(len(bands), 1,
+                             "card %s falls in %d chapter bands"
+                             % (card["id"], len(bands)))
 
     def test_card_heights_are_clamped_and_rounded(self):
         m = big_manifest()
@@ -495,65 +594,53 @@ class LayoutTest(unittest.TestCase):
             self.assertLessEqual(node["height"], cb.H_MAX)
             self.assertEqual(node["height"] % 10, 0)
 
-    def test_overview_group_is_far_left_and_vertically_centred(self):
+    def test_overview_cluster_is_far_left_and_vertically_centred(self):
         m = small_manifest()
         canvas = cb.build_canvas(m)
-        by_id = {n["id"]: n for n in canvas["nodes"]}
-        overview = by_id[cb.node_id(SLUG, "group:-1")]
+        by_id = nodes_by_id(canvas)
         root = by_id[cb.node_id(SLUG, "root")]
         legend = by_id[cb.node_id(SLUG, "legend")]
+        overview = overview_extent(m, canvas)
 
-        self.assertEqual(overview["x"], cb.SIDE_X)
-        self.assertEqual(overview["label"], "Overview")
-        # the root card lives inside the Overview group
-        self.assertEqual(root["x"], cb.SIDE_X + cb.GROUP_PAD)
-        self.assertGreaterEqual(root["y"], overview["y"])
-        self.assertLessEqual(root["y"] + root["height"], overview["y"] + overview["height"])
-        # legend sits below the group, outside it
+        self.assertEqual(root["x"], cb.SIDE_X)
         self.assertEqual(legend["x"], cb.SIDE_X)
-        self.assertEqual(legend["y"], overview["y"] + overview["height"] + cb.SIDE_GAP)
+        self.assertEqual(legend["y"], overview["y1"] + cb.SIDE_GAP)
 
-        chapters = [n for n in canvas["nodes"]
-                    if n["type"] == "group" and n["id"] != overview["id"]]
-        for group in chapters:
-            self.assertGreaterEqual(group["x"], overview["x"] + overview["width"])
-        top = min(g["y"] for g in chapters)
-        bottom = max(g["y"] + g["height"] for g in chapters)
-        overview_mid = overview["y"] + overview["height"] / 2.0
-        self.assertLessEqual(abs(overview_mid - (top + bottom) / 2.0), 1.0)
+        chapters = chapter_extents(m, canvas)
+        for chapter in chapters:
+            self.assertGreaterEqual(chapter["x0"], overview["x1"])
+        tallest = max(c["y1"] for c in chapters)
+        middle = (overview["y0"] + overview["y1"]) / 2.0
+        self.assertLessEqual(abs(middle - tallest / 2.0), 2.0)
 
 
 class OverviewTest(unittest.TestCase):
-    def test_overview_group_renders_with_only_the_root_card(self):
+    def test_overview_cluster_is_just_the_root_card_when_empty(self):
         m = small_manifest()
         self.assertEqual([c for c in m["claims"] if c["chapter_idx"] == -1], [])
         canvas = cb.build_canvas(m)
-        by_id = {n["id"]: n for n in canvas["nodes"]}
-        overview = by_id[cb.node_id(SLUG, "group:-1")]
-        root = by_id[cb.node_id(SLUG, "root")]
-        self.assertEqual(overview["width"], cb.CARD_W + 2 * cb.GROUP_PAD)
-        self.assertEqual(overview["height"], root["height"] + 2 * cb.GROUP_PAD)
+        overview = overview_extent(m, canvas)
+        root = nodes_by_id(canvas)[cb.node_id(SLUG, "root")]
+        self.assertEqual(overview["members"], [root])
+        self.assertEqual(overview["x1"] - overview["x0"], cb.CARD_W)
         self.assertEqual(validate_canvas(canvas), [])
 
-    def test_overview_claims_sit_in_the_overview_group(self):
+    def test_overview_claims_sit_one_column_right_of_root(self):
         m = small_manifest(with_overview=True)
         canvas = cb.build_canvas(m)
-        by_id = {n["id"]: n for n in canvas["nodes"]}
-        overview = by_id[cb.node_id(SLUG, "group:-1")]
+        by_id = nodes_by_id(canvas)
         root = by_id[cb.node_id(SLUG, "root")]
+        overview = overview_extent(m, canvas)
+        first = chapter_extents(m, canvas)[0]
         for claim_id in ("o-0001", "o-0002", "o-0003"):
             node = by_id[cb.node_id(SLUG, claim_id)]
-            self.assertGreaterEqual(node["x"], overview["x"])
-            self.assertLessEqual(node["x"] + node["width"],
-                                 overview["x"] + overview["width"])
-            self.assertGreaterEqual(node["y"], overview["y"])
-            self.assertLessEqual(node["y"] + node["height"],
-                                 overview["y"] + overview["height"])
-            # one column to the right of the root card
             self.assertEqual(node["x"] - root["x"], cb.COL_PITCH)
+            self.assertLessEqual(node["x"] + node["width"], overview["x1"])
+        # the whole cluster still clears the first chapter
+        self.assertGreaterEqual(first["x0"], overview["x1"])
         self.assertEqual(validate_canvas(canvas), [])
 
-    def test_root_edges_to_every_overview_claim_and_every_chapter_group(self):
+    def test_root_edges_to_every_overview_claim_and_every_hub(self):
         m = small_manifest(with_overview=True)
         canvas = cb.build_canvas(m)
         root = cb.node_id(SLUG, "root")
@@ -562,8 +649,8 @@ class OverviewTest(unittest.TestCase):
             cb.node_id(SLUG, "o-0001"),
             cb.node_id(SLUG, "o-0002"),
             cb.node_id(SLUG, "o-0003"),
-            cb.node_id(SLUG, "group:0"),
-            cb.node_id(SLUG, "group:1"),
+            cb.node_id(SLUG, "hub:0"),
+            cb.node_id(SLUG, "hub:1"),
         })
 
     def test_overview_claims_may_nest(self):
@@ -583,8 +670,9 @@ class OverviewTest(unittest.TestCase):
     def test_chapter_column_shifts_right_of_a_wide_overview(self):
         narrow = cb.build_canvas(small_manifest())
         wide = cb.build_canvas(small_manifest(with_overview=True))
-        narrow_x = [n for n in narrow["nodes"] if n["id"] == cb.node_id(SLUG, "group:0")][0]["x"]
-        wide_x = [n for n in wide["nodes"] if n["id"] == cb.node_id(SLUG, "group:0")][0]["x"]
+        hub = cb.node_id(SLUG, "hub:0")
+        narrow_x = [n for n in narrow["nodes"] if n["id"] == hub][0]["x"]
+        wide_x = [n for n in wide["nodes"] if n["id"] == hub][0]["x"]
         self.assertEqual(wide_x - narrow_x, cb.COL_PITCH)
 
     def test_overview_claim_needs_no_block_range_or_cite(self):
@@ -668,61 +756,179 @@ class ShelfLayoutTest(unittest.TestCase):
     Stacking made a book-scale map ~1:112 and unusable at fit-to-view.
     """
 
-    @staticmethod
-    def chapter_groups(canvas, slug=SLUG):
-        overview = cb.node_id(slug, "group:-1")
-        return [n for n in canvas["nodes"]
-                if n["type"] == "group" and n["id"] != overview]
-
-    def test_all_chapter_groups_are_top_aligned_at_zero(self):
+    def test_no_group_nodes_are_emitted_at_all(self):
         for m in (small_manifest(), small_manifest(with_overview=True), big_manifest()):
             canvas = cb.build_canvas(m)
-            groups = self.chapter_groups(canvas, m["slug"])
-            self.assertTrue(groups)
-            for group in groups:
-                self.assertEqual(group["y"], 0, "group %r is not top-aligned"
-                                 % group["label"])
+            self.assertEqual([n for n in canvas["nodes"] if n["type"] == "group"], [])
 
-    def test_chapter_groups_run_strictly_left_to_right_without_overlap(self):
+    def test_every_chapter_is_top_aligned_at_zero(self):
+        for m in (small_manifest(), small_manifest(with_overview=True), big_manifest()):
+            canvas = cb.build_canvas(m)
+            chapters = chapter_extents(m, canvas)
+            self.assertTrue(chapters)
+            for chapter in chapters:
+                self.assertEqual(chapter["y0"], 0,
+                                 "chapter %r is not top-aligned" % chapter["label"])
+
+    def test_chapters_run_strictly_left_to_right_without_overlap(self):
         m = big_manifest()
-        groups = self.chapter_groups(cb.build_canvas(m), m["slug"])
-        self.assertEqual([g["label"] for g in groups],
+        chapters = chapter_extents(m, cb.build_canvas(m))
+        self.assertEqual([c["label"] for c in chapters],
                          ["Chapter 1", "Chapter 2", "Chapter 3"])
-        for earlier, later in zip(groups, groups[1:]):
+        for earlier, later in zip(chapters, chapters[1:]):
             self.assertGreaterEqual(
-                later["x"], earlier["x"] + earlier["width"],
+                later["x0"], earlier["x1"],
                 "%r overlaps %r in x" % (later["label"], earlier["label"]))
-            self.assertEqual(later["x"] - (earlier["x"] + earlier["width"]),
-                             cb.GROUP_GAP)
+            self.assertGreaterEqual(later["x0"] - earlier["x1"], cb.CHAPTER_GAP)
 
-    def test_overview_group_precedes_the_first_chapter_group(self):
+    def test_overview_cluster_precedes_the_first_chapter(self):
         m = small_manifest(with_overview=True)
         canvas = cb.build_canvas(m)
-        overview = [n for n in canvas["nodes"]
-                    if n["id"] == cb.node_id(SLUG, "group:-1")][0]
-        first = self.chapter_groups(canvas)[0]
-        self.assertGreaterEqual(first["x"], overview["x"] + overview["width"])
+        overview = overview_extent(m, canvas)
+        first = chapter_extents(m, canvas)[0]
+        self.assertGreaterEqual(first["x0"], overview["x1"])
 
-    def test_overview_is_centred_against_the_tallest_chapter_group(self):
+    def test_overview_is_centred_against_the_tallest_chapter(self):
         m = big_manifest()
         canvas = cb.build_canvas(m)
-        overview = [n for n in canvas["nodes"]
-                    if n["id"] == cb.node_id(m["slug"], "group:-1")][0]
-        tallest = max(g["height"] for g in self.chapter_groups(canvas, m["slug"]))
-        self.assertLessEqual(
-            abs((overview["y"] + overview["height"] / 2.0) - tallest / 2.0), 1.0)
+        overview = overview_extent(m, canvas)
+        tallest = max(c["y1"] for c in chapter_extents(m, canvas))
+        middle = (overview["y0"] + overview["y1"]) / 2.0
+        self.assertLessEqual(abs(middle - tallest / 2.0), 2.0)
 
-    def test_legend_and_bin_stay_below_the_overview_group(self):
+    def test_legend_and_bin_stay_below_the_overview_cluster(self):
         m = small_manifest(with_unmatched=True, with_overview=True)
         canvas = cb.build_canvas(m)
-        by_id = {n["id"]: n for n in canvas["nodes"]}
-        overview = by_id[cb.node_id(SLUG, "group:-1")]
+        by_id = nodes_by_id(canvas)
+        overview = overview_extent(m, canvas)
         legend = by_id[cb.node_id(SLUG, "legend")]
         bin_node = by_id[cb.node_id(SLUG, "bin")]
-        self.assertEqual(legend["y"], overview["y"] + overview["height"] + cb.SIDE_GAP)
+        self.assertEqual(legend["y"], overview["y1"] + cb.SIDE_GAP)
         self.assertEqual(bin_node["y"], legend["y"] + legend["height"] + cb.SIDE_GAP)
         self.assertEqual(legend["x"], cb.SIDE_X)
         self.assertEqual(bin_node["x"], cb.SIDE_X)
+
+    def test_hub_card_per_chapter_carrying_its_title(self):
+        m = small_manifest()
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        for idx, title in ((0, "Ch 1 — Cash Flow"), (1, "Ch 2 — Taxes")):
+            hub = by_id[cb.node_id(SLUG, cb.hub_key(idx))]
+            self.assertEqual(hub["type"], "text")
+            self.assertEqual(hub["text"], "# " + title)
+            self.assertNotIn("color", hub, "a hub card is presentational, not stance")
+
+    def test_hub_gloss_is_rendered_when_the_chapter_has_one(self):
+        m = small_manifest()
+        m["chapters"][0]["gloss"] = "Why the paycheque, not the portfolio, comes first."
+        M.validate(m)
+        canvas = cb.build_canvas(m)
+        hub = nodes_by_id(canvas)[cb.node_id(SLUG, cb.hub_key(0))]
+        self.assertEqual(
+            hub["text"],
+            "# Ch 1 — Cash Flow\n\nWhy the paycheque, not the portfolio, comes first.")
+        self.assertEqual(validate_canvas(canvas), [])
+
+    def test_root_edges_to_hubs_and_hubs_edge_to_top_level_claims(self):
+        m = small_manifest()
+        canvas = cb.build_canvas(m)
+        root = cb.node_id(SLUG, "root")
+        hub0 = cb.node_id(SLUG, cb.hub_key(0))
+        hub1 = cb.node_id(SLUG, cb.hub_key(1))
+        from_root = set(e["toNode"] for e in canvas["edges"] if e["fromNode"] == root)
+        self.assertEqual(from_root, {hub0, hub1})
+        from_hub0 = set(e["toNode"] for e in canvas["edges"] if e["fromNode"] == hub0)
+        self.assertEqual(from_hub0, {cb.claim_node_id(SLUG, "c-0001")})
+        edge = [e for e in canvas["edges"]
+                if e["id"] == cb.node_id(SLUG, "edge:c-0001")][0]
+        self.assertEqual(edge["fromNode"], hub0)
+
+    def test_hub_edges_carry_rel_labels(self):
+        m = small_manifest()
+        m["claims"][0]["rel"] = "consequence"
+        M.validate(m)
+        canvas = cb.build_canvas(m)
+        edge = [e for e in canvas["edges"]
+                if e["id"] == cb.node_id(SLUG, "edge:c-0001")][0]
+        self.assertEqual(edge["label"], "consequence")
+
+    def test_branches_fan_out_both_sides_of_the_hub(self):
+        m = branching_manifest()
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        hub = by_id[cb.node_id(m["slug"], cb.hub_key(0))]
+        left, right = [], []
+        for claim in m["claims"]:
+            node = by_id[cb.claim_node_id(m["slug"], claim["id"])]
+            (left if node["x"] < hub["x"] else right).append(node)
+        self.assertTrue(left, "nothing was placed on the left of the hub")
+        self.assertTrue(right, "nothing was placed on the right of the hub")
+        for node in left:
+            self.assertLess(node["x"] + node["width"], hub["x"])
+        for node in right:
+            self.assertGreater(node["x"], hub["x"] + hub["width"])
+
+    def test_left_branch_edges_are_mirrored(self):
+        m = branching_manifest()
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        hub = by_id[cb.node_id(m["slug"], cb.hub_key(0))]
+        seen_left = seen_right = False
+        for edge in canvas["edges"]:
+            target = by_id.get(edge["toNode"])
+            if target is None or edge["toNode"] == hub["id"]:
+                continue
+            if target["x"] < hub["x"]:
+                self.assertEqual(edge["fromSide"], "left")
+                self.assertEqual(edge["toSide"], "right")
+                seen_left = True
+            elif target["x"] > hub["x"]:
+                self.assertEqual(edge["fromSide"], "right")
+                self.assertEqual(edge["toSide"], "left")
+                seen_right = True
+        self.assertTrue(seen_left and seen_right)
+
+    def test_both_wings_are_balanced_within_forty_percent(self):
+        m = branching_manifest()
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        hub = by_id[cb.node_id(m["slug"], cb.hub_key(0))]
+        spans = {"left": [], "right": []}
+        for claim in m["claims"]:
+            node = by_id[cb.claim_node_id(m["slug"], claim["id"])]
+            side = "left" if node["x"] < hub["x"] else "right"
+            spans[side].append((node["y"], node["y"] + node["height"]))
+        heights = {}
+        for side, boxes in spans.items():
+            heights[side] = max(b for _a, b in boxes) - min(a for a, _b in boxes)
+        bigger = max(heights.values())
+        smaller = min(heights.values())
+        self.assertGreaterEqual(
+            smaller / float(bigger), 0.6,
+            "wings are unbalanced: left=%d right=%d" % (heights["left"], heights["right"]))
+
+    def test_bilateral_halves_the_height_a_chapter_needs(self):
+        """Fanning both ways trades width for height — height is what was hurting.
+
+        A one-sided chapter has to stack every branch in one column, so its
+        height is the sum of both wings; bilateral pays one wing's worth.
+        """
+        m = branching_manifest()
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        hub = by_id[cb.node_id(m["slug"], cb.hub_key(0))]
+        wings = {"left": [], "right": []}
+        for claim in m["claims"]:
+            node = by_id[cb.claim_node_id(m["slug"], claim["id"])]
+            side = "left" if node["x"] < hub["x"] else "right"
+            wings[side].append(node)
+        wing_heights = [
+            max(n["y"] + n["height"] for n in nodes) - min(n["y"] for n in nodes)
+            for nodes in wings.values()
+        ]
+        chapter = chapter_extents(m, canvas)[0]
+        height = chapter["y1"] - chapter["y0"]
+        self.assertLessEqual(height, 0.65 * sum(wing_heights))
 
     def test_a_book_scale_map_has_a_workable_aspect_ratio(self):
         m = big_manifest(claim_count=300, chapters=10)
@@ -764,22 +970,26 @@ class EdgeTest(unittest.TestCase):
             self.assertEqual(edge["toEnd"], "arrow")
             self.assertNotIn("label", edge)
 
-    def test_root_connects_to_every_chapter_group(self):
+    def test_root_connects_to_every_hub(self):
         m = small_manifest()
         canvas = cb.build_canvas(m)
         root = cb.node_id(SLUG, "root")
         targets = set(e["toNode"] for e in canvas["edges"] if e["fromNode"] == root)
         self.assertEqual(
             targets,
-            {cb.node_id(SLUG, "group:0"), cb.node_id(SLUG, "group:1")},
+            {cb.node_id(SLUG, "hub:0"), cb.node_id(SLUG, "hub:1")},
         )
 
-    def test_top_level_claims_have_no_parent_edge(self):
+    def test_top_level_claims_now_have_a_hub_edge(self):
         m = small_manifest()
         canvas = cb.build_canvas(m)
-        edge_ids = set(e["id"] for e in canvas["edges"])
-        self.assertNotIn(cb.node_id(SLUG, "edge:c-0001"), edge_ids)
-        self.assertIn(cb.node_id(SLUG, "edge:c-0003"), edge_ids)
+        by_edge = dict((e["id"], e) for e in canvas["edges"])
+        # c-0001 is top level in chapter 0: it hangs off that chapter's hub
+        top = by_edge[cb.node_id(SLUG, "edge:c-0001")]
+        self.assertEqual(top["fromNode"], cb.node_id(SLUG, "hub:0"))
+        # c-0003 is a child claim: it hangs off its parent as before
+        child = by_edge[cb.node_id(SLUG, "edge:c-0003")]
+        self.assertEqual(child["fromNode"], cb.claim_node_id(SLUG, "c-0001"))
 
 
 class ColorTest(unittest.TestCase):

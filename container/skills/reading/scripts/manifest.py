@@ -39,7 +39,17 @@ OVERVIEW_IDX = -1
 # Furniture cards JT may rewrite; his wording is then projected verbatim.  The
 # unmatched-highlights bin is deliberately absent — it is regenerated from
 # unmatched state on every refresh, so an edit there cannot survive.
+# Chapter hub cards ("hub:<chapter_idx>") are editable too, so a gloss JT
+# rewrites in his own words persists like the root and legend.
 EDITABLE_FURNITURE = ("root", "legend")
+HUB_PREFIX = "hub:"
+
+
+def is_editable_furniture(key):
+    """True for a furniture key whose wording JT is allowed to own."""
+    if not isinstance(key, str):
+        return False
+    return key in EDITABLE_FURNITURE or key.startswith(HUB_PREFIX)
 
 # How a claim relates to its parent.  "supports" is the default and is left
 # unlabelled on the canvas; anything else labels the edge.
@@ -134,12 +144,15 @@ def new_manifest(slug, source_meta=None, chapters=None):
 
     normalised = []
     for position, chapter in enumerate(chapters or []):
-        normalised.append({
+        entry = {
             "idx": int(chapter.get("idx", position)),
             "title": chapter.get("title", "") or "",
             "block_start": int(chapter.get("block_start", 0)),
             "block_end": int(chapter.get("block_end", 0)),
-        })
+        }
+        if chapter.get("gloss"):
+            entry["gloss"] = chapter["gloss"]
+        normalised.append(entry)
 
     manifest = {
         "version": SCHEMA_VERSION,
@@ -276,6 +289,11 @@ def validate(manifest):
             "chapters[%d]: half-open block range [%r, %r) is not sane"
             % (position, start, end),
         )
+        gloss = chapter.get("gloss")
+        _require(
+            gloss is None or isinstance(gloss, str),
+            "chapters[%d].gloss: must be a string when present" % position,
+        )
         spans.append((start, end, idx))
 
     spans.sort()
@@ -316,9 +334,9 @@ def validate(manifest):
         )
         for key, value in furniture.items():
             _require(
-                key in EDITABLE_FURNITURE,
-                "manifest.jt_furniture[%r]: only %s may be overridden"
-                % (key, " and ".join(EDITABLE_FURNITURE)),
+                is_editable_furniture(key),
+                "manifest.jt_furniture[%r]: only %s and hub:<chapter_idx> "
+                "may be overridden" % (key, " and ".join(EDITABLE_FURNITURE)),
             )
             _require(
                 isinstance(value, str),

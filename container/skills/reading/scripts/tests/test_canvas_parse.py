@@ -495,9 +495,11 @@ class OverviewOverlayTest(unittest.TestCase):
         self.assertEqual(overlay["pruned"], ["o-0002"])
         cp.apply_overlay(m, overlay)
         rebuilt = cb.build_canvas(m, existing=canvas)
-        self.assertNotIn(gone, [n["id"] for n in rebuilt["nodes"]])
-        # the Overview group survives with the remaining card
-        self.assertIn(cb.node_id(SLUG, "group:-1"), [n["id"] for n in rebuilt["nodes"]])
+        ids = [n["id"] for n in rebuilt["nodes"]]
+        self.assertNotIn(gone, ids)
+        # the rest of the overview cluster survives
+        self.assertIn(cb.claim_node_id(SLUG, "o-0001"), ids)
+        self.assertIn(cb.node_id(SLUG, "root"), ids)
 
     def test_group_and_edge_ids_are_not_alien(self):
         m = self.overview_manifest()
@@ -738,6 +740,53 @@ class FurnitureTest(unittest.TestCase):
         self.assertIn("rebuilt from scratch on every refresh", text)
         self.assertIn("don't write here", text)
         self.assertNotIn("leave it here", text)
+
+    def test_hub_gloss_edit_is_captured_and_persists(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        hub_id = cb.node_id(SLUG, cb.hub_key(0))
+        mine = "# Ch 1 — Cash Flow\n\nMy note: this is the chapter that matters."
+        for node in canvas["nodes"]:
+            if node["id"] == hub_id:
+                node["text"] = mine
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["furniture_edits"], {"hub:0": mine})
+        self.assertEqual(overlay["warnings"], [])
+
+        cp.apply_overlay(m, overlay)
+        M.validate(m)
+        self.assertEqual(m["jt_furniture"]["hub:0"], mine)
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        text = [n for n in rebuilt["nodes"] if n["id"] == hub_id][0]["text"]
+        self.assertEqual(text, mine)
+        # and re-parsing is quiet
+        self.assertEqual(cp.parse_overlay(m, rebuilt)["furniture_edits"], {})
+
+    def test_a_hub_is_not_mistaken_for_an_alien_card(self):
+        m = demo_manifest()
+        overlay = cp.parse_overlay(m, cb.build_canvas(m))
+        self.assertEqual(overlay["alien_nodes"], [])
+        self.assertEqual(overlay["warnings"], [])
+
+    def test_legacy_group_nodes_are_tolerated_not_flagged_as_alien(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        # a canvas written by v1, still carrying its group boxes
+        canvas["nodes"].append({
+            "id": cb.node_id(SLUG, "group:0"), "type": "group",
+            "label": "Ch 1 — Cash Flow", "x": -50, "y": -50,
+            "width": 4000, "height": 3000,
+        })
+        canvas["nodes"].append({
+            "id": cb.node_id(SLUG, "group:-1"), "type": "group",
+            "label": "Overview", "x": -60, "y": -60, "width": 500, "height": 500,
+        })
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["alien_nodes"], [])
+        self.assertEqual(overlay["warnings"], [])
+        # and they are simply not re-emitted
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        self.assertEqual([n for n in rebuilt["nodes"] if n["type"] == "group"], [])
 
     def test_apply_overlay_ignores_a_bin_key_if_one_is_forged(self):
         m = demo_manifest()
