@@ -1229,5 +1229,181 @@ class SplitCardTest(unittest.TestCase):
         self.assertFalse(parts["has_jt"])
 
 
+class HashLedTitleTest(unittest.TestCase):
+    """[R24] Exactly ONE ``#`` is the heading marker; the rest is title text.
+
+    Stripping the whole leading run of hashes projected "#1 priority" as
+    "# #1 priority" and read it back as "1 priority" — so an untouched canvas
+    captured a title override that destroyed JT's wording, on every parse,
+    without him touching anything.
+    """
+
+    def hash_manifest(self):
+        m = demo_manifest()
+        m["claims"][0]["title"] = "#1 priority is the cash-flow plan"
+        M.validate(m)
+        return m
+
+    def test_the_projected_card_carries_both_hashes(self):
+        m = self.hash_manifest()
+        node = node_of(clone(cb.build_canvas(m)), "c-0001")
+        self.assertTrue(
+            node["text"].startswith("# #1 priority is the cash-flow plan"),
+            node["text"].split("\n")[0],
+        )
+
+    def test_a_hash_led_title_round_trips_with_no_override(self):
+        m = self.hash_manifest()
+        canvas = cb.build_canvas(m)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["title_overrides"], {})
+        self.assertEqual(overlay["warnings"], [])
+        # project -> parse -> project is byte-identical, and the title the
+        # manifest holds is still JT's own.
+        cp.apply_overlay(m, overlay)
+        self.assertEqual(cb.dumps_canvas(cb.build_canvas(m)),
+                         cb.dumps_canvas(canvas))
+        self.assertEqual(m["claims"][0]["title"], "#1 priority is the cash-flow plan")
+        self.assertIsNone(m["claims"][0]["jt"].get("title_override"))
+
+    def test_split_card_keeps_the_hash_that_belongs_to_the_title(self):
+        claim = M.new_claim("c-9", "#1 priority", 0, "root", 0, body_md="Body.")
+        parts = cp.split_card(cb.card_text(claim), "#1 priority", "Body.")
+        self.assertEqual(parts["title"], "#1 priority")
+
+    def test_a_markdown_subheading_title_is_not_eaten_either(self):
+        claim = M.new_claim("c-9", "## Still a title", 0, "root", 0)
+        parts = cp.split_card(cb.card_text(claim), "## Still a title", "")
+        self.assertEqual(parts["title"], "## Still a title")
+
+    def test_a_run_of_hashes_loses_only_the_marker(self):
+        # The line JT leaves behind after closing up the space: "##1 ...".
+        # Stripping the whole run deleted his "#" along with the marker.
+        parts = cp.split_card("##1 priority", "#1 priority", "")
+        self.assertEqual(parts["title"], "#1 priority")
+
+    def test_closing_up_the_marker_space_captures_no_title_override(self):
+        # Nothing about the title changed — only the whitespace after the
+        # heading marker — yet the parse used to read "1 priority ..." and
+        # freeze THAT into jt.title_override, destroying JT's wording.
+        m = self.hash_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        node["text"] = node["text"].replace("# #1 priority", "##1 priority", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["title_overrides"], {})
+
+    def test_a_hash_led_title_JT_really_edits_is_still_captured(self):
+        m = self.hash_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        node["text"] = node["text"].replace(
+            "# #1 priority is the cash-flow plan",
+            "# #1 priority is the SPENDING plan", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertEqual(overlay["title_overrides"],
+                         {"c-0001": "#1 priority is the SPENDING plan"})
+
+
+class MalformedNodeEntryTest(unittest.TestCase):
+    """[R6] A node entry that is not an object makes the whole canvas unsafe.
+
+    ``{"nodes": [null]}`` used to raise AttributeError straight out of the
+    parser, bypassing the caller's actionable unsafe-canvas path; skipping the
+    entry instead would read as JT deleting whatever card it was.
+    """
+
+    def test_a_non_object_node_entry_is_invalid_not_empty(self):
+        for entry in (None, "a card", 7, ["nodes"]):
+            m = demo_manifest()
+            overlay = cp.parse_overlay(m, {"nodes": [entry], "edges": []})
+            self.assertIn("invalid", overlay, "accepted node %r" % (entry,))
+            self.assertEqual(overlay["pruned"], [])
+            self.assertEqual(overlay["flags"], {})
+            self.assertTrue(overlay["warnings"])
+
+    def test_one_bad_entry_among_good_ones_still_refuses_the_canvas(self):
+        m = demo_manifest()
+        canvas = clone(cb.build_canvas(m))
+        canvas["nodes"].append(None)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertIn("invalid", overlay)
+        self.assertEqual(overlay["pruned"], [])
+        self.assertEqual(overlay["title_overrides"], {})
+        self.assertEqual(overlay["moved"], {})
+
+    def test_applying_it_prunes_nothing(self):
+        m = demo_manifest()
+        cp.apply_overlay(m, cp.parse_overlay(m, {"nodes": [None]}))
+        for claim in m["claims"]:
+            self.assertFalse(claim["jt"]["pruned"])
+
+
+class UserAuthoredCiteLineTest(unittest.TestCase):
+    """[R7] A claim that cites nothing has no machine-owned cite line.
+
+    Overview claims project no ``↳ cite:`` line at all.  A line JT types
+    himself starting with that prefix was still parsed out as the citation and
+    then silently dropped on the next rebuild — an edit-preservation break with
+    no warning attached.
+    """
+
+    MINE = "↳ cite: my own pointer — the appendix, not the chapter"
+
+    def overview_manifest(self):
+        m = demo_manifest()
+        m["claims"].append(
+            M.new_claim("o-0001", "The book's central question", -1, "root", 0,
+                        body_md="How do you turn a portfolio into a paycheque?")
+        )
+        M.validate(m)
+        return m
+
+    def test_the_overview_claim_really_projects_no_cite(self):
+        m = self.overview_manifest()
+        self.assertEqual(cb.cite_line(m["claims"][-1]), "")
+
+    def test_split_card_leaves_a_cite_like_line_in_the_body(self):
+        m = self.overview_manifest()
+        claim = m["claims"][-1]
+        text = cb.card_text(claim) + "\n\n" + self.MINE
+        parts = cp.split_card(text, claim["title"], claim["body_md"],
+                              cp.strip_emphasis(cb.cite_line(claim)))
+        self.assertEqual(parts["cite"], "")
+        self.assertIn(self.MINE, parts["body"])
+
+    def test_a_user_cite_line_survives_a_rebuild(self):
+        m = self.overview_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "o-0001")
+        node["text"] = node["text"] + "\n\n" + self.MINE
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertIn(self.MINE, overlay["body_overrides"]["o-0001"])
+        self.assertEqual([w for w in overlay["warnings"] if "cite" in w], [])
+
+        cp.apply_overlay(m, overlay)
+        M.validate(m)
+        rebuilt = cb.build_canvas(m, existing=canvas)
+        text = [n for n in rebuilt["nodes"]
+                if n["id"] == cb.claim_node_id(SLUG, "o-0001")][0]["text"]
+        self.assertIn(self.MINE, text)
+
+        # ...and reparsing the rebuild captures nothing new.
+        again = cp.parse_overlay(m, rebuilt)
+        self.assertEqual(again["body_overrides"], {})
+        self.assertEqual(again["warnings"], [])
+
+    def test_a_claim_that_does_cite_still_owns_its_cite_line(self):
+        # The negative control: c-0001 has a real locator, so its cite line is
+        # still machine-owned and a hand edit there is still surfaced.
+        m = self.overview_manifest()
+        canvas = clone(cb.build_canvas(m))
+        node = node_of(canvas, "c-0001")
+        node["text"] = node["text"].replace("↳ cite: Ch 1", "↳ cite: Chapter One", 1)
+        overlay = cp.parse_overlay(m, canvas)
+        self.assertTrue(any("cite line edited" in w for w in overlay["warnings"]))
+        self.assertEqual(overlay["body_overrides"], {})
+
+
 if __name__ == "__main__":
     unittest.main()

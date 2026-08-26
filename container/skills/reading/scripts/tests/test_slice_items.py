@@ -117,6 +117,133 @@ class InterBlockItemsTest(unittest.TestCase):
         )
 
 
+class AngleBracketProseInItemsTest(unittest.TestCase):
+    """[R22] A broad ``<[^>]*>`` reads ordinary prose as markup and eats it.
+
+    "If x < 5 and y > 3" lost its middle from BOTH the items and the audit —
+    the text was in the source and reached no surface at all, and the audit
+    could not even report the loss because it never saw the characters.
+    """
+
+    HTML = (
+        "<p>Lead in.</p>"
+        "<ul><li>Stop the run if x < 5 and y > 3 at any point</li></ul>"
+    )
+
+    def test_the_bracketed_prose_survives_into_the_item(self):
+        blocks = slicer.slice_blocks(self.HTML)
+        self.assertEqual(
+            slicer.inter_block_items(self.HTML, blocks),
+            {0: ["Stop the run if x < 5 and y > 3 at any point"]},
+        )
+
+    def test_the_bracketed_prose_survives_into_the_audit(self):
+        html = "<p>Lead in.</p><blockquote>Halt when x < 5 and y > 3.</blockquote>"
+        blocks = slicer.slice_blocks(html)
+        audit = slicer.gap_text_audit(html, blocks)
+        self.assertEqual(audit["by_tag"]["blockquote"], len("Halt when x < 5 and y > 3."))
+        self.assertIn("< 5 and y >", audit["samples"][0])
+
+    def test_real_markup_around_it_is_still_markup(self):
+        html = "<p>Lead.</p><ul><li>If x < 5 then <em>stop</em> the run</li></ul>"
+        blocks = slicer.slice_blocks(html)
+        self.assertEqual(
+            slicer.inter_block_items(html, blocks),
+            {0: ["If x < 5 then stop the run"]},
+        )
+
+
+class HtmlCommentTest(unittest.TestCase):
+    """[R37] A comment is one token; its innards are not live markup.
+
+    ``_TAG_RE`` stopped at the first ``>`` inside a comment, so the ``<li>``
+    written inside one opened a real list item and commented-out text surfaced
+    as genuine book content.
+    """
+
+    HTML = (
+        "<p>Lead in.</p>"
+        "<ul><li>A real item</li></ul>"
+        "<!-- example markup: <li>hidden</li> -->"
+        "<p>Tail.</p>"
+    )
+
+    def test_commented_out_markup_does_not_become_an_item(self):
+        blocks = slicer.slice_blocks(self.HTML)
+        self.assertEqual(
+            slicer.inter_block_items(self.HTML, blocks), {0: ["A real item"]}
+        )
+
+    def test_commented_out_text_reaches_no_surface(self):
+        blocks = slicer.slice_blocks(self.HTML)
+        audit = slicer.gap_text_audit(self.HTML, blocks)
+        self.assertEqual(audit["total_chars"], 0)
+        chapters = slicer.chapters(self.HTML, blocks)
+        self.assertNotIn(
+            "hidden", slicer.chapter_text(self.HTML, blocks, chapters[0])
+        )
+
+    def test_a_multiline_comment_is_still_one_token(self):
+        html = (
+            "<p>Lead.</p><!--\n  <li>hidden across\n  lines</li>\n-->"
+            "<ul><li>A real item</li></ul>"
+        )
+        blocks = slicer.slice_blocks(html)
+        self.assertEqual(slicer.inter_block_items(html, blocks), {0: ["A real item"]})
+
+    def test_an_unterminated_comment_does_not_crash_the_walk(self):
+        html = "<p>Lead.</p><ul><li>A real item</li></ul><!-- never closed"
+        blocks = slicer.slice_blocks(html)
+        self.assertEqual(slicer.inter_block_items(html, blocks), {0: ["A real item"]})
+
+
+class NestedListBoundaryTest(unittest.TestCase):
+    """[R35] An outer item resuming after a nested list needs a boundary.
+
+    ``<li>outer<ul><li>inner</li></ul>tail</li>`` recorded the outer item as
+    "outertail" — two words welded into a nonword.  Ordinary inline markup in
+    the same item must still join with no separator at all.
+    """
+
+    HTML = "<p>Lead in.</p><ul><li>outer<ul><li>inner</li></ul>tail</li></ul>"
+
+    def test_the_outer_item_is_separated_from_its_own_tail(self):
+        blocks = slicer.slice_blocks(self.HTML)
+        self.assertEqual(
+            slicer.inter_block_items(self.HTML, blocks),
+            {0: ["outer tail", "inner"]},
+        )
+
+    def test_inline_markup_in_the_same_item_still_joins(self):
+        html = (
+            "<p>Lead.</p>"
+            "<ul><li>catastroph<i>e</i> theory"
+            "<ul><li>inner</li></ul>and its critics</li></ul>"
+        )
+        blocks = slicer.slice_blocks(html)
+        self.assertEqual(
+            slicer.inter_block_items(html, blocks),
+            {0: ["catastrophe theory and its critics", "inner"]},
+        )
+
+    def test_two_nested_lists_in_one_outer_item(self):
+        html = (
+            "<p>Lead.</p><ul><li>one"
+            "<ul><li>a</li></ul>two"
+            "<ul><li>b</li></ul>three</li></ul>"
+        )
+        blocks = slicer.slice_blocks(html)
+        self.assertEqual(
+            slicer.inter_block_items(html, blocks),
+            {0: ["one two three", "a", "b"]},
+        )
+
+    def test_the_nested_text_is_still_not_duplicated_into_the_outer_item(self):
+        blocks = slicer.slice_blocks(self.HTML)
+        items = slicer.inter_block_items(self.HTML, blocks)
+        self.assertNotIn("inner", items[0][0])
+
+
 class ItemSpanningAnAnchorParagraphTest(unittest.TestCase):
     """An ``<li>`` may legally wrap a ``<p>`` block — calibre emits this shape.
 

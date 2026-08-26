@@ -93,6 +93,38 @@ class NormalizeTest(unittest.TestCase):
     def test_none_is_empty(self):
         self.assertEqual(MATCH.normalize(None), "")
 
+    def test_inline_markup_mid_word_does_not_split_the_word(self):
+        # [R21] replacing EVERY tag with a space normalized
+        # "catastroph<i>e</i> theory" to "catastroph e theory", which the
+        # Reader highlight "catastrophe theory" can never contain — the
+        # highlight fell into the bin with no way back.
+        self.assertEqual(
+            MATCH.normalize("<p>catastroph<i>e</i> theory</p>"),
+            "catastrophe theory",
+        )
+        for tag in ("b", "em", "strong", "span", "sup", "sub", "u", "a href=x"):
+            self.assertEqual(
+                MATCH.normalize("word<%s>ing</%s>" % (tag, tag.split(" ")[0])),
+                "wording",
+                tag,
+            )
+
+    def test_structural_markup_still_separates(self):
+        self.assertEqual(MATCH.normalize("<p>first</p><p>second</p>"), "first second")
+        self.assertEqual(MATCH.normalize("<p>first<br>second</p>"), "first second")
+        self.assertEqual(MATCH.normalize("<td>one</td><td>two</td>"), "one two")
+        self.assertEqual(
+            MATCH.normalize("<ul><li>one</li><li>two</li></ul>"), "one two"
+        )
+
+    def test_block_norm_of_a_mid_word_italic_block(self):
+        html = "<p>The literature on catastroph<i>e</i> theory says otherwise.</p>"
+        block = slicer.slice_blocks(html)[0]
+        self.assertEqual(
+            MATCH.block_norm(html, block),
+            "The literature on catastrophe theory says otherwise.",
+        )
+
     def test_block_norm_keeps_escaped_angle_bracket_prose(self):
         # [28] block_norm normalizes the RAW block html.  Normalizing
         # slicer.block_text's output instead would strip tags twice, and the
@@ -200,6 +232,22 @@ class LocateHighlightTest(unittest.TestCase):
         )
         self.assertEqual(
             MATCH.locate_highlight(html, blocks, "If x < 5 and y > 3 then stop"),
+            [0],
+        )
+
+    def test_a_mid_word_italic_block_matches_the_plain_highlight(self):
+        # [R21] end to end: Reader hands back rendered text, with no markup in
+        # it at all.  The block side has to produce the same string a reader
+        # reads, or this highlight can never be placed on any claim.
+        html = "".join([
+            "<p>The literature on catastroph<i>e</i> theory is unusually thin.</p>",
+            "<p>An unrelated paragraph that shares none of that wording at all.</p>",
+        ])
+        blocks = slicer.slice_blocks(html)
+        self.assertEqual(
+            MATCH.locate_highlight(
+                html, blocks, "catastrophe theory is unusually thin"
+            ),
             [0],
         )
 

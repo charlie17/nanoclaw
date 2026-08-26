@@ -6,7 +6,7 @@ A reading map turns a book in Readwise Reader into a one-canvas visual of its en
 
 1. **Ask for a map.** "Build a reading map for `<book>`" — the book must be in Reader (EPUB is the happy path; PDF works). The heavy build runs on Claude Code; expect a fan-out of agents and a validated canvas landing in the vault at `general/reference/learning/<slug>.canvas` (with `<slug>-manifest.json` beside it).
 
-2. **Triage on the canvas.** Skim and prepend flags to card titles: ⭐ key · 🔥 dig in · ⏭️ skip · ❓ clarify. Move cards, edit any text, delete cards, recolor the Heatmap Sections tiles — every edit of yours is permanent. A deleted card is never recreated; your wording always wins.
+2. **Triage on the canvas.** Skim and prepend flags to card titles: ⭐ key · 🔥 dig in · ⏭️ skip · ❓ clarify. Move cards, edit any text, delete cards, recolor the Heatmap Sections tiles — every edit of yours is permanent. A deleted claim card is never recreated; your wording always wins. (The teal furniture — root, legend, hubs, section tiles — is machine-owned and comes back on the next pass.)
 
 3. **Arm.** Say "arm the map." Every ⭐/🔥/❓ card gets one tagged (`daystrom-claim`) highlight in Reader; its URL becomes the card's live *↳ cite* link — one tap from card to passage. ⏭️ and unflagged cards create nothing, so your reading surface stays clean.
 

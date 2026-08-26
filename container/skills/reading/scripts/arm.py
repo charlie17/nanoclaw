@@ -49,7 +49,12 @@ CLAIM_TAG = "daystrom-claim"
 READER_URL_TEMPLATE = "https://read.readwise.io/read/%s"
 
 #: Payload shapes ``reader_get_document_highlights`` has been seen to use.
-_LIST_KEYS = ("highlights", "results", "data", "items")
+#: ``result`` (singular) is what the live MCP gateway actually returned on
+#: 2026-08-26 — omitting it made a real response read as "no existing
+#: highlights", which is precisely the reading that recreates a duplicate.
+#: ``refresh`` aliases this tuple rather than keeping a second copy: two lists
+#: of envelope keys is how the two surfaces drifted apart in the first place.
+_LIST_KEYS = ("highlights", "results", "result", "data", "items")
 _TEXT_KEYS = ("text", "content", "highlight", "quote", "html")
 
 
@@ -172,9 +177,12 @@ def fold_canvas(manifest, vault_dir, snapshot=None):
     is re-parsed and noted, because the alternative — refusing to run — would
     make the tool useless exactly when he has been using the map.
 
-    Two conditions DO abort, both signalled as ``invalid`` on the returned
-    overlay and neither of them applied to the manifest:
+    Three conditions DO abort, all signalled as ``invalid`` on the returned
+    overlay and none of them applied to the manifest:
 
+      * the file will not read or parse at all — a write caught mid-sync is
+        truncated JSON, and letting ``JSONDecodeError`` escape would crash the
+        run instead of reporting the refusal this method promises.
       * the canvas is structurally invalid (``parse_overlay``'s own verdict).
         A file with no usable nodes is a half-synced or corrupt write, not a
         map JT emptied, and folding it would prune every claim permanently.
@@ -183,7 +191,19 @@ def fold_canvas(manifest, vault_dir, snapshot=None):
     """
     warnings = []
     path = cb.canvas_path(manifest, vault_dir)
-    existing = cb.read_canvas(path)
+    try:
+        existing = cb.read_canvas(path)
+    except (OSError, ValueError) as exc:
+        # ValueError covers json.JSONDecodeError.  A file we cannot even parse
+        # is never a first run — mapping it to None would look like "no canvas
+        # yet" and replace JT's half-written map with a fresh projection.
+        reason = "the canvas file could not be read (%s)" % exc
+        warnings.append(
+            "canvas: %s; that is a broken or half-synced file rather than a map "
+            "JT emptied, so nothing was folded in and nothing was written "
+            "(repair or restore it, then re-run)" % reason
+        )
+        return None, blocked_overlay(reason), warnings
     if existing is None:
         return None, None, warnings
     if not manifest_mod.freshness_ok(manifest, path):
@@ -242,15 +262,25 @@ def project(manifest, vault_dir, existing, surface, action, summary, report):
     A canvas that fails validation is NOT written — a broken canvas file in a
     synced vault is worse than a stale one — but the manifest still is, so the
     highlights this run created are never lost.  The same holds when the write
-    is refused outright (invalid canvas, or a newer conflict copy).  Returns
-    the canvas dict, or None when the write was refused.
+    is refused outright (a canvas that will not parse, an invalid canvas, or a
+    newer conflict copy).  Returns the canvas dict, or None when the write was
+    refused.
     """
     canvas_file = cb.canvas_path(manifest, vault_dir)
     path = manifest_path(manifest, vault_dir)
     blocked = None
+    live = None
 
-    live = cb.read_canvas(canvas_file)
-    if live is not None and live != existing:
+    try:
+        live = cb.read_canvas(canvas_file)
+    except (OSError, ValueError) as exc:
+        # The canvas went truncated or half-synced while we were on the network.
+        # This is the documented "save the manifest, refuse the canvas" path:
+        # the highlights this run created are real and must not be lost, but a
+        # file we cannot even parse is certainly not one to overwrite.
+        blocked = "the canvas file could not be read (%s)" % exc
+
+    if blocked is None and live is not None and live != existing:
         live, overlay, warnings = fold_canvas(manifest, vault_dir, snapshot=existing)
         _merge_warnings(report, warnings)
         blocked = (overlay or {}).get("invalid")
@@ -381,16 +411,43 @@ def reader_url(highlight_id):
 # reconciling an attempt that may already have committed
 # --------------------------------------------------------------------------
 
-def _highlight_list(payload):
-    """Whatever ``get_document_highlights`` returned, as a list of dicts."""
+def coerce_highlights(payload):
+    """``(items, recognized)`` from whatever ``get_document_highlights`` returned.
+
+    The MCP tool hands back JSON decoded from a text block; the wrapper shape is
+    not something we control, so accept a bare list or any of the usual envelope
+    keys and never explode on a shape we have not seen.
+
+    ``recognized`` is the half callers actually need: a recognized envelope
+    holding zero highlights is a document with no machine highlights on it,
+    while an UNrecognized envelope is an API change that told us nothing at all.
+    The two look identical once the payload has been coerced to ``[]`` — and for
+    arm that difference is the difference between "the failed create never
+    committed, go ahead" and "we have no idea, do not create a second one".
+    """
     if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
+        return [item for item in payload if isinstance(item, dict)], True
     if isinstance(payload, dict):
         for key in _LIST_KEYS:
             value = payload.get(key)
             if isinstance(value, list):
-                return [item for item in value if isinstance(item, dict)]
-    return []
+                return [item for item in value if isinstance(item, dict)], True
+    return [], False
+
+
+def _shape_of(payload):
+    """A short description of an unrecognized payload, for the run report."""
+    if isinstance(payload, dict):
+        keys = sorted(str(key) for key in payload.keys())
+        return "a %s with keys: %s" % (
+            type(payload).__name__, ", ".join(keys) if keys else "(none)"
+        )
+    return "a %s" % type(payload).__name__
+
+
+def _highlight_list(payload):
+    """Whatever ``get_document_highlights`` returned, as a list of dicts."""
+    return coerce_highlights(payload)[0]
 
 
 def _tag_names(value):
@@ -432,20 +489,52 @@ def machine_highlights(payload):
     return found
 
 
-def adoptable_highlight(existing, html, block):
-    """The one existing machine highlight that IS this block, or None.
+#: ``adoptable_highlight`` verdicts.  Only NONE may go on to create.
+ADOPT_NONE = "none"
+ADOPT_UNIQUE = "unique"
+ADOPT_AMBIGUOUS = "ambiguous"
 
-    Two candidates are a refusal, not a coin toss: adopting the wrong one
-    would point a card's cite at a passage it was not written from.
+
+def matching_highlights(existing, html, block):
+    """Every machine highlight that IS this block, best tier only.
+
+    Exact normalized equality wins outright; highlights that merely CONTAIN the
+    block are considered only when nothing matches exactly.
     """
     wanted = match_mod.block_norm(html, block)
     if not wanted:
-        return None
+        return []
     exact = [h for h in existing if match_mod.normalize(h["text"]) == wanted]
     if exact:
-        return exact[0] if len(exact) == 1 else None
-    covering = [h for h in existing if wanted in match_mod.normalize(h["text"])]
-    return covering[0] if len(covering) == 1 else None
+        return exact
+    return [h for h in existing if wanted in match_mod.normalize(h["text"])]
+
+
+def adoptable_highlight(existing, html, block, taken=()):
+    """``(verdict, highlight)`` — what the document already holds for this block.
+
+    Three outcomes, and conflating any two of them is a permanent mistake:
+
+      * ``none`` — nothing on the document matches, so the ambiguous attempt
+        plainly never committed and the claim may be created after all.
+      * ``unique`` — exactly one match and no other card has taken it: adopt.
+      * ``ambiguous`` — several matches, or the single match was already adopted
+        by another pending claim this run.  Neither adopt nor create; adopting
+        the wrong one points a cite at a passage the card was not written from,
+        and creating adds yet another highlight Reader cannot delete.
+
+    *taken* is the set of highlight ids already adopted, which is what makes
+    adoption one-to-one: one existing highlight cannot settle two claims.
+    """
+    matches = matching_highlights(existing, html, block)
+    if not matches:
+        return ADOPT_NONE, None
+    if len(matches) > 1:
+        return ADOPT_AMBIGUOUS, None
+    match = matches[0]
+    if match["highlight_id"] in taken:
+        return ADOPT_AMBIGUOUS, None
+    return ADOPT_UNIQUE, match
 
 
 def reconcile_attempts(targets, doc_id, html, blocks, token=None):
@@ -460,6 +549,12 @@ def reconcile_attempts(targets, doc_id, html, blocks, token=None):
     Returns ``(adoptions, unresolved)`` — ``{claim_id: highlight}`` for the
     ones already on the document, and ``{claim_id: reason}`` for the ones whose
     fate could not be established, which must not be re-created blind.
+
+    Three ways the fate stays unestablished, all of them ending in
+    ``unresolved`` rather than a create: the lookup failed, the payload came
+    back in a shape we cannot read, or the document holds more than one
+    candidate for the block (or exactly one that another pending card has
+    already claimed).
     """
     pending = [c for c in targets if (c.get("cite") or {}).get("attempted")]
     if not pending:
@@ -475,18 +570,42 @@ def reconcile_attempts(targets, doc_id, html, blocks, token=None):
         )
         return {}, dict((c["id"], reason) for c in pending)
 
-    existing = machine_highlights(payload)
+    items, recognized = coerce_highlights(payload)
+    if not recognized:
+        # An unknown envelope is not an empty document.  Reading it as one is
+        # exactly how a committed attempt gets a permanent twin.
+        reason = (
+            "a previous run may already have created this highlight, and the "
+            "document's highlights came back in an UNRECOGNISED shape (%s) so "
+            "nothing could be checked against it; no duplicate was created "
+            "(widen arm._LIST_KEYS to the new envelope key)" % _shape_of(payload)
+        )
+        return {}, dict((c["id"], reason) for c in pending)
+
+    existing = machine_highlights(items)
     adoptions = {}
+    unresolved = {}
+    taken = set()
     for claim in pending:
         anchor_block = claim.get("anchor_block")
         if not isinstance(anchor_block, int) or isinstance(anchor_block, bool):
             continue
         if not 0 <= anchor_block < len(blocks):
             continue
-        match = adoptable_highlight(existing, html, blocks[anchor_block])
-        if match is not None:
+        verdict, match = adoptable_highlight(
+            existing, html, blocks[anchor_block], taken
+        )
+        if verdict == ADOPT_UNIQUE:
             adoptions[claim["id"]] = match
-    return adoptions, {}
+            taken.add(match["highlight_id"])
+        elif verdict == ADOPT_AMBIGUOUS:
+            unresolved[claim["id"]] = (
+                "a previous run may already have created this highlight and the "
+                "document carries more than one tagged candidate for its block, "
+                "so which one belongs to this card cannot be told apart; no "
+                "duplicate was created (settle it by hand in Reader)"
+            )
+    return adoptions, unresolved
 
 
 # --------------------------------------------------------------------------

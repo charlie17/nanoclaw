@@ -37,6 +37,15 @@ _TAG_RE = re.compile(r"</?[A-Za-z!?][^>]*>")
 _HAS_TAG_RE = _TAG_RE
 _WS_RE = re.compile(r"\s+")
 
+#: Whether a stripped tag leaves a space behind is decided by
+#: ``slice.tag_separator``, so the block side of a compare produces what a
+#: reader actually reads.  Replacing EVERY tag with a space made
+#: "<p>catastroph<i>e</i> theory</p>" normalize to "catastroph e theory", which
+#: the Reader highlight "catastrophe theory" can never match — the highlight
+#: fell to the bin every time, with no way to recover it.  The needle side is
+#: unaffected: a Reader highlight carries no tags.
+_tag_separator = slicer.tag_separator
+
 #: Curly quotes, primes, guillemets and the whole dash family collapse to their
 #: ASCII form.  Reader round-trips a highlight through the browser's selection
 #: API, which is free to hand back a different quote character than the source
@@ -72,6 +81,11 @@ def normalize(text):
     unescaping, so an escaped ``&lt;p&gt;`` in the prose is never mistaken for
     markup.  Case is preserved — it is signal, not noise.
 
+    Stripping is adjacency-aware, again exactly as ``slice.block_text`` is: a
+    structural tag becomes a space, an inline one becomes nothing.  That is
+    what makes mid-word markup — "catastroph<i>e</i> theory" — normalize to
+    the same string the Reader highlight carries.
+
     Call this ONCE per side of a compare, on the raw source.  Running it over
     text something else has already stripped and unescaped strips a second
     time, and prose the first pass revealed ("if x < 5") is eaten as markup.
@@ -80,7 +94,7 @@ def normalize(text):
         return ""
     value = str(text)
     if _HAS_TAG_RE.search(value):
-        value = _TAG_RE.sub(" ", value)
+        value = _TAG_RE.sub(lambda m: _tag_separator(m.group(0)), value)
     value = unescape(value)
     value = unicodedata.normalize("NFKC", value)
     value = value.translate(_TRANSLATION)

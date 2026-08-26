@@ -32,12 +32,44 @@ CACHE_ROOT_NAME = os.path.join(".cache", "daystrom-reading")
 
 _OPEN_P_RE = re.compile(r"<p\b[^>]*>", re.IGNORECASE)
 _CLOSE_P_RE = re.compile(r"</p\s*>", re.IGNORECASE)
-_TAG_RE = re.compile(r"<[^>]*>")
+
+#: A token has to LOOK like markup. ``<[^>]*>`` also swallows ordinary prose —
+#: "If x < 5 and y > 3" reads as one big tag and its middle disappears from
+#: items and from the audit — so the second branch mirrors ``match.py``: ``<``
+#: then a name, a closing slash, or a declaration marker. The FIRST branch
+#: takes a comment whole; matching only up to its first ``>`` left the markup
+#: inside it to be parsed as live tags, and ``<!-- example: <li>hidden</li> -->``
+#: then surfaced "hidden" as a real list item.
+_TAG_RE = re.compile(r"<!--.*?-->|</?[A-Za-z!?][^>]*>", re.DOTALL)
 _WS_RE = re.compile(r"\s+")
 _TOC_ATTR_RE = re.compile(r'data-rw-epub-toc\s*=\s*"([^"]*)"', re.IGNORECASE)
 _TOC_PRESENT_RE = re.compile(r"data-rw-epub-toc\s*=", re.IGNORECASE)
 _BLOCK_TYPE_RE = re.compile(r"block-type\s*=", re.IGNORECASE)
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+#: Tags that a reader reads THROUGH: removing one joins the text on either
+#: side of it, because that is what the rendered page shows. Everything else —
+#: ``<p>``, ``<br>``, ``<li>``, ``<td>``, an unrecognised or malformed tag, a
+#: comment — separates, and becomes a space. Deleting every tag with no
+#: separator turned "<p>first<br>second</p>" into "firstsecond"; replacing
+#: every tag with a space broke "catastroph<i>e</i> theory" in half. Both
+#: shapes are real, and only the distinction handles both.
+INLINE_TAGS = frozenset((
+    "a", "abbr", "acronym", "b", "bdi", "bdo", "big", "cite", "code", "data",
+    "del", "dfn", "em", "font", "i", "ins", "kbd", "mark", "nobr", "q", "rp",
+    "rt", "ruby", "s", "samp", "small", "span", "strike", "strong", "sub",
+    "sup", "time", "tt", "u", "var", "wbr",
+))
+
+_TAG_NAME_RE = re.compile(r"^</?\s*([A-Za-z][A-Za-z0-9:-]*)")
+
+
+def tag_separator(raw_tag):
+    """What one raw tag becomes in plain text: ``""`` inline, ``" "`` otherwise."""
+    name = _TAG_NAME_RE.match(raw_tag)
+    if name is not None and name.group(1).lower() in INLINE_TAGS:
+        return ""
+    return " "
 
 #: List items are rendered under their anchoring paragraph with this marker.
 ITEM_BULLET = "•"
@@ -96,12 +128,16 @@ def block_text(html, block):
 
     Reading order matters — tags are stripped BEFORE unescaping, so an escaped
     ``&lt;p&gt;`` in the prose can never be mistaken for markup.
+
+    Structural tags separate and inline tags do not (see ``INLINE_TAGS``), so
+    "<p>first<br>second</p>" reads as "first second" and
+    "catastroph<i>e</i> theory" stays one word.
     """
     return _to_text(html[block["start"]:block["end"]])
 
 
 def _to_text(fragment):
-    stripped = _TAG_RE.sub("", fragment)
+    stripped = _TAG_RE.sub(lambda m: tag_separator(m.group(0)), fragment)
     return _WS_RE.sub(" ", unescape(stripped)).strip()
 
 
@@ -215,21 +251,33 @@ def inter_block_items(html, blocks):
     shape calibre really emits — keeps the text on both sides of it: the
     paragraph is left out (it is its own block) and a single space joins what
     remains, so nothing is dropped and no word is glued to its neighbour.
+
+    An outer item that resumes after a NESTED list gets the same treatment:
+    ``<li>outer<ul><li>inner</li></ul>tail</li>`` records the outer item as
+    "outer tail", not "outertail". Ordinary inline markup inside an item still
+    joins with no separator at all.
     """
     starts = [block["start"] for block in blocks]
     order = []
     pieces = {}
     anchor = {}
     last_end = {}
+    resumed = {}
     for position, chunk, _stack, open_items in _walk_text_runs(html, blocks):
         if not open_items:
             continue
         item = open_items[-1]
+        # Every ancestor item that already holds text is now interrupted by a
+        # descendant, so its next run is a resumption and needs a boundary.
+        for outer in open_items[:-1]:
+            if outer in pieces:
+                resumed[outer] = True
         if item not in pieces:
             order.append(item)
             pieces[item] = []
             anchor[item] = bisect.bisect_right(starts, position) - 1
-        elif _block_starts_between(starts, last_end[item], position):
+        elif resumed.pop(item, False) or _block_starts_between(
+                starts, last_end[item], position):
             pieces[item].append(" ")
         pieces[item].append(chunk)
         last_end[item] = position + len(chunk)
@@ -444,9 +492,15 @@ def gap_text_audit(html, blocks):
 # --------------------------------------------------------------------------
 
 
+#: "." and ".." satisfy the allowlist character-for-character but are path
+#: navigation, not names: cache_dir("..") resolves to ``~/.cache`` and would
+#: write source.html outside the per-document root.
+_RESERVED_IDS = (".", "..")
+
+
 def _safe_doc_id(doc_id):
     text = str(doc_id or "").strip()
-    if not _SAFE_ID_RE.match(text):
+    if text in _RESERVED_IDS or not _SAFE_ID_RE.match(text):
         raise ValueError("Unsafe document id for a cache path: %r" % (doc_id,))
     return text
 

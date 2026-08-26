@@ -22,7 +22,17 @@ forward by passing the canvas to ``canvas_build.build_canvas(m, existing=...)``.
 python3 stdlib only.
 """
 
+import re
+
 import canvas_build as cb
+
+#: The heading marker projection writes in front of every card title — exactly
+#: one ``#`` and its single separating space (``canvas_build.source_section``
+#: emits ``"# " + prefix + title``).  Stripping a RUN of hashes instead ate a
+#: title that legitimately starts with one: "#1 priority" projects as
+#: "# #1 priority" and came back as "1 priority", so an untouched canvas
+#: captured a destructive title override on every single parse.
+_HEADING_RE = re.compile(r"^#[ \t]?")
 
 # Longest token first: ⏭️ is U+23ED + VS16, ⏭ is the bare base character.
 FLAG_TOKENS = ("⏭️", "⏭", "⭐", "\U0001f525", "❓")
@@ -237,7 +247,7 @@ def _authored_flag_run(text):
     return []
 
 
-def split_card(text, expected_title=None, expected_body=None):
+def split_card(text, expected_title=None, expected_body=None, expected_cite=None):
     """Decompose a card's text into its parts.
 
     Returns a dict with: title (flags stripped), flags, unknown, body,
@@ -246,6 +256,16 @@ def split_card(text, expected_title=None, expected_body=None):
 
     Pass the expected title and body whenever they are known — without them a
     leading flag glyph that is genuinely part of the text is misread as triage.
+
+    *expected_cite* is the machine citation this claim projects, stripped of
+    emphasis: ``""`` for a claim that has none (an overview claim cites
+    nothing).  Pass it whenever it is known.  With an EMPTY expected cite no
+    line is read as a citation at all — a claim that never projects one cannot
+    have had its cite hand-edited, so a line JT wrote himself beginning
+    "↳ cite:" is his prose and stays in the body, where the ordinary
+    body-override path keeps it verbatim.  Slicing it out instead dropped it
+    on the next rebuild without even a warning.  ``None`` means "unknown", and
+    the citation is parsed as before.
     """
     text = text or ""
     head, separator, tail = text.rpartition(cb.JT_SEP)
@@ -266,16 +286,17 @@ def split_card(text, expected_title=None, expected_body=None):
             "cite": "", "tail": "", "jt": jt, "has_jt": has_jt,
         }
 
-    title_raw = lines[title_index].strip()
-    while title_raw.startswith("#"):
-        title_raw = title_raw[1:]
+    # Exactly the one heading marker projection wrote — any further "#" is
+    # title text JT typed and is kept.
+    title_raw = _HEADING_RE.sub("", lines[title_index].strip(), count=1)
     flags, unknown, title = resolve_flags(title_raw, expected_title)
 
     cite_index = None
-    for position in range(len(lines) - 1, title_index, -1):
-        if strip_emphasis(lines[position]).startswith(cb.CITE_PREFIX):
-            cite_index = position
-            break
+    if expected_cite is None or expected_cite:
+        for position in range(len(lines) - 1, title_index, -1):
+            if strip_emphasis(lines[position]).startswith(cb.CITE_PREFIX):
+                cite_index = position
+                break
     cite = lines[cite_index].strip() if cite_index is not None else ""
     body_lines = lines[title_index + 1:cite_index] if cite_index is not None \
         else lines[title_index + 1:]
@@ -408,6 +429,15 @@ def parse_overlay(manifest, canvas_dict, snapshot=None):
         claim_node[cb.claim_node_id(slug, claim["id"])] = claim
     by_node = {}
     for node in nodes:
+        if not isinstance(node, dict):
+            # A half-synced file can hold ``[null]`` or a bare string where a
+            # node object belongs.  Skipping the entry would make whatever it
+            # was read as deleted, and deletion is permanent, so the whole
+            # canvas is refused exactly like a missing nodes array.
+            return _invalid_overlay(
+                "a node entry is %s, not an object; the file is malformed or "
+                "half-synced" % type(node).__name__
+            )
         ident = node.get("id")
         if ident is None:
             warnings.append("canvas: a node has no id; skipped")
@@ -485,7 +515,13 @@ def parse_overlay(manifest, canvas_dict, snapshot=None):
         if expected_title is None:
             expected_title = claim.get("title") or ""
 
-        parts = split_card(text, expected_title, expected_body)
+        # The cite line is machine-owned — arming rewrites it — so a hand edit
+        # there is surfaced rather than captured.  A claim that projects NO
+        # citation has no machine-owned line to protect, so ``split_card`` is
+        # told not to read one off this card at all.
+        expected_cite = strip_emphasis(cb.cite_line(claim))
+
+        parts = split_card(text, expected_title, expected_body, expected_cite)
         flags[claim_id] = parts["flags"]
         for glyph in parts["unknown"]:
             # Once the glyph is part of the accepted title it is settled wording,
@@ -502,9 +538,6 @@ def parse_overlay(manifest, canvas_dict, snapshot=None):
         if parts["title"] != expected_title.strip():
             title_overrides[claim_id] = parts["title"]
 
-        # The cite line is machine-owned — arming rewrites it — so a hand edit
-        # there is surfaced rather than captured.
-        expected_cite = strip_emphasis(cb.cite_line(claim))
         if expected_cite and strip_emphasis(parts["cite"]) != expected_cite:
             warnings.append(
                 "%s: cite line edited on the canvas; the manifest cite is unchanged"

@@ -415,6 +415,95 @@ class MutationRetryTests(unittest.TestCase):
         self.assertFalse(readerapi.is_mutating_tool("reader_get_document_highlights"))
         self.assertFalse(readerapi.is_mutating_tool("readwise_list_highlights"))
 
+    def test_every_known_mutating_tool_is_off_the_read_only_allowlist(self):
+        for name in readerapi.MUTATING_TOOLS:
+            self.assertTrue(readerapi.is_mutating_tool(name), name)
+
+    def test_an_unknown_tool_is_classified_as_mutating(self):
+        # [R5] the old membership test failed OPEN: a state-changing tool added
+        # to the gateway later was replayed after an ambiguous failure.
+        self.assertTrue(readerapi.is_mutating_tool("reader_invent_something_new"))
+
+    def _tool_call_attempts(self, name, responder, **kwargs):
+        """Run call_tool against a 5xx-first fake server; return tool attempts."""
+        attempts = []
+
+        def fake_urlopen(request, timeout=None):
+            body = json.loads(request.data.decode("utf-8"))
+            if "id" not in body:
+                return FakeResponse("", {"Content-Type": "application/json"}, status=202)
+            if body["method"] == "initialize":
+                return FakeResponse(
+                    sse({"jsonrpc": "2.0", "id": body["id"], "result": {}}),
+                    {"Content-Type": "text/event-stream"},
+                )
+            attempts.append(body["params"]["name"])
+            return responder(body, len(attempts))
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            payload = readerapi.call_tool(name, {}, **kwargs)
+        return attempts, payload
+
+    def test_an_unknown_tool_is_not_replayed_after_a_5xx(self):
+        attempts = []
+
+        def fake_urlopen(request, timeout=None):
+            body = json.loads(request.data.decode("utf-8"))
+            if "id" not in body:
+                return FakeResponse("", {"Content-Type": "application/json"}, status=202)
+            if body["method"] == "initialize":
+                return FakeResponse(
+                    sse({"jsonrpc": "2.0", "id": body["id"], "result": {}}),
+                    {"Content-Type": "text/event-stream"},
+                )
+            attempts.append(body["params"]["name"])
+            raise http_error(500)
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(readerapi.ReaderAPIError) as caught:
+                readerapi.call_tool("reader_invent_something_new", {})
+        self.assertEqual(attempts, ["reader_invent_something_new"])
+        self.assertEqual(self.slept, [])
+        self.assertIn("may already have taken effect", str(caught.exception))
+
+    def test_an_allowlisted_read_tool_is_still_replayed(self):
+        def responder(body, attempt):
+            if attempt == 1:
+                raise http_error(503)
+            return FakeResponse(
+                sse({
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"content": [{"type": "text", "text": "[]"}]},
+                }),
+                {"Content-Type": "text/event-stream"},
+            )
+
+        attempts, payload = self._tool_call_attempts(
+            "readwise_list_highlights", responder
+        )
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(payload, [])
+
+    def test_a_caller_may_declare_an_unknown_tool_replay_safe(self):
+        def responder(body, attempt):
+            if attempt == 1:
+                raise http_error(503)
+            return FakeResponse(
+                sse({
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"content": [{"type": "text", "text": "[]"}]},
+                }),
+                {"Content-Type": "text/event-stream"},
+            )
+
+        attempts, payload = self._tool_call_attempts(
+            "reader_invent_something_new", responder, mutating=False
+        )
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(payload, [])
+
     def test_a_create_tool_call_reaches_the_transport_as_a_mutation(self):
         attempts = []
 

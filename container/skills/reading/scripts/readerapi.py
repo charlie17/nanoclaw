@@ -21,6 +21,8 @@ Facts this module is built to (verified by live probe 2026-08-25):
   outcome (5xx, timeout, broken body read) because the highlight may already
   exist and cannot be deleted Reader-side; the caller reconciles instead. A 429
   IS retried even for a create — the server refused before doing the work.
+  Classification is an allowlist (``READ_ONLY_TOOLS``): an unknown tool name is
+  assumed to mutate.
 * Reader-side highlight ids are NOT deletable. The highlight syncs to classic
   Readwise under an integer id; delete there
   (``readwise_list_highlights`` -> match text -> ``readwise_delete_highlight``).
@@ -71,14 +73,26 @@ MIN_CREATE_INTERVAL_S = 3.5
 #: sent again.
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 
-#: MCP tools that change state. Everything else this module calls is a read,
-#: and a read stays retryable even though MCP carries it over POST.
+#: MCP tools known to change state. Documentation only — classification runs
+#: off READ_ONLY_TOOLS below, because a state-changing tool nobody remembered to
+#: add to a list must not thereby become replay-safe.
 MUTATING_TOOLS = (
     "reader_create_highlight",
     "reader_add_tags_to_highlight",
     "reader_remove_tags_from_highlight",
     "reader_set_highlight_notes",
     "readwise_delete_highlight",
+)
+
+#: The allowlist: MCP tools whose replay cannot change anything, so an ambiguous
+#: failure may be sent again even though MCP carries reads over POST. Anything
+#: NOT named here — including a tool the gateway grows after this file was
+#: written — is treated as mutating and is never replayed. Fail closed: a read
+#: misclassified as a mutation costs one retry, while a create replayed by
+#: mistake costs a permanent duplicate highlight Reader cannot delete.
+READ_ONLY_TOOLS = (
+    "reader_get_document_highlights",
+    "readwise_list_highlights",
 )
 
 ENV_TOKEN_VAR = "READWISE_ACCESS_TOKEN"   # container
@@ -538,21 +552,32 @@ def _content_text(result):
 
 
 def is_mutating_tool(name):
-    """True when replaying this tool call could change Readwise a second time."""
-    return name in MUTATING_TOOLS
+    """True unless *name* is on the :data:`READ_ONLY_TOOLS` allowlist.
+
+    Deliberately the pessimistic direction: an unrecognised tool is assumed to
+    change something. The old membership test against ``MUTATING_TOOLS`` failed
+    OPEN — every tool not on that list, including ones added to the gateway
+    later, was replayed after an ambiguous 5xx or timeout.
+    """
+    return name not in READ_ONLY_TOOLS
 
 
-def call_tool(name, arguments, token=None, timeout=DEFAULT_TIMEOUT):
+def call_tool(name, arguments, token=None, timeout=DEFAULT_TIMEOUT, mutating=None):
     """Call an MCP tool by name and return its unwrapped payload.
 
     A mutating tool is never replayed by the transport on an ambiguous outcome
     (see :func:`_may_replay`); the caller reconciles instead.
+
+    *mutating* defaults to the allowlist verdict (:func:`is_mutating_tool`).
+    Pass ``False`` to declare a tool this module has never heard of replay-safe;
+    that is the only way an unlisted tool gets retried.
     """
     token = resolve_token(token)
     _ensure_handshake(token)
     result = _mcp_call(
         "tools/call", {"name": name, "arguments": arguments or {}}, token,
-        timeout=timeout, mutating=is_mutating_tool(name),
+        timeout=timeout,
+        mutating=is_mutating_tool(name) if mutating is None else bool(mutating),
     )
     return tool_result_payload(result)
 

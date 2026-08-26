@@ -11,6 +11,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -73,6 +74,11 @@ def jt_highlight(reader_id, text, note=""):
         "tags": [],
         "url": "https://read.readwise.io/read/%s" % reader_id,
     }
+
+
+def urlless_highlight(reader_id, text, note=""):
+    """The same highlight from a payload that carried no permalink."""
+    return {"id": reader_id, "content": text, "note": note, "tags": []}
 
 
 BASE_HIGHLIGHTS = [
@@ -139,6 +145,9 @@ class RefreshTestCase(unittest.TestCase):
     def canvas_bytes(self):
         with open(self.canvas_path(), "rb") as handle:
             return handle.read()
+
+    def saved_manifest_text(self):
+        return M.dumps(M.load(ARM.manifest_path(self.manifest, self.vault)))
 
     def node_text(self, claim_id):
         canvas = cb.read_canvas(self.canvas_path())
@@ -457,6 +466,172 @@ class KnownHighlightEditTest(RefreshTestCase):
         self.assertEqual(report["updated"], [])
         self.assertEqual(report["skipped_known"], 3)
         self.assertEqual(self.canvas_bytes(), first)
+
+
+class UnsafeCanvasTest(RefreshTestCase):
+    """[R0] refresh must refuse on exactly what arm refuses on.
+
+    ``fold_canvas`` says "do not fold, do not write" by marking the overlay
+    invalid.  refresh used to read that verdict into ``_overlay`` and carry on:
+    it mutated the manifest, and because the broken canvas then still matched
+    the run-start snapshot, ``project`` skipped the second fold and wrote over
+    the very file the fold had refused to touch.
+    """
+
+    def assert_nothing_happened(self, report, before_canvas, before_manifest,
+                                lookup):
+        self.assertEqual(lookup.call_count, 0)
+        self.assertEqual(self.canvas_bytes(), before_canvas)
+        self.assertEqual(self.saved_manifest_text(), before_manifest)
+        self.assertEqual(report["matched"], {})
+        self.assertEqual(report["new_highlights"], 0)
+        for claim in self.manifest["claims"]:
+            self.assertEqual(claim["jt"]["highlights"], [])
+
+    def test_a_structurally_invalid_canvas_stops_the_sweep_dead(self):
+        before_canvas = self.canvas_bytes()
+        before_manifest = self.saved_manifest_text()
+        with mock.patch.object(ARM.cp, "parse_overlay",
+                               return_value=ARM.blocked_overlay("no nodes array")), \
+                mock.patch.object(readerapi, "get_document_highlights") as lookup:
+            report = R.refresh(self.manifest, DOC_ID, self.vault)
+        self.assert_nothing_happened(report, before_canvas, before_manifest, lookup)
+        self.assertTrue(any("no nodes array" in w for w in report["warnings"]))
+
+    def test_a_real_nodeless_canvas_file_stops_the_sweep_dead(self):
+        M.atomic_write_text(self.canvas_path(), '{"edges": []}\n')
+        before_canvas = self.canvas_bytes()
+        before_manifest = self.saved_manifest_text()
+        with mock.patch.object(readerapi, "get_document_highlights") as lookup:
+            report = R.refresh(self.manifest, DOC_ID, self.vault)
+        self.assert_nothing_happened(report, before_canvas, before_manifest, lookup)
+        self.assertTrue(any("nodes" in w for w in report["warnings"]))
+
+    def test_a_newer_conflict_copy_stops_the_sweep_dead(self):
+        sibling = os.path.join(
+            self.vault, "%s (conflicted copy 2026-08-26).canvas" % SLUG
+        )
+        shutil.copyfile(self.canvas_path(), sibling)
+        stamp = time.time() + 600
+        os.utime(sibling, (stamp, stamp))
+
+        before_canvas = self.canvas_bytes()
+        before_manifest = self.saved_manifest_text()
+        with mock.patch.object(readerapi, "get_document_highlights") as lookup:
+            report = R.refresh(self.manifest, DOC_ID, self.vault)
+        self.assert_nothing_happened(report, before_canvas, before_manifest, lookup)
+        self.assertTrue(any("conflict copy" in w for w in report["warnings"]))
+
+
+class DocumentIdTest(RefreshTestCase):
+    """[R16] the same binding check arm makes, for the same reason.
+
+    Without it a caller sweeps one book's highlights onto another book's claim
+    map — and the html hash cannot catch it, because an unbound manifest has no
+    hash and two documents can share identical cached html.
+    """
+
+    def test_a_doc_id_that_is_not_this_maps_document_does_nothing(self):
+        before_canvas = self.canvas_bytes()
+        before_manifest = self.saved_manifest_text()
+        with mock.patch.object(readerapi, "get_document_highlights") as lookup:
+            report = R.refresh(self.manifest, "some-other-doc", self.vault)
+        self.assertEqual(lookup.call_count, 0)
+        self.assertEqual(self.canvas_bytes(), before_canvas)
+        self.assertEqual(self.saved_manifest_text(), before_manifest)
+        self.assertTrue(any("document mismatch" in w for w in report["warnings"]))
+        for claim in self.manifest["claims"]:
+            self.assertEqual(claim["jt"]["highlights"], [])
+
+    def test_a_manifest_with_no_document_id_warns_and_proceeds(self):
+        self.manifest["source"]["document_id"] = ""
+        cb.write_canvas(self.manifest, cb.build_canvas(self.manifest), self.vault)
+        report = self.run_refresh(BASE_HIGHLIGHTS)
+        self.assertEqual(report["matched"], {"r1": ["h1"], "r2": ["h2"]})
+        self.assertTrue(
+            any("records no document id" in w for w in report["warnings"])
+        )
+
+
+class StanceOnlyEditTest(RefreshTestCase):
+    """[R27] a matched record stores the stance-stripped remainder.
+
+    ``✅ solid`` and ``❌ solid`` therefore leave identical note and text, and
+    the edit that reversed JT's verdict was read as an unchanged replay.
+    """
+
+    def test_a_stance_only_edit_flips_the_card_and_warns(self):
+        self.run_refresh([jt_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+        self.assertEqual(M.claims_by_id(self.manifest)["r1"]["jt"]["stance"], "agree")
+
+        report = self.run_refresh([jt_highlight("h1", PARAGRAPHS[2], "❌ solid")])
+
+        self.assertEqual(report["updated"], ["h1"])
+        self.assertEqual(report["skipped_known"], 0)
+        self.assertEqual(M.claims_by_id(self.manifest)["r1"]["jt"]["stance"],
+                         "dispute")
+        self.assertEqual(report["stance_changes"], [
+            {"claim_id": "r1", "from": "agree", "to": "dispute", "reader_id": "h1"},
+        ])
+        self.assertTrue(any("stance changed" in w for w in report["warnings"]))
+        # the note itself never changed, so the card's text is the same...
+        highlights = M.claims_by_id(self.manifest)["r1"]["jt"]["highlights"]
+        self.assertEqual(highlights[0]["note"], "solid")
+        # ...but the colour follows the reversed verdict.
+        self.assertEqual(self.node_text("r1").get("color"), "1")
+
+    def test_replaying_the_same_stance_is_still_a_no_op(self):
+        self.run_refresh([jt_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+        first = self.canvas_bytes()
+        report = self.run_refresh([jt_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+        self.assertEqual(report["updated"], [])
+        self.assertEqual(report["skipped_known"], 1)
+        self.assertEqual(self.canvas_bytes(), first)
+
+    def test_a_record_written_before_stance_was_tracked_is_backfilled_quietly(self):
+        # The live pilot manifest has highlight records with no stance key.
+        # Backfilling one must not report every old highlight as edited.
+        self.run_refresh([jt_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+        record = M.claims_by_id(self.manifest)["r1"]["jt"]["highlights"][0]
+        del record["stance"]
+        report = self.run_refresh([jt_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+        self.assertEqual(report["updated"], [])
+        self.assertEqual(report["skipped_known"], 1)
+        record = M.claims_by_id(self.manifest)["r1"]["jt"]["highlights"][0]
+        self.assertEqual(record["stance"], "agree")
+
+
+class UrlBackfillTest(RefreshTestCase):
+    """[R29] a permalink that arrives in a later payload has to land."""
+
+    PERMALINK = "https://read.readwise.io/read/h1"
+
+    def record(self):
+        return M.claims_by_id(self.manifest)["r1"]["jt"]["highlights"][0]
+
+    def test_a_url_that_arrives_later_backfills_the_permalink(self):
+        self.run_refresh([urlless_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+        self.assertEqual(self.record()["url"], "")
+
+        report = self.run_refresh([jt_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+
+        self.assertEqual(report["updated"], ["h1"])
+        self.assertEqual(self.record()["url"], self.PERMALINK)
+
+    def test_a_later_payload_without_a_url_does_not_erase_the_one_we_hold(self):
+        self.run_refresh([jt_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+        report = self.run_refresh([urlless_highlight("h1", PARAGRAPHS[2], "✅ solid")])
+        self.assertEqual(report["updated"], [])
+        self.assertEqual(report["skipped_known"], 1)
+        self.assertEqual(self.record()["url"], self.PERMALINK)
+
+    def test_a_binned_record_gains_its_url_too(self):
+        self.run_refresh([urlless_highlight("h3", STRADDLE, "no idea")])
+        self.assertEqual(self.manifest["unmatched"][0]["url"], "")
+        report = self.run_refresh([jt_highlight("h3", STRADDLE, "no idea")])
+        self.assertEqual(report["updated"], ["h3"])
+        self.assertEqual(self.manifest["unmatched"][0]["url"],
+                         "https://read.readwise.io/read/h3")
 
 
 class SourceDriftTest(RefreshTestCase):

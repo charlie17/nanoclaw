@@ -31,8 +31,11 @@ CLAIM_TAG = arm_mod.CLAIM_TAG
 
 #: Keys a highlight-list payload might be wrapped in.  ``result`` (singular) is
 #: what the live MCP gateway actually returned on 2026-08-26 — without it a real
-#: sweep reads zero highlights and reports a clean run.
-_LIST_KEYS = ("highlights", "results", "result", "data", "items")
+#: sweep reads zero highlights and reports a clean run.  Owned by ``arm`` and
+#: aliased here: arm reads the same endpoint for the same reason, and when the
+#: two modules each kept their own list they drifted, leaving arm blind to the
+#: live envelope and recreating highlights that already existed.
+_LIST_KEYS = arm_mod._LIST_KEYS
 
 _ID_KEYS = ("id", "highlight_id", "highlightId", "hid")
 _TEXT_KEYS = ("text", "content", "highlight", "quote", "html")
@@ -44,42 +47,20 @@ _URL_KEYS = ("url", "readwise_url", "highlight_url", "link")
 # defensive payload handling
 # --------------------------------------------------------------------------
 
-def coerce_highlights(payload):
-    """``(items, recognized)`` from whatever ``get_document_highlights`` returned.
+#: ``(items, recognized)`` from whatever ``get_document_highlights`` returned.
+#: One implementation, living in ``arm`` — see ``_LIST_KEYS`` above.  A
+#: recognized envelope holding zero highlights is a document JT has not marked
+#: up yet; an UNrecognized envelope is an API change that just silently ate his
+#: reading, and the two look identical once coerced to ``[]``.
+coerce_highlights = arm_mod.coerce_highlights
 
-    The MCP tool hands back JSON decoded from a text block; the wrapper shape
-    is not something we control, so accept a bare list or any of the usual
-    envelope keys and never explode on a shape we have not seen.
-
-    ``recognized`` is the half callers actually need: a recognized envelope
-    holding zero highlights is a document JT has not marked up yet, while an
-    UNrecognized envelope is an API change that just silently ate his reading.
-    The two look identical once the payload has been coerced to ``[]``, so the
-    distinction is returned rather than thrown away.
-    """
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)], True
-    if isinstance(payload, dict):
-        for key in _LIST_KEYS:
-            value = payload.get(key)
-            if isinstance(value, list):
-                return [item for item in value if isinstance(item, dict)], True
-    return [], False
+#: A short description of an unrecognized payload, for the run report.
+_shape_of = arm_mod._shape_of
 
 
 def as_highlight_list(payload):
     """Just the items from ``coerce_highlights`` — never raises, never guesses."""
     return coerce_highlights(payload)[0]
-
-
-def _shape_of(payload):
-    """A short description of an unrecognized payload, for the run report."""
-    if isinstance(payload, dict):
-        keys = sorted(str(key) for key in payload.keys())
-        return "a %s with keys: %s" % (
-            type(payload).__name__, ", ".join(keys) if keys else "(none)"
-        )
-    return "a %s" % type(payload).__name__
 
 
 def _first(source, keys):
@@ -223,16 +204,44 @@ def reconcile_known(report, claim, record, view):
     place (no second record, on a claim or in the bin) and re-reads its stance,
     because "we have seen this id" is not the same claim as "nothing about this
     highlight has changed".
+
+    Three things count as changed, and each of the last two was once invisible:
+
+      * the text, or the note.
+      * the STANCE.  A matched record stores only the remainder left after the
+        shorthand was split off, so ``✅ solid`` and ``❌ solid`` store the same
+        note — a mind JT changed in Reader by editing one glyph never reached
+        the card.  The parsed stance is therefore tracked beside the note.
+      * the URL.  A highlight first swept from a payload that carried no
+        permalink would otherwise never gain one.  A payload that omits a URL
+        never erases the one already held; only a different URL is a change.
     """
     stance, remainder = match_mod.parse_stance(view["note"])
     # A binned record keeps the raw note; a matched one keeps the remainder
     # left after the stance shorthand was split off.  Compare like with like.
     note = view["note"] if claim is None else remainder
-    if record.get("note") == note and record.get("text") == view["text"]:
+
+    # Stance is only meaningful on a matched record — a binned one keeps the
+    # raw note, so an edited glyph already shows up as a note change.
+    tracks_stance = claim is not None
+    knew_stance = "stance" in record
+    stance_changed = tracks_stance and knew_stance and record.get("stance") != stance
+    if tracks_stance and not knew_stance:
+        # A record written before stance was tracked: backfill it silently.
+        # Counting the backfill as a change would report every pre-existing
+        # highlight as edited on the first run after the upgrade.
+        record["stance"] = stance
+
+    url_changed = bool(view["url"]) and record.get("url") != view["url"]
+
+    if (record.get("note") == note and record.get("text") == view["text"]
+            and not stance_changed and not url_changed):
         return False
 
     record["note"] = note
     record["text"] = view["text"]
+    if tracks_stance:
+        record["stance"] = stance
     if view["url"]:
         record["url"] = view["url"]
     report["updated"].append(view["reader_id"])
@@ -263,8 +272,34 @@ def refresh(manifest, doc_id, vault_dir, token=None):
         "warnings": [],
     }
 
-    existing, _overlay, warnings = arm_mod.fold_canvas(manifest, vault_dir)
+    # Same check, same wording as arm.  A caller that hands refresh the wrong
+    # document fetches one book's highlights and staples them onto another
+    # book's claim map — and the html hash cannot catch it, because an unbound
+    # manifest has no hash and two documents can share cached html.
+    source = manifest.get("source") or {}
+    recorded_doc = str(source.get("document_id") or "")
+    if recorded_doc and str(doc_id) != recorded_doc:
+        report["warnings"].append(
+            "document mismatch: this map was built from %s but refresh was asked "
+            "to act on %s; nothing was folded, matched or written"
+            % (recorded_doc, doc_id)
+        )
+        return report
+    if not recorded_doc:
+        report["warnings"].append(
+            "the manifest records no document id, so %s could not be checked "
+            "against it; proceeding" % doc_id
+        )
+
+    existing, overlay, warnings = arm_mod.fold_canvas(manifest, vault_dir)
     report["warnings"].extend(warnings)
+    if overlay is not None and overlay.get("invalid"):
+        # Nothing was folded in and nothing may be written; the warnings above
+        # say why.  arm stops dead on exactly this shape and refresh must too:
+        # carrying on mutates the manifest, and because the broken canvas then
+        # still matches the run-start snapshot, project() skips the second fold
+        # and writes over the very file fold_canvas refused to touch.
+        return report
 
     html = slicer.load_source(doc_id)
     blocks = slicer.load_blocks(doc_id)
@@ -344,12 +379,17 @@ def refresh(manifest, doc_id, vault_dir, token=None):
 
             claim = by_id[claim_id]
             jt = claim.setdefault("jt", {})
-            jt.setdefault("highlights", []).append(manifest_mod.new_highlight(
+            record = manifest_mod.new_highlight(
                 reader_id=view["reader_id"],
                 url=view["url"],
                 text=view["text"],
                 note=remainder,
-            ))
+            )
+            # The remainder alone cannot tell ✅ solid from ❌ solid; the parsed
+            # stance rides along so a later glyph-only edit is visible to
+            # reconcile_known instead of reading as an unchanged replay.
+            record["stance"] = stance
+            jt.setdefault("highlights", []).append(record)
             report["matched"].setdefault(claim_id, []).append(view["reader_id"])
             _apply_stance(report, claim_id, jt, stance, view["reader_id"])
 

@@ -114,6 +114,54 @@ class SliceBlocksTests(unittest.TestCase):
         self.assertTrue(slicer.block_html(html, blocks[3]).endswith("\n</p>"))
 
 
+class BlockTextSeparatorTests(unittest.TestCase):
+    """[R33] Whether a stripped tag leaves a space is what a reader sees.
+
+    Deleting every tag with no separator turned "<p>first<br>second</p>" into
+    "firstsecond" — it distorts chapter extraction AND stops a Reader highlight
+    reading "first second" from matching the block it came from.
+    """
+
+    def text_of(self, html):
+        return slicer.block_text(html, slicer.slice_blocks(html)[0])
+
+    def test_a_break_tag_separates_words(self):
+        self.assertEqual(self.text_of("<p>first<br>second</p>"), "first second")
+        self.assertEqual(self.text_of("<p>first<br/>second</p>"), "first second")
+        self.assertEqual(self.text_of("<p>first<hr>second</p>"), "first second")
+
+    def test_an_inline_tag_does_not_split_a_word(self):
+        self.assertEqual(
+            self.text_of("<p>catastroph<i>e</i> theory</p>"), "catastrophe theory"
+        )
+        self.assertEqual(self.text_of("<p>pre<span>cise</span>ly</p>"), "precisely")
+        self.assertEqual(
+            self.text_of('<p>a foot<sup>1</sup>note and a <a href="x">link</a></p>'),
+            "a foot1note and a link",
+        )
+
+    def test_structural_and_inline_markup_side_by_side(self):
+        self.assertEqual(
+            self.text_of("<p>alpha<span>beta</span><br>gamma</p>"),
+            "alphabeta gamma",
+        )
+
+    def test_angle_bracket_prose_inside_a_block_survives(self):
+        # [R22] the shared tag regex used to eat "< 5 and y >" as one tag.
+        self.assertEqual(
+            self.text_of("<p>If x < 5 and y > 3 then stop the run.</p>"),
+            "If x < 5 and y > 3 then stop the run.",
+        )
+
+    def test_a_comment_inside_a_block_is_consumed_whole(self):
+        # [R37] matching only to the comment's first ">" leaked the markup
+        # inside it back into the text.
+        self.assertEqual(
+            self.text_of("<p>visible<!-- <b>hidden</b> -->text</p>"),
+            "visible text",
+        )
+
+
 class DetectFormatTests(unittest.TestCase):
     def test_epub(self):
         self.assertEqual(slicer.detect_format(read_fixture("epub_sample.html")), "epub")
@@ -279,9 +327,19 @@ class CacheTests(unittest.TestCase):
 
     def test_cache_dir_rejects_traversal(self):
         with temp_home():
-            for bad in ("../evil", "a/b", "", "x\\y"):
-                with self.assertRaises(ValueError):
+            # [R23] "." and ".." pass the allowlist character-for-character but
+            # are path navigation: cache_dir("..") resolved to ~/.cache and
+            # wrote source.html outside the per-document root.
+            for bad in ("../evil", "a/b", "", "x\\y", ".", "..", " .. "):
+                with self.assertRaises(ValueError, msg="accepted %r" % (bad,)):
                     slicer.cache_dir(bad)
+
+    def test_cache_dir_still_accepts_a_dotted_document_id(self):
+        # Only the two navigation names are reserved; a dot INSIDE an id is
+        # ordinary and must keep working.
+        with temp_home() as home:
+            path = slicer.cache_dir("doc.v2")
+            self.assertEqual(path, home / ".cache" / "daystrom-reading" / "doc.v2")
 
     def test_save_and_load_source_round_trips_byte_for_byte(self):
         html = read_fixture("epub_sample.html")

@@ -335,6 +335,88 @@ class AmbiguousAttemptTest(ArmTestCase):
         self.assertEqual(cite["highlight_id"], "hl-ghost")
         self.assertEqual(cite["url"], "https://read.readwise.io/read/hl-ghost")
 
+    def test_the_live_singular_result_envelope_is_adopted(self):
+        # [R38] the live MCP gateway wraps the list under "result" (singular).
+        # Reading that as "no existing highlights" recreates the very highlight
+        # the ambiguous attempt already committed — permanently, twice.
+        self.fail_a5()
+        resumed = M.load(ARM.manifest_path(self.manifest, self.vault))
+        live_shape = {"result": [
+            {"id": "hl-ghost", "text": PARAGRAPHS[5], "tags": ["daystrom-claim"]},
+        ]}
+        with mock.patch.object(readerapi, "get_document_highlights",
+                               return_value=live_shape), \
+                mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(resumed, DOC_ID, self.vault)
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual([a["claim_id"] for a in report["armed"]], ["a5"])
+        self.assertTrue(report["armed"][0]["adopted"])
+        self.assertEqual(
+            M.claims_by_id(resumed)["a5"]["cite"]["highlight_id"], "hl-ghost"
+        )
+
+    def test_an_unrecognised_envelope_leaves_the_attempt_unresolved(self):
+        # [R38] an envelope we cannot read is not an empty document.
+        self.fail_a5()
+        resumed = M.load(ARM.manifest_path(self.manifest, self.vault))
+        with mock.patch.object(readerapi, "get_document_highlights",
+                               return_value={"data_v2": {"items": []}}), \
+                mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(resumed, DOC_ID, self.vault)
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual([f["claim_id"] for f in report["failed"]], ["a5"])
+        self.assertIn("UNRECOGNISED", report["failed"][0]["error"])
+        self.assertIn("data_v2", report["failed"][0]["error"])
+        self.assertIsNone(M.claims_by_id(resumed)["a5"]["cite"]["highlight_id"])
+
+    def test_two_identical_candidates_are_unresolved_not_a_third_duplicate(self):
+        # [R13] "no match" and "several matches" used to look the same (None),
+        # so an already-duplicated block got a third highlight.
+        self.fail_a5()
+        resumed = M.load(ARM.manifest_path(self.manifest, self.vault))
+        doubled = {"highlights": [
+            {"id": "hl-one", "text": PARAGRAPHS[5], "tags": ["daystrom-claim"]},
+            {"id": "hl-two", "text": PARAGRAPHS[5], "tags": ["daystrom-claim"]},
+        ]}
+        with mock.patch.object(readerapi, "get_document_highlights",
+                               return_value=doubled), \
+                mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(resumed, DOC_ID, self.vault)
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual([a["claim_id"] for a in report["armed"]], [])
+        self.assertEqual([f["claim_id"] for f in report["failed"]], ["a5"])
+        self.assertIn("more than one", report["failed"][0]["error"])
+        self.assertIsNone(M.claims_by_id(resumed)["a5"]["cite"]["highlight_id"])
+
+    def test_one_existing_highlight_cannot_settle_two_pending_claims(self):
+        # [R13] adoption is one-to-one: the second card would otherwise point
+        # its cite at a highlight the first card already owns.
+        by_id = M.claims_by_id(self.manifest)
+        by_id["a5"]["jt"]["flags"] = []                 # keep the run to a1/a7
+        for claim_id in ("a1", "a7"):
+            claim = by_id[claim_id]
+            claim["anchor_block"] = 1
+            claim["anchor_phrase"] = "Sequence risk"
+            claim["cite"] = {"highlight_id": None, "url": None, "attempted": True}
+        cb.write_canvas(self.manifest, cb.build_canvas(self.manifest), self.vault)
+        M.save(self.manifest, ARM.manifest_path(self.manifest, self.vault))
+
+        one = {"highlights": [
+            {"id": "hl-only", "text": PARAGRAPHS[1], "tags": ["daystrom-claim"]},
+        ]}
+        with mock.patch.object(readerapi, "get_document_highlights",
+                               return_value=one), \
+                mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual([a["claim_id"] for a in report["armed"]], ["a1"])
+        self.assertEqual([f["claim_id"] for f in report["failed"]], ["a7"])
+        self.assertIn("more than one", report["failed"][0]["error"])
+        by_id = M.claims_by_id(self.manifest)
+        self.assertEqual(by_id["a1"]["cite"]["highlight_id"], "hl-only")
+        self.assertIsNone(by_id["a7"]["cite"]["highlight_id"])
+
     def test_a_lookup_that_fails_refuses_to_create_a_possible_duplicate(self):
         self.fail_a5()
         resumed = M.load(ARM.manifest_path(self.manifest, self.vault))
@@ -536,6 +618,67 @@ class InvalidCanvasTest(ArmTestCase):
         pruned = [c["id"] for c in self.manifest["claims"]
                   if c["jt"]["pruned"] and c["id"] != "a4"]
         self.assertEqual(pruned, [])
+
+
+class MalformedCanvasJsonTest(ArmTestCase):
+    """[R39][R40] a canvas caught mid-sync is truncated JSON, not valid JSON.
+
+    ``read_canvas`` calls ``json.load``, so a half-written file raised
+    ``JSONDecodeError`` straight out of the run — past the designed refusal
+    path, and (mid-run) past the "save the manifest, refuse the canvas" rule
+    that keeps this run's irreversible creates.
+    """
+
+    TRUNCATED = '{"nodes": [{"id": "a", "type": "text", "text": "half a f'
+
+    def truncate_canvas(self):
+        M.atomic_write_text(self.canvas_path(), self.TRUNCATED)
+
+    def canvas_text(self):
+        with open(self.canvas_path(), "r", encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_a_truncated_canvas_at_fold_aborts_cleanly(self):
+        self.truncate_canvas()
+        before_manifest = M.dumps(self.saved_manifest())
+        with mock.patch.object(readerapi, "create_highlight") as create:
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+
+        self.assertEqual(create.call_count, 0)
+        self.assertEqual(M.dumps(self.saved_manifest()), before_manifest)
+        self.assertEqual(self.canvas_text(), self.TRUNCATED)
+        self.assertTrue(any("could not be read" in w for w in report["warnings"]))
+        # Nothing was folded, so the unreadable file pruned nothing.
+        pruned = [c["id"] for c in self.manifest["claims"]
+                  if c["jt"]["pruned"] and c["id"] != "a4"]
+        self.assertEqual(pruned, [])
+
+    def test_a_canvas_truncated_mid_run_keeps_the_creates_and_refuses_the_write(self):
+        calls = []
+
+        def create(*args, **kwargs):
+            if not calls:
+                self.truncate_canvas()
+            calls.append(args)
+            return payload(len(calls))
+
+        with mock.patch.object(readerapi, "create_highlight", side_effect=create):
+            report = ARM.arm(self.manifest, DOC_ID, self.vault)
+
+        # Every create landed and every cite reached disk...
+        self.assertEqual([a["claim_id"] for a in report["armed"]],
+                         ["a1", "a5", "a7"])
+        saved = M.claims_by_id(self.saved_manifest())
+        self.assertEqual(saved["a1"]["cite"]["highlight_id"], "hl-1")
+        self.assertEqual(saved["a5"]["cite"]["highlight_id"], "hl-2")
+        self.assertEqual(saved["a7"]["cite"]["highlight_id"], "hl-3")
+        # ...while the unreadable file was left exactly as it was found.
+        self.assertEqual(self.canvas_text(), self.TRUNCATED)
+        self.assertTrue(any("NOT rewritten" in w for w in report["warnings"]))
+        self.assertTrue(any("could not be read" in w for w in report["warnings"]))
+        self.assertEqual(self.saved_manifest()["runs"][-1]["action"], "arm")
+        self.assertIn("canvas not written",
+                      self.saved_manifest()["runs"][-1]["summary"])
 
 
 class SourceBindingTest(ArmTestCase):
