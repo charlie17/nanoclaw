@@ -24,12 +24,17 @@ import manifest as manifest_mod
 # layout constants
 # --------------------------------------------------------------------------
 
-CARD_W = 340
+CARD_W = 480
 COL_GAP = 120
-COL_PITCH = CARD_W + COL_GAP        # 460
+COL_PITCH = CARD_W + COL_GAP        # 600
 SIB_GAP = 60
 CHAPTER_GAP = 480                   # whitespace between chapters (no group boxes)
 CLUSTER_GAP = 240                   # overview cluster -> first chapter
+
+# Filmstrip: the map is consumed as a horizontal pan, so a chapter may never
+# grow taller than this.  A wing that would stack past it spills sideways into
+# further columns instead — width is cheap, vertical scrolling is not.
+CHAPTER_HEIGHT_CAP = 3200
 
 SIDE_X = 0                          # overview cluster / legend / bin column, far left
 SIDE_GAP = 60
@@ -46,13 +51,15 @@ LEFT = -1
 # A card must never need scrolling: the map is read at a glance, and a clipped
 # card is a silently lost claim.  Every constant here is deliberately
 # pessimistic — an over-tall card costs whitespace, a short one costs meaning.
-CHARS_PER_LINE = 34                 # at width 340, body text
-TITLE_CHARS_PER_LINE = 26           # headings render larger, so they wrap sooner
+CHARS_PER_LINE = 48                 # at width 480, body text
+TITLE_CHARS_PER_LINE = 36           # headings render larger, so they wrap sooner
 TITLE_LINE_WEIGHT = 2               # ...and each heading line is ~2 body lines tall
 BASE_H = 48                         # padding and chrome
 LINE_H = 24
-SAFETY_MARGIN = 1.15
-H_MIN = 220
+# 1.15 still produced small scrolls in Obsidian: the renderer is hungrier than
+# the model.  Over-tall costs whitespace; too short costs a claim.
+SAFETY_MARGIN = 1.25
+H_MIN = 620                         # nominal card, roughly 8.5x11 portrait
 H_MAX = 2400                        # tall enough for a legacy 1400-char body
 H_ROUND = 10
 
@@ -507,46 +514,98 @@ def _stack_height(branches, spans):
             + SIB_GAP * (len(branches) - 1))
 
 
-def _layout_chapter(hub_height, roots, children, heights):
-    """Bilateral radial layout: the hub in the middle, branches either side.
+def _subtree_height(claim_id, children, heights, cache):
+    """Total card height of a whole subtree — the balancing weight."""
+    if claim_id in cache:
+        return cache[claim_id]
+    total = heights[claim_id]
+    for kid in children.get(claim_id, []):
+        total += SIB_GAP + _subtree_height(kid["id"], children, heights, cache)
+    cache[claim_id] = total
+    return total
 
-    Right-hand branches grow rightward exactly as before; left-hand branches
-    mirror them, with columns at decreasing x.  Because the two wings occupy
-    disjoint column ranges and each branch owns a disjoint vertical band,
-    nothing can overlap.
+
+def _pack_columns(claim_ids, heights, cap):
+    """Fill one column at a time, spilling outward rather than growing taller."""
+    columns = []
+    current = []
+    used = 0
+    for claim_id in claim_ids:
+        height = heights[claim_id]
+        added = height if not current else SIB_GAP + height
+        if current and used + added > cap:
+            columns.append(current)
+            current = [claim_id]
+            used = height
+        else:
+            current.append(claim_id)
+            used += added
+    if current:
+        columns.append(current)
+    return columns
+
+
+def _wing_levels(branches, children):
+    """Claim ids per depth, breadth-first, so siblings stay contiguous."""
+    levels = []
+    frontier = list(branches)
+    while frontier:
+        levels.append([c["id"] for c in frontier])
+        nxt = []
+        for claim in frontier:
+            nxt.extend(children.get(claim["id"], []))
+        frontier = nxt
+    return levels
+
+
+def _column_height(column, heights):
+    if not column:
+        return 0
+    return sum(heights[c] for c in column) + SIB_GAP * (len(column) - 1)
+
+
+def _layout_chapter(hub_height, roots, children, heights, cap=CHAPTER_HEIGHT_CAP):
+    """Filmstrip layout: hub in the middle, capped columns fanning both ways.
+
+    Each depth level is packed into as many columns as the height cap requires,
+    filling one column before starting the next further out.  That trades width
+    for height on purpose: the map is panned horizontally, and a chapter that
+    grows past the cap forces vertical scrolling that the reader will not do.
+
+    Columns occupy distinct x positions and cards within a column are stacked
+    with a gap, so nothing can overlap by construction.
     """
-    spans = _spans(roots, children, heights)
-    right, left = _balance_sides(roots, spans)
-    right_h = _stack_height(right, spans)
-    left_h = _stack_height(left, spans)
-    content_h = max(hub_height, right_h, left_h)
+    cache = {}
+    weights = dict(
+        (c["id"], _subtree_height(c["id"], children, heights, cache)) for c in roots
+    )
+    right, left = _balance_sides(roots, weights)
+
+    wings = {}
+    for side, branches in ((RIGHT, right), (LEFT, left)):
+        columns = []
+        for level in _wing_levels(branches, children):
+            columns.extend(_pack_columns(level, heights, cap))
+        wings[side] = columns
+
+    content_h = max(
+        [hub_height]
+        + [_column_height(col, heights)
+           for side in (RIGHT, LEFT) for col in wings[side]]
+    )
 
     positions = {}
     sides = {}
     order = []
-
-    def place(claim, depth, top, side):
-        claim_id = claim["id"]
-        span = spans[claim_id]
-        own = heights[claim_id]
-        column = (depth + 1) * COL_PITCH
-        positions[claim_id] = (column if side == RIGHT else -column,
-                               top + (span - own) // 2)
-        sides[claim_id] = side
-        order.append(claim_id)
-        kids = children.get(claim_id, [])
-        if kids:
-            kids_span = sum(spans[k["id"]] for k in kids) + SIB_GAP * (len(kids) - 1)
-            cursor = top + (span - kids_span) // 2
-            for kid in kids:
-                place(kid, depth + 1, cursor, side)
-                cursor += spans[kid["id"]] + SIB_GAP
-
-    for branches, side, stack in ((right, RIGHT, right_h), (left, LEFT, left_h)):
-        cursor = (content_h - stack) // 2
-        for claim in branches:
-            place(claim, 0, cursor, side)
-            cursor += spans[claim["id"]] + SIB_GAP
+    for side in (RIGHT, LEFT):
+        for index, column in enumerate(wings[side]):
+            x = (index + 1) * COL_PITCH * (1 if side == RIGHT else -1)
+            y = (content_h - _column_height(column, heights)) // 2
+            for claim_id in column:
+                positions[claim_id] = (x, y)
+                sides[claim_id] = side
+                order.append(claim_id)
+                y += heights[claim_id] + SIB_GAP
 
     positions[HUB_SLOT] = (0, (content_h - hub_height) // 2)
 
@@ -564,6 +623,7 @@ def _layout_chapter(hub_height, roots, children, heights):
         "top_level": [c["id"] for c in right] + [c["id"] for c in left],
         "content_w": right_edge - left_edge,
         "content_h": content_h,
+        "columns": dict((side, len(wings[side])) for side in (RIGHT, LEFT)),
     }
 
 
@@ -807,14 +867,13 @@ def build_canvas(manifest, existing=None):
         ))
 
     # --- edges ------------------------------------------------------------
+    # No root -> hub spokes.  Shelf position already carries chapter order, and
+    # one long line per chapter across the whole map is noise, not structure.
+    # The keys stay known (see known_ids) so spokes left in an older canvas are
+    # dropped rather than resurrected as JT's own edges.
     edges = []
     hub_of = {}
     for hub in hubs:
-        edges.append(_edge(
-            node_id(slug, hub_edge_key(hub["key"])),
-            root_ident,
-            node_id(slug, hub_key(hub["key"])),
-        ))
         for claim_id in hub["top_level"]:
             hub_of[claim_id] = node_id(slug, hub_key(hub["key"]))
 

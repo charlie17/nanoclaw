@@ -107,6 +107,65 @@ def branching_manifest():
     return m
 
 
+def _col_height(nodes):
+    return (max(n["y"] + n["height"] for n in nodes)
+            - min(n["y"] for n in nodes))
+
+
+def tall_manifest(leaves=14):
+    """One chapter, many leaf claims — a stack that must spill sideways."""
+    m = M.new_manifest(
+        "tall", {"title": "Tall", "author": "A. Writer"},
+        [{"idx": 0, "title": "The Only Chapter", "block_start": 0, "block_end": 200}],
+    )
+    m["claims"] = [
+        M.new_claim("c-%04d" % (i + 1), "Leaf claim number %d" % (i + 1),
+                    0, "root", i,
+                    locator="Ch 1 §%d" % i, block_range=[i, i + 1], anchor_block=i,
+                    anchor_phrase="anchor %d" % i, body_md=LOREM[:300])
+        for i in range(leaves)
+    ]
+    M.validate(m)
+    return m
+
+
+def granular_manifest(total=330, chapters=15):
+    """The v3 content shape: ~330 cards, depth <= 2, 650-char bodies."""
+    m = M.new_manifest(
+        "granular", {"title": "Granular", "author": "A. Writer", "word_count": 90000},
+        [{"idx": i, "title": "Chapter %d" % (i + 1),
+          "block_start": i * 100, "block_end": (i + 1) * 100,
+          "gloss": "What this chapter establishes and why it matters here."}
+         for i in range(chapters)],
+    )
+    claims = []
+    counter = 0
+    per_chapter = total // chapters
+    for chapter in range(chapters):
+        parents = []
+        for position in range(per_chapter):
+            counter += 1
+            claim_id = "c-%04d" % counter
+            if position % 3 == 0 or not parents:
+                parent, depth_parent = "root", None
+                parents.append(claim_id)
+            else:
+                depth_parent = parents[-1]
+                parent = depth_parent
+            claims.append(M.new_claim(
+                claim_id, "Claim %d on the sequencing problem" % counter,
+                chapter, parent, position,
+                locator="Ch %d §%d" % (chapter + 1, position),
+                block_range=[chapter * 100 + position, chapter * 100 + position + 1],
+                anchor_block=chapter * 100 + position,
+                anchor_phrase=LOREM[position % 40:position % 40 + 25],
+                body_md="\n\n".join([LOREM[:210], LOREM[40:250], LOREM[80:290]]),
+            ))
+    m["claims"] = claims
+    M.validate(m)
+    return m
+
+
 def nodes_by_id(canvas):
     return dict((n["id"], n) for n in canvas["nodes"])
 
@@ -241,7 +300,7 @@ class DeterminismTest(unittest.TestCase):
             self.assertEqual(len(ident), 16)
         edge_ids = [e["id"] for e in canvas["edges"]]
         self.assertIn(cb.node_id(SLUG, "edge:c-0002"), edge_ids)
-        self.assertIn(cb.node_id(SLUG, "edge:hub:0"), edge_ids)
+        self.assertNotIn(cb.node_id(SLUG, "edge:hub:0"), edge_ids)
 
     def test_no_literal_backslash_n_in_written_json(self):
         directory = tempfile.mkdtemp(prefix="dsr-nl-")
@@ -640,7 +699,7 @@ class OverviewTest(unittest.TestCase):
         self.assertGreaterEqual(first["x0"], overview["x1"])
         self.assertEqual(validate_canvas(canvas), [])
 
-    def test_root_edges_to_every_overview_claim_and_every_hub(self):
+    def test_root_edges_only_to_its_own_overview_claims(self):
         m = small_manifest(with_overview=True)
         canvas = cb.build_canvas(m)
         root = cb.node_id(SLUG, "root")
@@ -649,8 +708,6 @@ class OverviewTest(unittest.TestCase):
             cb.node_id(SLUG, "o-0001"),
             cb.node_id(SLUG, "o-0002"),
             cb.node_id(SLUG, "o-0003"),
-            cb.node_id(SLUG, "hub:0"),
-            cb.node_id(SLUG, "hub:1"),
         })
 
     def test_overview_claims_may_nest(self):
@@ -829,19 +886,44 @@ class ShelfLayoutTest(unittest.TestCase):
             "# Ch 1 — Cash Flow\n\nWhy the paycheque, not the portfolio, comes first.")
         self.assertEqual(validate_canvas(canvas), [])
 
-    def test_root_edges_to_hubs_and_hubs_edge_to_top_level_claims(self):
+    def test_no_hub_spoke_edges_are_emitted(self):
+        for m in (small_manifest(), small_manifest(with_overview=True),
+                  big_manifest(), branching_manifest()):
+            canvas = cb.build_canvas(m)
+            hub_ids = set(cb.node_id(m["slug"], cb.hub_key(c["idx"]))
+                          for c in m["chapters"])
+            for edge in canvas["edges"]:
+                self.assertNotIn(edge["toNode"], hub_ids,
+                                 "nothing may point at a hub")
+            spokes = set(cb.node_id(m["slug"], cb.hub_edge_key(c["idx"]))
+                         for c in m["chapters"])
+            self.assertEqual(
+                spokes & set(e["id"] for e in canvas["edges"]), set(),
+                "root -> hub spokes must not be emitted")
+
+    def test_hubs_still_edge_to_their_top_level_claims(self):
         m = small_manifest()
         canvas = cb.build_canvas(m)
-        root = cb.node_id(SLUG, "root")
         hub0 = cb.node_id(SLUG, cb.hub_key(0))
-        hub1 = cb.node_id(SLUG, cb.hub_key(1))
-        from_root = set(e["toNode"] for e in canvas["edges"] if e["fromNode"] == root)
-        self.assertEqual(from_root, {hub0, hub1})
         from_hub0 = set(e["toNode"] for e in canvas["edges"] if e["fromNode"] == hub0)
         self.assertEqual(from_hub0, {cb.claim_node_id(SLUG, "c-0001")})
         edge = [e for e in canvas["edges"]
                 if e["id"] == cb.node_id(SLUG, "edge:c-0001")][0]
         self.assertEqual(edge["fromNode"], hub0)
+
+    def test_legacy_hub_spokes_are_dropped_not_carried_forward(self):
+        m = small_manifest()
+        canvas = cb.build_canvas(m)
+        stale = {
+            "id": cb.node_id(SLUG, cb.hub_edge_key(0)),
+            "fromNode": cb.node_id(SLUG, "root"),
+            "toNode": cb.node_id(SLUG, cb.hub_key(0)),
+            "fromSide": "right", "toSide": "left", "toEnd": "arrow",
+        }
+        existing = {"nodes": list(canvas["nodes"]),
+                    "edges": list(canvas["edges"]) + [stale]}
+        rebuilt = cb.build_canvas(m, existing=existing)
+        self.assertNotIn(stale["id"], [e["id"] for e in rebuilt["edges"]])
 
     def test_hub_edges_carry_rel_labels(self):
         m = small_manifest()
@@ -930,6 +1012,75 @@ class ShelfLayoutTest(unittest.TestCase):
         height = chapter["y1"] - chapter["y0"]
         self.assertLessEqual(height, 0.65 * sum(wing_heights))
 
+    def test_card_dimensions_are_480_by_620_nominal(self):
+        m = small_manifest()
+        canvas = cb.build_canvas(m)
+        self.assertEqual(cb.CARD_W, 480)
+        self.assertEqual(cb.H_MIN, 620)
+        for node in canvas["nodes"]:
+            self.assertEqual(node["width"], 480)
+            self.assertGreaterEqual(node["height"], 620)
+
+    def test_short_cards_sit_at_the_nominal_height(self):
+        claim = M.new_claim("c-9", "Short", 0, "root", 0, body_md="Brief.")
+        self.assertEqual(cb.card_height(cb.card_text(claim)), 620)
+
+    def test_chapter_content_never_exceeds_the_height_cap(self):
+        for m in (tall_manifest(), big_manifest(), branching_manifest(),
+                  granular_manifest()):
+            canvas = cb.build_canvas(m)
+            for chapter in chapter_extents(m, canvas):
+                height = chapter["y1"] - chapter["y0"]
+                self.assertLessEqual(
+                    height, cb.CHAPTER_HEIGHT_CAP,
+                    "chapter %r is %d tall, cap is %d"
+                    % (chapter["label"], height, cb.CHAPTER_HEIGHT_CAP))
+
+    def test_a_stack_that_would_bust_the_cap_spills_into_more_columns(self):
+        m = tall_manifest()
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        hub = by_id[cb.node_id(m["slug"], cb.hub_key(0))]
+        # every top-level claim is a leaf, so without spill they would stack
+        # into one very tall column
+        naive = sum(by_id[cb.claim_node_id(m["slug"], c["id"])]["height"]
+                    for c in m["claims"])
+        self.assertGreater(naive, cb.CHAPTER_HEIGHT_CAP)
+        columns = sorted(set(by_id[cb.claim_node_id(m["slug"], c["id"])]["x"]
+                             for c in m["claims"]))
+        self.assertGreater(len(columns), 2, "expected spill into extra columns")
+        # both wings spilled, and each wing's columns are one pitch apart
+        right = sorted(x for x in columns if x > hub["x"])
+        left = sorted((x for x in columns if x < hub["x"]), reverse=True)
+        self.assertGreater(len(right), 1)
+        self.assertGreater(len(left), 1)
+        for wing in (right, left):
+            for earlier, later in zip(wing, wing[1:]):
+                self.assertEqual(abs(later - earlier), cb.COL_PITCH)
+        for x in columns:
+            self.assertTrue(x + cb.CARD_W <= hub["x"] or x >= hub["x"] + cb.CARD_W)
+
+    def test_spill_keeps_no_overlap_and_is_deterministic(self):
+        m = tall_manifest()
+        first = cb.build_canvas(m)
+        self.assertEqual(validate_canvas(first), [])
+        self.assertEqual(cb.dumps_canvas(first), cb.dumps_canvas(cb.build_canvas(m)))
+
+    def test_columns_fill_one_at_a_time(self):
+        m = tall_manifest()
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        per_column = {}
+        for claim in m["claims"]:
+            node = by_id[cb.claim_node_id(m["slug"], claim["id"])]
+            per_column.setdefault(node["x"], []).append(node)
+        # every column except the last of a wing is filled close to the cap
+        filled = sorted(
+            (_col_height(nodes) for nodes in per_column.values()), reverse=True)
+        self.assertGreater(filled[0], cb.CHAPTER_HEIGHT_CAP * 0.5)
+        for height in filled:
+            self.assertLessEqual(height, cb.CHAPTER_HEIGHT_CAP)
+
     def test_a_book_scale_map_has_a_workable_aspect_ratio(self):
         m = big_manifest(claim_count=300, chapters=10)
         canvas = cb.build_canvas(m)
@@ -970,15 +1121,17 @@ class EdgeTest(unittest.TestCase):
             self.assertEqual(edge["toEnd"], "arrow")
             self.assertNotIn("label", edge)
 
-    def test_root_connects_to_every_hub(self):
+    def test_root_has_no_spokes_to_hubs(self):
         m = small_manifest()
         canvas = cb.build_canvas(m)
         root = cb.node_id(SLUG, "root")
         targets = set(e["toNode"] for e in canvas["edges"] if e["fromNode"] == root)
-        self.assertEqual(
-            targets,
-            {cb.node_id(SLUG, "hub:0"), cb.node_id(SLUG, "hub:1")},
-        )
+        # no overview claims in this fixture, so root is edge-less entirely
+        self.assertEqual(targets, set())
+        hubs = set(cb.node_id(SLUG, cb.hub_key(i)) for i in (0, 1))
+        for edge in canvas["edges"]:
+            self.assertNotIn(edge["toNode"], hubs,
+                             "a hub must have no incoming edge")
 
     def test_top_level_claims_now_have_a_hub_edge(self):
         m = small_manifest()
