@@ -222,6 +222,29 @@ def mixed_sections_manifest():
     return m
 
 
+def front_matter_manifest():
+    """A real book's chapter list: front and back matter carry no claims."""
+    m = M.new_manifest(
+        "frontmatter", {"title": "Front Matter", "author": "A. Writer"},
+        [{"idx": 0, "title": "Disclosures", "block_start": 0, "block_end": 5},
+         {"idx": 1, "title": "Dedication", "block_start": 5, "block_end": 8},
+         {"idx": 2, "title": "Ch 1 — Cash Flow", "block_start": 8, "block_end": 60},
+         {"idx": 3, "title": "Ch 2 — Taxes", "block_start": 60, "block_end": 110},
+         {"idx": 4, "title": "About the Author", "block_start": 110, "block_end": 115},
+         {"idx": 5, "title": "Index", "block_start": 115, "block_end": 130}],
+    )
+    m["claims"] = [
+        M.new_claim("c-0001", "Retirement is a cash-flow problem", 2, "root", 0,
+                    locator="Ch 1", block_range=[9, 12], anchor_block=9,
+                    anchor_phrase="cash flow", body_md=LOREM[:200]),
+        M.new_claim("c-0002", "Tax location beats tax rate", 3, "root", 0,
+                    locator="Ch 2", block_range=[61, 64], anchor_block=61,
+                    anchor_phrase="which account", body_md=LOREM[:200]),
+    ]
+    M.validate(m)
+    return m
+
+
 def nodes_by_id(canvas):
     return dict((n["id"], n) for n in canvas["nodes"])
 
@@ -798,6 +821,72 @@ class HeatmapTocTest(unittest.TestCase):
             self.assertLessEqual(card["y"] + card["height"],
                                  group["y"] + group["height"])
         self.assertEqual(validate_canvas(canvas), [])
+
+    def test_toc_entries_mirror_the_hub_cards_exactly(self):
+        for m in (small_manifest(), big_manifest(), granular_manifest(),
+                  front_matter_manifest()):
+            canvas = cb.build_canvas(m)
+            by_id = nodes_by_id(canvas)
+            hubs, tocs = [], []
+            for node in canvas["nodes"]:
+                for chapter in m["chapters"]:
+                    idx = chapter["idx"]
+                    if node["id"] == cb.node_id(m["slug"], cb.hub_key(idx)):
+                        hubs.append((idx, node["text"].split("\n")[0]))
+                    if node["id"] == cb.node_id(m["slug"], cb.toc_key(idx)):
+                        tocs.append((idx, node["text"].split("\n")[0]))
+            self.assertTrue(hubs)
+            # identical set, identical order, identical titles
+            self.assertEqual([i for i, _t in hubs], [i for i, _t in tocs])
+            self.assertEqual([t for _i, t in hubs], [t for _i, t in tocs])
+
+    def test_front_matter_without_claims_gets_no_toc_card(self):
+        m = front_matter_manifest()
+        canvas = cb.build_canvas(m)
+        ids = set(n["id"] for n in canvas["nodes"])
+        for title, idx in (("Disclosures", 0), ("Dedication", 1),
+                           ("About the Author", 4), ("Index", 5)):
+            self.assertNotIn(cb.node_id(m["slug"], cb.toc_key(idx)), ids,
+                             "%s should not be listed" % title)
+            self.assertNotIn(cb.node_id(m["slug"], cb.hub_key(idx)), ids)
+        for idx in (2, 3):
+            self.assertIn(cb.node_id(m["slug"], cb.toc_key(idx)), ids)
+
+    def test_entries_wrap_into_columns_and_read_landscape(self):
+        m = granular_manifest()          # 15 chapters
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        group = by_id[cb.node_id(m["slug"], cb.TOC_GROUP_KEY)]
+        cards = [by_id[cb.node_id(m["slug"], cb.toc_key(c["idx"]))]
+                 for c in sorted(m["chapters"], key=lambda c: c["idx"])]
+        self.assertEqual(len(cards), 15)
+        columns = sorted(set(c["x"] for c in cards))
+        self.assertEqual(len(columns), 3, "15 entries at 5 rows should give 3 columns")
+        self.assertGreater(group["width"], group["height"],
+                           "the heatmap block must read landscape")
+        # top-to-bottom within a column, then wrap right
+        for index, card in enumerate(cards):
+            column, row = divmod(index, cb.TOC_ROWS)
+            self.assertEqual(card["x"], columns[column])
+            if row:
+                previous = cards[index - 1]
+                self.assertGreaterEqual(card["y"],
+                                        previous["y"] + previous["height"])
+        self.assertEqual(validate_canvas(canvas), [])
+
+    def test_every_card_stays_inside_the_group_box(self):
+        m = granular_manifest()
+        canvas = cb.build_canvas(m)
+        by_id = nodes_by_id(canvas)
+        group = by_id[cb.node_id(m["slug"], cb.TOC_GROUP_KEY)]
+        for chapter in m["chapters"]:
+            card = by_id[cb.node_id(m["slug"], cb.toc_key(chapter["idx"]))]
+            self.assertGreaterEqual(card["x"], group["x"])
+            self.assertLessEqual(card["x"] + card["width"],
+                                 group["x"] + group["width"])
+            self.assertGreaterEqual(card["y"], group["y"])
+            self.assertLessEqual(card["y"] + card["height"],
+                                 group["y"] + group["height"])
 
     def test_no_edges_touch_the_toc(self):
         m = small_manifest()
@@ -1656,12 +1745,14 @@ class ColorTest(unittest.TestCase):
         self.assertEqual(by_id[cb.node_id(SLUG, "legend")]["color"], "5")
         self.assertEqual(by_id[cb.node_id(SLUG, "bin")]["color"], "2")
 
-    def test_groups_are_uncolored(self):
+    def test_the_heatmap_group_is_teal_and_is_the_only_group(self):
         m = small_manifest()
         canvas = cb.build_canvas(m)
-        for node in canvas["nodes"]:
-            if node["type"] == "group":
-                self.assertNotIn("color", node)
+        groups = [n for n in canvas["nodes"] if n["type"] == "group"]
+        self.assertEqual([g["id"] for g in groups],
+                         [cb.node_id(SLUG, cb.TOC_GROUP_KEY)])
+        self.assertEqual(groups[0]["color"], "5")
+        self.assertEqual(validate_canvas(canvas), [])
 
 
 class BinTest(unittest.TestCase):

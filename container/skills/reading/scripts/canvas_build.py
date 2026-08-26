@@ -95,6 +95,10 @@ TOC_TITLE_CPL = 22                  # narrower card wraps titles sooner
 TOC_H_MIN = 80
 TOC_PAD = 40
 TOC_GAP = 20
+# Entries flow top-to-bottom then wrap into a new column, so the block reads
+# landscape: at a book's usual 12-18 chapters this gives three or four columns.
+TOC_ROWS = 5
+TOC_COLOR = "5"                     # the tinted group in JT's mockup
 
 # A markdown link renders as its label, so measure the label, not the URL —
 # otherwise an armed card with a long cite URL balloons to nonsense.
@@ -212,6 +216,7 @@ def known_ids(manifest):
         keys.append(hub_key(idx))
         keys.append(hub_edge_key(idx))
         keys.append(toc_key(idx))
+    keys.append(toc_key(UNASSIGNED))
     for idx in (UNASSIGNED, OVERVIEW_IDX):
         keys.append(group_key(idx))
         keys.append(group_edge_key(idx))
@@ -409,12 +414,17 @@ def toc_card_height(text):
     return ((height + H_ROUND - 1) // H_ROUND) * H_ROUND
 
 
-def toc_chapters(manifest):
-    """Every chapter, in book order — the heatmap lists them all."""
-    return sorted(
-        [c for c in manifest.get("chapters", []) if c.get("idx") != OVERVIEW_IDX],
-        key=lambda c: (c.get("idx", 0), c.get("title") or ""),
-    )
+def hub_entries(manifest):
+    """(key, label) for every chapter that renders a hub, in book order.
+
+    This is the canonical chapter set: front matter, dedications and indexes
+    carry no claims, so they get no hub — and the heatmap must list exactly the
+    same chapters the map itself shows, never the raw chapters array.
+    """
+    claims = manifest_mod.live_claims(manifest)
+    chapter_claims = [c for c in claims if not manifest_mod.is_overview(c)]
+    keys, labels, _buckets = _chapter_buckets(manifest, chapter_claims)
+    return [(key, labels.get(key, str(key))) for key in keys]
 
 
 def chapter_by_idx(manifest):
@@ -895,8 +905,8 @@ def _text_node(node_ident, text, x, y, width, height, color=None):
     return node
 
 
-def _group_node(node_ident, label, x, y, width, height):
-    return {
+def _group_node(node_ident, label, x, y, width, height, color=None):
+    node = {
         "id": node_ident,
         "type": "group",
         "label": label,
@@ -905,6 +915,9 @@ def _group_node(node_ident, label, x, y, width, height):
         "width": int(width),
         "height": int(height),
     }
+    if color:
+        node["color"] = color
+    return node
 
 
 def _edge(edge_ident, from_node, to_node, label=None, side=RIGHT):
@@ -1081,24 +1094,31 @@ def build_canvas(manifest, existing=None):
 
     # --- Heatmap Sections: a title-only table of contents under the rail -----
     toc_cards = []
-    chapters_listed = toc_chapters(manifest)
-    if chapters_listed:
-        inner_x = l_x + TOC_PAD
-        cursor = rail_bottom + SIDE_GAP + TOC_PAD
+    # Exactly the chapters that render a hub, in the same order — the heatmap
+    # is an index of the map, so it must not list front matter the map omits.
+    entries = [(key, labels.get(key, str(key))) for key in keys]
+    if entries:
         toc_top = rail_bottom + SIDE_GAP
-        for chapter in chapters_listed:
-            idx = chapter.get("idx", 0)
-            text = toc_text(manifest, idx, chapter.get("title") or ("Chapter %s" % idx))
+        inner_x = l_x + TOC_PAD
+        inner_y = toc_top + TOC_PAD
+        column_bottom = {}
+        for index, (key, label) in enumerate(entries):
+            column, row = divmod(index, TOC_ROWS)
+            text = toc_text(manifest, key, label)
             height = toc_card_height(text)
+            x = inner_x + column * (TOC_CARD_W + TOC_GAP)
+            y = column_bottom.get(column, inner_y)
             toc_cards.append(_text_node(
-                node_id(slug, toc_key(idx)), text, inner_x, cursor,
-                TOC_CARD_W, height,
+                node_id(slug, toc_key(key)), text, x, y, TOC_CARD_W, height,
             ))
-            cursor += height + TOC_GAP
-        toc_height = (cursor - TOC_GAP) - toc_top + TOC_PAD
+            column_bottom[column] = y + height + TOC_GAP
+        columns_used = max(column_bottom) + 1
+        toc_width = (columns_used * TOC_CARD_W
+                     + (columns_used - 1) * TOC_GAP + 2 * TOC_PAD)
+        tallest = max(column_bottom.values()) - TOC_GAP
         nodes.append(_group_node(
             node_id(slug, TOC_GROUP_KEY), TOC_LABEL,
-            l_x, toc_top, TOC_CARD_W + 2 * TOC_PAD, toc_height,
+            l_x, toc_top, toc_width, tallest - toc_top + TOC_PAD, TOC_COLOR,
         ))
 
     nodes.append(_text_node(root_ident, r_text, root_x, root_y, CARD_W, r_h, COLOR_ROOT))
@@ -1184,11 +1204,8 @@ def furniture_text(manifest):
         out[hub_key(key)] = hub_text(
             manifest, key, labels.get(key, str(key)), chapter_by.get(key)
         )
-    for chapter in toc_chapters(manifest):
-        idx = chapter.get("idx", 0)
-        out[toc_key(idx)] = toc_text(
-            manifest, idx, chapter.get("title") or ("Chapter %s" % idx)
-        )
+    for key in keys:
+        out[toc_key(key)] = toc_text(manifest, key, labels.get(key, str(key)))
     return out
 
 
@@ -1285,8 +1302,8 @@ def _carry_forward(manifest, canvas, existing):
     # his, so it survives every rebuild.  Nothing else takes colour from the
     # canvas — stance colour is projected from the manifest.
     toc_ids = set(
-        node_id(manifest["slug"], toc_key(c.get("idx", 0)))
-        for c in toc_chapters(manifest)
+        node_id(manifest["slug"], toc_key(key))
+        for key, _label in hub_entries(manifest)
     )
     for node in canvas["nodes"]:
         if node["id"] in toc_ids and node["id"] in colours:
