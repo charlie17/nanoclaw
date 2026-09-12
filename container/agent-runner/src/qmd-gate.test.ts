@@ -270,6 +270,20 @@ describe('isQmdQuerySuccess', () => {
     ).toBe(true);
   });
 
+  it('is false for a non-empty array with no text-bearing block', () => {
+    expect(isQmdQuerySuccess('mcp__qmd__query', [{ type: 'image' }])).toBe(
+      false,
+    );
+    expect(isQmdQuerySuccess('mcp__qmd__query', [{}])).toBe(false);
+  });
+
+  it('is false for a non-string primitive', () => {
+    expect(isQmdQuerySuccess('mcp__qmd__query', 0)).toBe(false);
+    expect(isQmdQuerySuccess('mcp__qmd__query', 42)).toBe(false);
+    expect(isQmdQuerySuccess('mcp__qmd__query', true)).toBe(false);
+    expect(isQmdQuerySuccess('mcp__qmd__query', false)).toBe(false);
+  });
+
   it('does not mistake a result that merely mentions errors for an error', () => {
     expect(
       isQmdQuerySuccess('mcp__qmd__query', [

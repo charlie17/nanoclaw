@@ -223,8 +223,13 @@ export function isQmdQuerySuccess(
   }
 
   if (Array.isArray(toolResponse)) {
+    // An empty array is the documented zero-hit shape — a real search that
+    // found nothing. A NON-empty array with no text block is something we do
+    // not understand (image blocks, `[{}]`), so it fails closed.
+    if (toolResponse.length === 0) return true;
     const first = firstTextBlock(toolResponse);
-    return first === null || !MCP_ERROR_TEXT_REGEX.test(first);
+    if (first === null) return false;
+    return !MCP_ERROR_TEXT_REGEX.test(first);
   }
 
   if (typeof toolResponse === 'object') {
@@ -235,7 +240,8 @@ export function isQmdQuerySuccess(
     return true;
   }
 
-  return true;
+  // A number, boolean or any other primitive is not a qmd result. Fail closed.
+  return false;
 }
 
 /**
