@@ -45,3 +45,6 @@ groups/worf/*
 
 agents-sdk-docs
 __pycache__/
+
+# merge-guard marker (local, per review close)
+.review-cleared
