@@ -43,19 +43,25 @@ If a routing rule appears to require a non-existent directory, that is a bug in 
 
 ### Vault Query (qmd-first)
 
-<!-- DEFAULT VERB POLICY (Impl-72 / 2026-06-15): vsearch is the default for all vault lookups.
-     search (BM25) is secondary for exact-term/proper-noun/ticker queries. Hybrid query is RESERVED —
-     CPU-bound on this hardware (~47s–474s cold, GPU: none). Never invoke mcp__qmd__query as a default
-     on any automated or interactive path. Only invoke when JT explicitly requests deep/thorough retrieval
-     and accepts the wait. See FORK-BASELINE.md:215. -->
+<!-- Rewritten 2026-09-12 after the WSJ/Readwise absence incident (2026-09-10). The MCP server exposes ONE
+     search tool, mcp__qmd__query, with typed sub-queries. The former names vsearch/search were CLI verbs that
+     never existed over MCP, which is how "semantic first" got skipped. Every step below is a literal call. -->
 
-For any vault content lookup — past decisions, incidents, people, projects, patterns, topic searches — use the `qmd` MCP tools BEFORE `Read` or `Grep`. qmd returns ranked snippets without burning context on full file reads.
+For any vault content lookup — past decisions, incidents, people, projects, tips, topic searches — the sequence below is mandatory and runs in this order. The harness enforces step 1: `Grep`/`Glob`/Bash-grep against `/workspace/extra/vault` is blocked until a qmd query has run this turn, and a reply that asserts vault absence without a qmd query this turn is bounced back to you.
 
-- `mcp__qmd__vsearch "<query>"` — **DEFAULT.** Semantic (vector) search. Use for conceptual queries, past decisions, incidents, topic exploration. ~12s on this hardware.
-- `mcp__qmd__search "<query>"` — Fast BM25 keyword. Use for exact terms, proper nouns, names, dates, ticker symbols.
-- `mcp__qmd__query "<query>"` — **RESERVED.** Hybrid BM25 + vector + LLM reranking. CPU-bound (~47s–474s cold). Invoke ONLY when JT explicitly asks for a deep/thorough search and accepts the wait — never as a silent default.
+The only search tool is `mcp__qmd__query`. It takes a `searches` array of typed sub-queries plus flags. Copy these shapes:
 
-After search, follow up with `Read` on specific files. Full skill spec: `container/skills/qmd/SKILL.md`.
+1. **Semantic, DEFAULT (fast, well under a second warm):**
+   `mcp__qmd__query {"searches":[{"type":"vec","query":"<natural-language question>"}],"rerank":false,"collections":["general"],"intent":"<one line of context>"}`
+2. **Exact terms (names, tickers, dates, quoted phrases):**
+   `mcp__qmd__query {"searches":[{"type":"lex","query":"<keywords or \"quoted phrase\">"}],"rerank":false,"collections":["general"]}`
+   Combine both in one call when the question has a concept AND a proper noun: put the sub-query that matters most first (it gets 2x weight).
+3. **Reshape before concluding.** If the top hits are the wrong KIND of match (citations of a source in wiki pages when JT wants a how-to tip; project notes when he wants a log entry), rewrite the question toward the workflow or concept and run step 1 again, or run a `hyde` sub-query: `{"type":"hyde","query":"<50-100 word passage written the way the answer would read in the vault>"}`. Do this at least once before any "not found".
+4. **Deep, RESERVED:** the same call with `"rerank":true`. Runs the LLM reranker on CPU (77 s measured 2026-09-10; 47 s to 474 s cold). Only when JT explicitly asks for a deep or thorough search and accepts the wait. Never on an automated path.
+
+**Fallback ladder, no discretion:** if a deep call fails or is slow, the next step is step 1 (rerank:false), never grep. Grep is supplementary: use it after qmd to confirm an exact string in a file qmd already surfaced. **Grep alone can never establish absence.** "Nothing in the vault about X" is allowed only after steps 1 and 3 have both run this turn and come back empty; say which queries you ran.
+
+Always pass `"collections":["general"]`. The `general` collection already contains `wiki/`; without the filter every wiki page is returned twice and crowds out the rest. Use `["wiki"]` only when the task is wiki-scoped. Result paths are relative to the collection; fetch a hit with `mcp__qmd__get {"file":"reference/org-approach.md"}` or by docid `{"file":"#abc123"}`, or `Read` the container path. Full skill spec: `container/skills/qmd/SKILL.md`.
 
 **Namespace restriction:** You query the **general** namespace only. The **private** namespace exists on the host but is not wired into your container (D-95 amendment, D-96). Do not attempt to reach it.
 
@@ -111,7 +117,7 @@ When a message arrives, classify before acting:
 | Reference / fact / quote / remember | Write to appropriate `reference/` file |
 | Project task | Write to appropriate `projects/{name}/next.md` as a numbered activity (1., 2., …) — never a checkbox; sub-tasks as plain `-` bullets |
 | Project completion / learning | Write to appropriate `projects/{name}/log.md` |
-| Vault query ("what did I write about X?") | Read relevant file(s) and synthesize |
+| Vault query ("what did I write about X?", "anything in the vault on X?") | §Vault Query sequence: qmd semantic first, reshape, then `Read` the surfaced files and synthesize |
 | Conversation / brainstorm / question | Respond directly |
 | Scheduling / reminder | Create NanoClaw scheduled task |
 
@@ -388,7 +394,7 @@ Active compendia:
 
 - `projects/options/notes/options-strategies/` — `compendium: options-strategies`. 44 strategy pages + `!index.md` (qualitative triage table, Lens 1) + `!principles.md` (primitives lens, Lens 2) + `options-strategies.base` (filterable structural view: market-view / vol-view / risk / capital). Strategy pages have `type: strategy-page` frontmatter with structural attributes. When JT asks options-strategy questions, start with `!index.md` for triage, then drill into the matching strategy file. Per-strategy attributes are queryable via the `.base` view or via qmd against the frontmatter.
 
-Compendia live inside their owning project; they are NOT wiki corpora and are NOT reachable via `/wiki-query`. Use `mcp__qmd__vsearch` (general namespace, default) or `mcp__qmd__search` for exact-term lookups, or direct `Read` of the index file.
+Compendia live inside their owning project; they are NOT wiki corpora and are NOT reachable via `/wiki-query`. Use the §Vault Query default call (`mcp__qmd__query`, vec sub-query, `rerank:false`, `collections:["general"]`), a `lex` sub-query for exact terms, or direct `Read` of the index file.
 
 ---
 

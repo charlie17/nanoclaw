@@ -74,7 +74,7 @@ Set `truncated: true` in frontmatter. Karpathy mandates raw storage as source-of
 
 ### Step 3 — Surface related vault content (provenance distinction)
 
-1. Run `mcp__qmd__vsearch` over the full `general` namespace to find vault content semantically related to this source. <!-- Impl-72 / 2026-06-15: vsearch is the default; mcp__qmd__query is reserved for explicit deep-retrieval requests only. See FORK-BASELINE.md:215. -->
+1. Run `mcp__qmd__query {"searches":[{"type":"vec","query":"<source topic>"}],"rerank":false,"collections":["general"]}` to find vault content semantically related to this source. <!-- 2026-09-12: the only MCP search tool is mcp__qmd__query; rerank:true is reserved for explicit deep-retrieval requests only. Recipes: container/skills/qmd/SKILL.md. -->
 2. **Distinguish provenance clearly when discussing with JT** — surface vault hits as *"From your existing vault: [[path]]"* and source content as *"From this Readwise source: <quote>"*. The agent reasons across both but is transparent about origin.
 
 ### Step 4 — Discuss with JT
@@ -194,7 +194,7 @@ Sources frequently include figures (success matrices, glide-path charts, decisio
 1. **JT files; you reference.** JT curates images via Telegram and lands them at `wiki/assets/<corpus>/<corpus>-<series>-<NN>-<descriptor>.png` BEFORE ingest. You do NOT fetch images from Readwise or the open web. If a needed asset is missing during synthesis, surface it during Step 4 discussion: *"Source references a chart at `<position-in-text>` — file under `wiki/assets/<corpus>/` and re-run, or ingest without?"* Don't fabricate ASCII charts as substitutes — embed the asset or omit the figure.
 2. **Recognize image refs in the raw archive.** `wiki/raw/<doc-id>.md` preserves the source body's markdown image references. Walk those refs at Step 5 / Step 6 — for each, identify which corresponding asset (if any) JT has filed under `wiki/assets/<corpus>/`. The mapping is nominal (matching `NN` + descriptor) plus context — use vision when the asset filename alone is ambiguous.
 3. **Embed with Obsidian-native wikilink syntax.** `![[ern-swr-01-success-matrix.png]]` — never markdown `![](...)`. Filename only — Obsidian resolves through the vault's asset index.
-4. **Brief prose translation alongside (mandatory, not optional).** 1–2 sentences describing what the image shows + how to read it. The translation is what makes the figure searchable through qmd (`mcp__qmd__vsearch` / `mcp__qmd__search`) and accessible when assets fail to render.
+4. **Brief prose translation alongside (mandatory, not optional).** 1–2 sentences describing what the image shows + how to read it. The translation is what makes the figure searchable through qmd (`mcp__qmd__query`, vec or lex sub-query) and accessible when assets fail to render.
 5. **Attribution triangulation.** Combine: (a) active conversation context with JT during ingest, (b) markdown image refs in the raw archive, (c) vision when ambiguity persists. Explicit captions in the source are useful but optional.
 6. **Source-summary vs concept page.** Both can embed. Source-summary embeds the source's own figures verbatim (fidelity to what the source contains). Concept-page embeds figures that materially anchor a synthesized claim (the figure earns its inclusion by being load-bearing for the synthesis). Don't duplicate trivial figures across both.
 
@@ -383,7 +383,7 @@ JT picks the option; act accordingly. The in-progress file is then either update
 ## Vault-only path (D-80)
 
 If JT invokes naturally without a Readwise source — e.g. *"Create a wiki page on X"* — skip Steps 1, 2, 5 above. Instead:
-- Run `mcp__qmd__vsearch` over the full `general` namespace to gather vault material. <!-- Impl-72 / 2026-06-15: vsearch default; mcp__qmd__query reserved for explicit deep-retrieval only. See FORK-BASELINE.md:215. -->
+- Run `mcp__qmd__query {"searches":[{"type":"vec","query":"<topic>"}],"rerank":false,"collections":["general"]}` to gather vault material; reshape the query once if the hits are the wrong kind. <!-- 2026-09-12: rerank:true reserved for explicit deep-retrieval only. Recipes: container/skills/qmd/SKILL.md. -->
 - Discuss scope with JT.
 - Skip raw archive + source-summary creation (no Readwise doc).
 - Proceed with Step 6 (concept page creation) — `provenance.source: vault`, `source-refs: []`, citations point at vault paths instead of source-summary slugs.

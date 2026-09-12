@@ -23,6 +23,12 @@ import {
   PreCompactHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+import {
+  createQmdTurnState,
+  evaluateAbsenceClaimGate,
+  evaluateVaultGrepGate,
+  isQmdQuerySuccess,
+} from './qmd-gate.js';
 
 interface ContainerInput {
   prompt: string;
@@ -412,6 +418,17 @@ function waitForIpcMessage(): Promise<string | null> {
 }
 
 /**
+ * qmd-first gate state (see qmd-gate.ts for the rule and the rationale).
+ *
+ * Module-level on purpose: this process serves exactly one container session,
+ * and the hook callbacks below are in-process closures, so a single instance is
+ * both sufficient and correct. The turn boundary is UserPromptSubmit — one
+ * query() can carry many user messages because index.ts pipes IPC follow-ups
+ * into the live MessageStream — with a redundant reset at query() start.
+ */
+const qmdTurnState = createQmdTurnState();
+
+/**
  * Run a single query and stream results via writeOutput.
  * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
  * allowing agent teams subagents to run to completion.
@@ -431,6 +448,10 @@ async function runQuery(
 }> {
   const stream = new MessageStream();
   stream.push(prompt);
+
+  // Belt-and-braces: the authoritative reset is the UserPromptSubmit hook
+  // below, but a resumed session should never start with the gate pre-unlocked.
+  qmdTurnState.resetTurn();
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -609,6 +630,82 @@ async function runQuery(
                     stopReason: `Tool '${toolName}' is not available in this environment — use the nanoclaw equivalent.`,
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   } as any;
+                }
+                return { continue: true };
+              },
+              // qmd-first gate, layer 1 (deterministic). Blocks grep/glob/find
+              // of the vault mount until mcp__qmd__query has succeeded this
+              // turn. Read is never gated. Logic + rationale: qmd-gate.ts.
+              async (input) => {
+                const i = input as { tool_name?: string; tool_input?: unknown };
+                const blockReason = evaluateVaultGrepGate(
+                  qmdTurnState,
+                  i.tool_name ?? '',
+                  i.tool_input,
+                );
+                if (blockReason) {
+                  log(`qmd-gate: blocked ${i.tool_name} (no qmd query yet)`);
+                  return {
+                    decision: 'block',
+                    stopReason: blockReason,
+                    reason: blockReason,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  } as any;
+                }
+                return { continue: true };
+              },
+            ],
+          },
+        ],
+        PostToolUse: [
+          {
+            hooks: [
+              // Unlocks the layer-1 gate for the rest of this turn.
+              async (input) => {
+                const i = input as {
+                  tool_name?: string;
+                  tool_response?: unknown;
+                };
+                if (isQmdQuerySuccess(i.tool_name ?? '', i.tool_response)) {
+                  qmdTurnState.markQmdSuccess();
+                  log('qmd-gate: qmd query succeeded, vault grep unlocked');
+                }
+                return { continue: true };
+              },
+            ],
+          },
+        ],
+        UserPromptSubmit: [
+          {
+            hooks: [
+              // THE turn boundary. Fires once per user message — both the
+              // initial prompt and every IPC follow-up piped into the same
+              // live query() — so the gate re-locks for each new request.
+              async () => {
+                qmdTurnState.resetTurn();
+                return { continue: true };
+              },
+            ],
+          },
+        ],
+        Stop: [
+          {
+            hooks: [
+              // qmd-first gate, layer 2 (heuristic). Refuses to end a turn on
+              // an absence claim about the vault when no qmd query ran.
+              async (input) => {
+                const i = input as {
+                  stop_hook_active?: boolean;
+                  last_assistant_message?: string;
+                };
+                const blockReason = evaluateAbsenceClaimGate(
+                  qmdTurnState,
+                  i.stop_hook_active === true,
+                  i.last_assistant_message,
+                );
+                if (blockReason) {
+                  log('qmd-gate: blocked stop (absence claim without qmd)');
+                  return { decision: 'block', reason: blockReason };
                 }
                 return { continue: true };
               },

@@ -75,14 +75,14 @@ JT: "/research TIPS investing, only things I've tagged 'finance'"
 Query the `general` namespace via qmd:
 
 ```
-mcp__qmd__vsearch "<JT query>"
+mcp__qmd__query {"searches":[{"type":"vec","query":"<JT query>"}],"rerank":false,"collections":["general"],"intent":"<one line of context>"}
 ```
 
-<!-- DEFAULT VERB POLICY (Impl-72 / 2026-06-15): vsearch is the default for vault retrieval on the /research
-     sync path. Hybrid query (mcp__qmd__query) is CPU-bound on this hardware (~47s–474s cold) and must NOT be
-     used as a default on any path. See FORK-BASELINE.md:215. -->
+<!-- 2026-09-12: the only MCP search tool is mcp__qmd__query. rerank:false is the default on the /research
+     sync path; rerank:true is CPU-bound (47s–474s cold) and must NOT be used as a default on any path.
+     Recipes: container/skills/qmd/SKILL.md. -->
 
-`general` namespace covers prior `/research` reports (type: `research-report`), wiki pages (type: `wiki-page`), image-capture companions (type: `image-capture`), learning entries, brainstorm artifacts, and project notes. Single call surfaces them all. If vsearch returns sparse results, try `mcp__qmd__search "<JT query>"` for exact-term coverage. Use `mcp__qmd__query` only if JT explicitly requests a deeper search and accepts the wait. The `private` namespace is structurally unreachable from this container — do not attempt.
+`general` namespace covers prior `/research` reports (type: `research-report`), wiki pages (type: `wiki-page`), image-capture companions (type: `image-capture`), learning entries, brainstorm artifacts, and project notes. Single call surfaces them all. If results are sparse, add a `{"type":"lex","query":"<exact terms>"}` sub-query to the same call, and reshape the question toward the concept once before concluding the vault has nothing. Set `"rerank":true` only if JT explicitly requests a deeper search and accepts the wait. The `private` namespace is structurally unreachable from this container — do not attempt.
 
 ### Synthesis
 
