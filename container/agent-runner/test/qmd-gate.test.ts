@@ -11,7 +11,7 @@ import {
   isVaultGrepCall,
   looksLikeAbsenceClaim,
   type QmdTurnState,
-} from './qmd-gate.js';
+} from '../src/qmd-gate.js';
 
 describe('isVaultGrepCall', () => {
   it('flags Grep with an absolute vault path', () => {

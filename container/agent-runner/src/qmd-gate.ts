@@ -14,7 +14,15 @@
  *           when no qmd query ran.
  *
  * Kept dependency-free and side-effect-free so it is unit-testable from the
- * repo-root vitest suite (see qmd-gate.test.ts).
+ * repo-root vitest suite (see ../test/qmd-gate.test.ts).
+ */
+
+/**
+ * No test files and no dev-only imports under this directory: `src/` is
+ * bind-mounted into the agent container as /app/src and compiled there at
+ * every container start with the image's baked tsconfig (no vitest in the
+ * image) — a stray *.test.ts or dev import here breaks tsc and aborts every
+ * container spawn.
  */
 
 /** Container mount point of the Obsidian vault. */
