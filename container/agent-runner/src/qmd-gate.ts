@@ -42,8 +42,9 @@ const BASH_SEARCH_RE =
   /(?:^|[\s;|&(`$])(?:grep|egrep|fgrep|rg|ripgrep|find)(?![\w-])|(?:^|[\s;|&(`$])ls\s+(?:-\w*\s+)*-?\w*R/;
 
 /**
- * Absence-claim phrasings. Single exported constant so the heuristic is
- * testable and cheap to extend — add a line to the source list below.
+ * Absence-claim phrasings that stand on their own — they either name the vault
+ * outright, or assert a failed search in terms too specific to fire on ordinary
+ * prose. Matched against a single sentence with no further conditions.
  */
 const ABSENCE_CLAIM_SOURCES = [
   // "nothing in the vault", "there's nothing on that in your vault",
@@ -52,11 +53,14 @@ const ABSENCE_CLAIM_SOURCES = [
   // claim: "nothing in the vault is more recent than 9/10" is a statement about
   // what the vault DOES have.
   'nothing\\s+(?:\\w+\\s+){0,3}?in\\s+(?:the|your|my)\\s+(?:vault|notes)(?!\\s+(?:is|are|was|were|has|have|do|does)\\b)',
-  // "nothing found in ...", "found nothing about X"
+  // "nothing found in ...", "found nothing about X", "nothing turned up"
   'nothing\\s+(?:was\\s+)?found\\s+in',
   '\\bfound\\s+nothing\\b',
-  // "no notes of/about/on", "no mention of X in the vault", "no records for"
-  '\\bno\\s+(?:notes|entries|mentions?|records?|results|matches|hits)\\s+(?:of|about|on|for|in|regarding)\\b',
+  '\\bnothing\\s+(?:turned|came)\\s+up\\b',
+  // "no notes of/about/on", "no note on X", "no mention of X in the vault",
+  // "no record of it". These nouns are knowledge-shaped, so they carry their
+  // own vault context; the generic ones below do not.
+  '\\bno\\s+(?:notes?|mentions?|records?)\\s+(?:of|about|on|for|in|regarding)\\b',
   // "no matching notes", "no relevant entries"
   '\\bno\\s+(?:matching|relevant|related|such)\\s+(?:notes|entries|results|matches|records?|files)\\b',
   // "not in the vault", "not anywhere in your vault"
@@ -68,8 +72,6 @@ const ABSENCE_CLAIM_SOURCES = [
   // Deliberately narrow: `see|find|locate` only. Widening to `have` would fire
   // on the innocuous "I don't have any other updates."
   "\\bdo(?:es)?(?:n['’]?t|\\s+not)\\s+(?:see|find|locate)\\s+(?:anything|any)\\b",
-  // "there isn't anything in the vault about X", "there were not any entries"
-  "(?:is|are|was|were)(?:n['’]?t|\\s+not)\\s+(?:anything|any)\\b",
   // "your notes don't mention X", "the vault doesn't have anything on X"
   "\\b(?:vault|notes)\\s+do(?:es)?(?:n['’]?t|\\s+not)\\s+(?:mention|have|contain|include|cover|say|show)\\b",
   // "no vault content/notes/entries"
@@ -82,6 +84,37 @@ export const ABSENCE_CLAIM_REGEX = new RegExp(
   ABSENCE_CLAIM_SOURCES.join('|'),
   'i',
 );
+
+/**
+ * Absence phrasings built on nouns that carry NO vault connotation. On their
+ * own these fire on perfectly ordinary engineering prose — "There are no
+ * results for this API request", "No entries about X need changing" — so they
+ * only count when the same sentence also mentions the vault (see
+ * VAULT_CONTEXT_REGEX). "no entries about WSJ in your notes" passes; "no
+ * entries about X need changing" does not.
+ */
+const ABSENCE_CLAIM_CONTEXTUAL_SOURCES = [
+  '\\bno\\s+(?:entries|results|matches|hits)\\s+(?:of|about|on|for|in|regarding)\\b',
+  // "there isn't anything in the vault about X" — but NOT the everyday
+  // "there aren't any other changes", which this shape matches just as well.
+  "(?:is|are|was|were)(?:n['’]?t|\\s+not)\\s+(?:anything|any)\\b",
+];
+
+export const ABSENCE_CLAIM_CONTEXTUAL_REGEX = new RegExp(
+  ABSENCE_CLAIM_CONTEXTUAL_SOURCES.join('|'),
+  'i',
+);
+
+/** What counts as "this sentence is talking about the vault". */
+export const VAULT_CONTEXT_REGEX = /\b(?:vault|notes?|logs?|references?)\b/i;
+
+/**
+ * Sentence splitter for the contextual patterns. `;` is included on purpose:
+ * "No entries about X need changing; I found three relevant vault notes" is two
+ * independent clauses, and without the split the second clause's "vault" would
+ * license the first clause's phrasing.
+ */
+const SENTENCE_SPLIT_REGEX = /[.!?;\n]+/;
 
 function referencesVault(value: unknown): boolean {
   return typeof value === 'string' && VAULT_PATH_RE.test(value);
@@ -117,29 +150,91 @@ export function isVaultGrepCall(toolName: string, input: unknown): boolean {
   return false;
 }
 
-/** Layer 2 predicate: does this assistant text assert vault absence? */
-export function looksLikeAbsenceClaim(text: string | undefined | null): boolean {
+/**
+ * Layer 2 predicate: does this assistant text assert vault absence?
+ *
+ * Evaluated sentence by sentence so a vault mention in one clause cannot
+ * license a generic absence phrase in another.
+ */
+export function looksLikeAbsenceClaim(
+  text: string | undefined | null,
+): boolean {
   if (!text) return false;
-  return ABSENCE_CLAIM_REGEX.test(text);
+  for (const sentence of text.split(SENTENCE_SPLIT_REGEX)) {
+    if (!sentence.trim()) continue;
+    if (ABSENCE_CLAIM_REGEX.test(sentence)) return true;
+    if (
+      ABSENCE_CLAIM_CONTEXTUAL_REGEX.test(sentence) &&
+      VAULT_CONTEXT_REGEX.test(sentence)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * An MCP failure that arrives as prose rather than as an error flag. The qmd
+ * server reports daemon-down and bad-argument conditions this way, e.g.
+ * `[{type:'text', text:'Error: qmd daemon unavailable'}]`.
+ */
+const MCP_ERROR_TEXT_REGEX = /^\s*(?:mcp\s+error|error)\b/i;
+
+/** First text-bearing block of an MCP content array, or null. */
+function firstTextBlock(blocks: unknown): string | null {
+  if (!Array.isArray(blocks)) return null;
+  for (const block of blocks) {
+    if (typeof block === 'string') return block;
+    if (block && typeof block === 'object') {
+      const text = (block as Record<string, unknown>).text;
+      if (typeof text === 'string') return text;
+    }
+  }
+  return null;
 }
 
 /**
  * Did a PostToolUse event represent a *successful* qmd query?
  *
- * The SDK types `tool_response` as `unknown`; an errored MCP call surfaces as
- * an object carrying `is_error` / `isError`. Anything else counts as success —
- * a zero-hit qmd query is a success (the agent did the semantic search and may
- * legitimately then grep to double-check).
+ * FAILS CLOSED. This function unlocks the gate, so every uncertain shape has to
+ * resolve to `false` — an unlocked gate on a query that never ran is exactly
+ * the failure the gate exists to prevent. The SDK types `tool_response` as
+ * `unknown`, and qmd errors reach us in three different shapes:
+ *
+ *   - absent entirely (`undefined`/`null`) — no evidence a search happened
+ *   - a top-level `is_error` / `isError` flag
+ *   - ordinary-looking content whose first text block is an error message
+ *     (bare string, `[{type:'text', text:'Error: …'}]`, or `{content:[…]}`)
+ *
+ * A zero-hit query IS a success: the agent did the semantic search and may then
+ * legitimately grep to double-check.
  */
 export function isQmdQuerySuccess(
   toolName: string,
   toolResponse: unknown,
 ): boolean {
   if (toolName !== QMD_QUERY_TOOL) return false;
-  if (toolResponse && typeof toolResponse === 'object') {
+
+  // No response at all is not evidence that a search ran.
+  if (toolResponse === null || toolResponse === undefined) return false;
+
+  if (typeof toolResponse === 'string') {
+    return !MCP_ERROR_TEXT_REGEX.test(toolResponse);
+  }
+
+  if (Array.isArray(toolResponse)) {
+    const first = firstTextBlock(toolResponse);
+    return first === null || !MCP_ERROR_TEXT_REGEX.test(first);
+  }
+
+  if (typeof toolResponse === 'object') {
     const r = toolResponse as Record<string, unknown>;
     if (r.is_error === true || r.isError === true) return false;
+    const first = firstTextBlock(r.content);
+    if (first !== null && MCP_ERROR_TEXT_REGEX.test(first)) return false;
+    return true;
   }
+
   return true;
 }
 

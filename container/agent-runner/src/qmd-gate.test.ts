@@ -123,7 +123,7 @@ describe('looksLikeAbsenceClaim', () => {
     'Nothing in your vault matches.',
     'Nothing found in the notes you keep.',
     'I see no notes of that conversation.',
-    'There are no entries about the sabbatical.',
+    'There are no entries about the sabbatical in your vault.',
     'No mentions on that topic anywhere.',
     'There is no record of it.',
     'No records about the trip.',
@@ -147,6 +147,13 @@ describe('looksLikeAbsenceClaim', () => {
     'I see no relevant entries.',
     "The vault doesn't have anything on that.",
     "Your notes don't mention it.",
+    // Third pass — Codex review finding 2 (missed phrasings).
+    'I searched and nothing turned up.',
+    'There is no note on WSJ.',
+    'There was no note about that meeting.',
+    // Third pass — finding 3: the generic-noun pattern still fires when the
+    // sentence names the vault.
+    'There are no entries about WSJ in your notes.',
   ];
 
   for (const text of absent) {
@@ -165,6 +172,12 @@ describe('looksLikeAbsenceClaim', () => {
     'Nothing in the vault is more recent than 9/10, here is the latest.',
     // Narrowness guard for the "don't see/find anything" rule.
     "I don't have any other updates for you.",
+    // Finding 3: generic-noun absence phrasing with no vault relation. The
+    // second clause names the vault, but it is a separate clause.
+    'No entries about X need changing; I found three relevant vault notes.',
+    'There are no results for this API request',
+    // Fourth pass: the "isn't anything / aren't any" shape is contextual now.
+    "There aren't any other changes.",
   ];
 
   for (const text of present) {
@@ -201,6 +214,68 @@ describe('isQmdQuerySuccess', () => {
   it('is false for an errored query', () => {
     expect(isQmdQuerySuccess('mcp__qmd__query', { is_error: true })).toBe(false);
     expect(isQmdQuerySuccess('mcp__qmd__query', { isError: true })).toBe(false);
+  });
+
+  // Finding 1: the gate must fail CLOSED on every uncertain shape.
+  it('is false when there is no response at all', () => {
+    expect(isQmdQuerySuccess('mcp__qmd__query', undefined)).toBe(false);
+    expect(isQmdQuerySuccess('mcp__qmd__query', null)).toBe(false);
+  });
+
+  it('is false for an error delivered as a bare string', () => {
+    expect(
+      isQmdQuerySuccess('mcp__qmd__query', 'Error: qmd daemon unavailable'),
+    ).toBe(false);
+    expect(
+      isQmdQuerySuccess('mcp__qmd__query', 'MCP error -32603: tool failed'),
+    ).toBe(false);
+  });
+
+  it('is true for a normal string response', () => {
+    expect(
+      isQmdQuerySuccess('mcp__qmd__query', 'general/projects/foo/log.md — 0.82'),
+    ).toBe(true);
+  });
+
+  it('is false for an error delivered as content blocks', () => {
+    expect(
+      isQmdQuerySuccess('mcp__qmd__query', [
+        { type: 'text', text: 'Error: qmd daemon unavailable' },
+      ]),
+    ).toBe(false);
+    expect(
+      isQmdQuerySuccess('mcp__qmd__query', {
+        content: [{ type: 'text', text: 'Error: qmd daemon unavailable' }],
+        isError: true,
+      }),
+    ).toBe(false);
+    // Same prose error, no flag set — still an error.
+    expect(
+      isQmdQuerySuccess('mcp__qmd__query', {
+        content: [{ type: 'text', text: 'Error: collection not found' }],
+      }),
+    ).toBe(false);
+  });
+
+  it('is true for a normal content array of results', () => {
+    expect(
+      isQmdQuerySuccess('mcp__qmd__query', [
+        { type: 'text', text: '1. general/wiki/wsj.md (0.71)' },
+      ]),
+    ).toBe(true);
+    expect(
+      isQmdQuerySuccess('mcp__qmd__query', {
+        content: [{ type: 'text', text: '1. general/wiki/wsj.md (0.71)' }],
+      }),
+    ).toBe(true);
+  });
+
+  it('does not mistake a result that merely mentions errors for an error', () => {
+    expect(
+      isQmdQuerySuccess('mcp__qmd__query', [
+        { type: 'text', text: '1. general/wiki/error-budgets.md (0.66)' },
+      ]),
+    ).toBe(true);
   });
 
   it('is false for other qmd tools and other tools', () => {
