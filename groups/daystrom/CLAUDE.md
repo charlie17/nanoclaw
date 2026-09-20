@@ -113,6 +113,7 @@ When a message arrives, classify before acting:
 |---|---|
 | Todo / errand / shopping / waiting | Write to appropriate `actions/` file |
 | Log entry (event, update, note about a person/domain) | Write to appropriate `logs/<domain>/!log.md` (or sibling notes file when content is reference-shaped, e.g. `logs/food/notes.md`) |
+| Thought on where AI is heading / AI at large (trajectory, economics, adoption, societal impact) | Write to `logs/ai/!log.md`, dated. Tactical AI-for-coding (tools, models, workflows) is a coding log entry → `logs/coding/!log.md`, not `logs/ai/` |
 | Research request ("research X", "find out Y") | Invoke `/research` skill (see §Research Dispatch). Sync path: answer from Readwise + vault if sufficient. Supplement path: skill dispatches to quarantine queue — O'Brien notifies on Telegram when result ready. |
 | Reference / fact / quote / remember | Write to appropriate `reference/` file |
 | Project task | Write to appropriate `projects/{name}/next.md` as a numbered activity (1., 2., …) — never a checkbox; sub-tasks as plain `-` bullets |
@@ -199,7 +200,9 @@ If JT explicitly requests a different format, follow his instruction — these a
 - `actions/waiting.md` — waiting for others
 
 **Logs:** `logs/{domain}/` — one folder per domain. Each contains a `!log.md` (dated event-stream — the canonical log), and optional sibling notes files (kebab-case slug, no date prefix, flat — no `notes/` subfolder).
-Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker` · `coding` · `food` · `greece` · `house` · `travel` · `finance`.
+Domains: `arts` · `pops` · `mpm` · `dogs` · `family` · `gifts` · `slaters` · `sawyer` · `poker` · `coding` · `ai` · `food` · `greece` · `house` · `travel` · `finance`.
+
+`logs/ai/` holds dated thoughts on the **evolution of AI at large** — the field's trajectory, economics, adoption curve, societal impact (evergreen and temporal alike, every entry dated). AI-as-subject only: tactical AI-for-coding (tools, models, workflows) stays in `logs/coding/`. Some AI aphorisms deliberately live in both `reference/quotes.md` and `logs/ai/!log.md` — leave both in place.
 
 `logs/finance/` holds **general-nature finance only** — non-sensitive events, observations, decisions. Sensitive finance content belongs in the private vault (host `~/vault/private/`), which is structurally outside your container (D-2.5.5); never record it in `logs/finance/`.
 
@@ -499,6 +502,7 @@ Replace N with the actual observed turn count. Emit once — do not repeat on su
 | "Jim Kwik podcast notes" | → `reference/learning/jim-kwik-podcast-{YYYY-MM}.md` |
 | "Add to my coding precepts: …" | → `logs/coding/precepts.md` |
 | "Figured out how to X" / "Tip:" / "Saw Y" | → `logs/coding/!log.md` |
+| "Thought on where AI is heading…" / "AI adoption is going to…" | → `logs/ai/!log.md` (AI at large). A new model / tool / coding workflow is `logs/coding/!log.md`, not here |
 | "Add a closed trades chart" | → `projects/options/next.md` |
 | "options todo: X" | → `projects/options/next.md` |
 | "finished options task X" | → `projects/options/log.md`. If matching open item in `projects/options/next.md`, ask one-line confirmation and move-on-confirm. |
