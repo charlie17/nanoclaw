@@ -23,7 +23,7 @@ All inputs are pre-assembled by the host orchestrator and bind-mounted read-only
 - `worf-scope/nanoclaw-git-status.txt` — `git status --porcelain` output
 - `worf-scope/secret-scan.json` — host-side scan results: `[{path, pattern_name, matched_line_count}]` — no raw secret values
 - `worf-scope/laforge-status.json` — LaForge health snapshot
-- `worf-scope/vault-logs-listing.json` — `{host_path, entries}`: host-side top-level names of `~/vault/general/logs`, for the own-mount check in §2
+- `worf-scope/vault-logs-listing.json` — `{host_path, realpath, is_symlink, inode, entries}`: host-side identity and top-level names of `~/vault/general/logs`, for the own-mount check in §2
 
 Vault write surface (narrowed to the logs directory only per V-SF-1 Impl-39 fold) is at `/workspace/extra/vault-logs/`. This mount is `~/vault/general/logs` on the host, not all of `~/vault/general/`. Worf has no write access outside this directory — if a check appears to need to write elsewhere, do not attempt it; flag as `FAIL:` against the brief scope.
 
@@ -114,11 +114,11 @@ Read `registered_groups.json`. For each group that has a non-null `container_con
 
 Read `container-inspect.json`. For each running nanoclaw-* container, compare live mounts (`.HostConfig.Binds` or `.Mounts`) against the `registered_groups` declared config for that group. Any live mount not declared in the group config = `WARN:`. (Post-V-SF-2 Impl-39 fold: Worf's mounts are static — worf-scope from `~/daystrom-ops/state/worf-scope` RO + vault-logs from `~/vault/general/logs` RW — no runtime-added tmp mounts expected for any group.)
 
-**Own-mount check (vault-logs).** `~/vault/general/logs` holds per-domain log subfolders (e.g. `ai`, `coding`, `finance`, `family`) plus `!index.md`, so seeing those names in `/workspace/extra/vault-logs` is expected and never evidence of a broader mount. Do not `FAIL:` on inference from folder names; the comparison below is the only test:
-1. Read `worf-scope/vault-logs-listing.json` and take `entries`. If the file is missing, emit `WARN:` (orchestrator predates this check) and skip the rest of this check.
-2. List `/workspace/extra/vault-logs` top-level names with `sorted(os.listdir(...))` (python3 stdlib).
-3. Drop `worf-audit.md` from BOTH sides — it is this audit's own output and may be created or rewritten mid-run.
-4. Equal sets → `PASS:`. Any difference → `FAIL:` naming the entries seen in-container but not host-side, and the entries host-side but not in-container.
+**Own-mount check (vault-logs).** `~/vault/general/logs` holds per-domain log subfolders (e.g. `ai`, `coding`, `finance`, `family`) plus `!index.md`, so seeing those names in `/workspace/extra/vault-logs` is expected and never evidence of a broader mount. Do not `FAIL:` on inference from folder names; the checks below are the only tests. Run them in order, using python3 stdlib; each failing check emits its own `FAIL:`, and when all pass emit a single `PASS:` line for the whole check.
+1. Read `worf-scope/vault-logs-listing.json`. If it is missing or unparseable → `FAIL:` (the orchestrator always writes it; without it the audit cannot verify its own write surface). Skip the remaining checks.
+2. If `is_symlink` is true, or `realpath` differs from `host_path` → `FAIL:` naming both (the host logs dir has been redirected).
+3. If `os.stat("/workspace/extra/vault-logs").st_ino` differs from the listing's `inode` → `FAIL:` naming both values (the container's bind source is not the host logs dir).
+4. Compare `entries` with `sorted(os.listdir("/workspace/extra/vault-logs"))`, dropping `worf-audit.md` from BOTH sides (it is this audit's own output and may be created or rewritten mid-run). Any difference → `FAIL:` naming the entries seen in-container but not host-side, and the entries host-side but not in-container.
 
 ### 3. Secret scan
 
