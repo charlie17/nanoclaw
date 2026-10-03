@@ -14,6 +14,7 @@ All inputs are pre-assembled by the host orchestrator and bind-mounted read-only
 - `worf-scope/mount-allowlist.json` — policy (upper-bound allowlist for container mounts)
 - `worf-scope/registered_groups.json` — live registered groups with container_config
 - `worf-scope/scheduled-tasks.json` — live scheduled_tasks rows
+- `worf-scope/scheduled-tasks-findings.txt` — host-computed §4 findings, one `PASS: `/`WARN: `/`FAIL: ` line each
 - `worf-scope/iptables-docker-user.txt` — DOCKER-USER chain rules (ordered)
 - `worf-scope/iptables-forward.txt` — FORWARD chain rules
 - `worf-scope/docker-ps.jsonl` — running/stopped containers (one JSON object per line)
@@ -155,18 +156,11 @@ If `secret-scan.json` is empty or all entries are `.env`-only: `PASS:` for the s
 
 ### 4. Scheduled tasks
 
-Read `scheduled-tasks.json`. Parse as JSON array.
+Read `/workspace/extra/worf-scope/scheduled-tasks-findings.txt`. Copy every line verbatim, in order, into the §4 section of the report. Emit nothing else in §4: do not re-judge or reword any line, and do not read `scheduled-tasks.json` for this section.
 
-Expected active cron rows (these are the only system rows that should exist):
-- id=`daystrom-midnight-reset-v1`, group_folder=`daystrom`, schedule_type=`cron`
-- id=`daystrom-nightly-report-v1`, group_folder=`daystrom`, schedule_type=`cron`
-- id=`daystrom-weekly-review-v1`, group_folder=`daystrom`, schedule_type=`cron`
+If the file is missing or contains no line starting with `PASS: `, `WARN: ` or `FAIL: `, emit a single `FAIL:` line saying the host scheduled-task check did not run.
 
-For each active row:
-- If id matches the above list: `PASS:`.
-- If id starts with `task-worf-audit-` and status is `active` or `completed`: `PASS:` — one-shot orchestrator task row, expected.
-- If id contains known user-created reminder patterns (id does NOT start with `daystrom-` and is not a worf audit row): `WARN:` — possible user reminder task; flag id for review.
-- Any row with `prompt` containing shell commands, URLs, or exfil patterns (e.g. `curl`, `wget`, `http`, `rm -rf`): `FAIL:`.
+These lines count toward the Summary totals (count discipline below).
 
 ### 5. Fork-delta drift
 
