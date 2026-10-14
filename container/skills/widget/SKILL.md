@@ -317,7 +317,8 @@ node -e '
     "mp4", "m4v", "webm", "mov", "docx", "xlsx", "pptx", "doc", "xls", "ppt",
     "odt", "ods", "odp", "rtf", "epub", "ics", "vcf"];
   const refuse = (why) => { console.log("refused: " + why); process.exit(1); };
-  if (!/^[A-Za-z0-9._-]{1,64}$/.test(id) || /^[._]/.test(id) || id === "files") refuse("bad or reserved id " + id);
+  const hostId = id.replace(/[^A-Za-z0-9._-]/g, "").replace(/\.\./g, "").slice(0, 64);
+  if (!id || id !== hostId || /^[._]/.test(id) || id === "files") refuse("bad or reserved id " + id);
   const filename = path.basename(src).replace(/[^A-Za-z0-9._-]/g, "").replace(/\.\./g, "");
   const dot = filename.lastIndexOf(".");
   const ext = dot > 0 ? filename.slice(dot + 1).toLowerCase() : "";
