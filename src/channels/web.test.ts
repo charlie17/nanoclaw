@@ -100,8 +100,9 @@ const netMock = vi.hoisted(() => {
   };
 });
 
-vi.mock('net', () => ({
+vi.mock('net', async (importOriginal) => ({
   default: {
+    isIP: (await importOriginal<typeof import('net')>()).isIP,
     connect: vi.fn((_p: number, _ho: string) => {
       setTimeout(() => {
         if (netMock.proxyUp) (netMock.h['connect'] || []).forEach((c) => c());
@@ -190,6 +191,7 @@ import { logger } from '../logger.js';
 import {
   checkToken,
   isAllowedExtension,
+  rateLimitKey,
   sanitizeFilename,
   sanitizeSid,
   TYPING_TIMEOUT_MS,
@@ -310,6 +312,70 @@ describe('checkToken', () => {
     // crypto.timingSafeEqual throws on length mismatch — checkToken must not throw
     expect(() => checkToken('short', 'muchlongertoken')).not.toThrow();
     expect(checkToken('short', 'muchlongertoken')).toBe(false);
+  });
+});
+
+// ── rateLimitKey ──────────────────────────────────────────────────────────────
+
+describe('rateLimitKey', () => {
+  function fakeReq(
+    cfIp: string | string[] | undefined,
+    remoteAddress: string | undefined = '127.0.0.1',
+  ): http.IncomingMessage {
+    const headers: http.IncomingHttpHeaders = {};
+    if (cfIp !== undefined)
+      (headers as Record<string, unknown>)['cf-connecting-ip'] = cfIp;
+    return { headers, socket: { remoteAddress } } as http.IncomingMessage;
+  }
+
+  it('keys on a single valid IPv4 cf-connecting-ip', () => {
+    expect(rateLimitKey(fakeReq('203.0.113.7'))).toBe('203.0.113.7');
+  });
+
+  it('falls back to remoteAddress when the header is absent, empty, listed, repeated or invalid', () => {
+    for (const bad of [
+      undefined,
+      '',
+      '203.0.113.7, 198.51.100.1',
+      '203.0.113.7,198.51.100.1',
+      ['203.0.113.7', '198.51.100.1'],
+      'not-an-ip',
+      '203.0.113.256',
+      ' ',
+    ]) {
+      expect(rateLimitKey(fakeReq(bad))).toBe('127.0.0.1');
+    }
+  });
+
+  it("returns 'unknown' when neither source is a valid IP", () => {
+    const noSocketAddr = {
+      headers: {},
+      socket: {},
+    } as http.IncomingMessage;
+    expect(rateLimitKey(noSocketAddr)).toBe('unknown');
+  });
+
+  it('buckets IPv6 by /64 across compressed and expanded spellings', () => {
+    const a = rateLimitKey(fakeReq('2001:db8:1:2::1'));
+    expect(a).toBe('2001:db8:1:2::/64');
+    expect(rateLimitKey(fakeReq('2001:0DB8:0001:0002:ffff:0:0:9'))).toBe(a);
+    expect(rateLimitKey(fakeReq('2001:db8:1:2:aaaa:bbbb:cccc:dddd'))).toBe(a);
+    expect(rateLimitKey(fakeReq('2001:db8:1:3::1'))).not.toBe(a);
+    expect(rateLimitKey(fakeReq('2001:db8::1'))).toBe('2001:db8:0:0::/64');
+    expect(rateLimitKey(fakeReq('2001:db8:0:0:0:0:0:1'))).toBe(
+      '2001:db8:0:0::/64',
+    );
+  });
+
+  it('buckets IPv4-mapped IPv6 as the plain IPv4', () => {
+    expect(rateLimitKey(fakeReq('::ffff:203.0.113.7'))).toBe('203.0.113.7');
+    expect(rateLimitKey(fakeReq('::ffff:cb00:7107'))).toBe('203.0.113.7');
+    expect(rateLimitKey(fakeReq('0:0:0:0:0:FFFF:203.0.113.7'))).toBe(
+      '203.0.113.7',
+    );
+    expect(rateLimitKey(fakeReq(undefined, '::ffff:127.0.0.1'))).toBe(
+      '127.0.0.1',
+    );
   });
 });
 
@@ -3095,5 +3161,113 @@ describe('WebChannel HTTP — Projects Board v2 routes', () => {
     } finally {
       await rl.disconnect();
     }
+  });
+});
+
+// ── Failed-auth limiter keys on the client, not the tunnel socket ─────────────
+//
+// Every test request arrives from 127.0.0.1, exactly as tunnel traffic does in
+// production; cf-connecting-ip is what distinguishes clients.
+
+describe('WebChannel HTTP — per-client failed-auth limiter', () => {
+  let lc: WebChannel;
+  let lcPort: number;
+  const A = '203.0.113.10';
+  const B = '198.51.100.20';
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockConfig.NANOCLAW_TOKEN = 'test-secret-token';
+    mockConfig.WIDGET_FEEDBACK_TOKEN = 'test-widget-token';
+    lc = new WebChannel(makeOpts());
+    await lc.connect();
+    lcPort = (
+      (lc as unknown as { server: http.Server }).server.address() as AddressInfo
+    ).port;
+  });
+
+  afterEach(async () => {
+    await lc.disconnect();
+  });
+
+  function bridge(token: string, cfIp?: string | string[]) {
+    const headers: http.OutgoingHttpHeaders = {
+      Authorization: `Bearer ${token}`,
+    };
+    if (cfIp !== undefined) headers['cf-connecting-ip'] = cfIp;
+    return req(lcPort, { method: 'GET', path: '/chat/sessions', headers });
+  }
+
+  async function failTimes(n: number, cfIp?: string | string[]) {
+    for (let i = 0; i < n; i++) {
+      expect((await bridge('wrong', cfIp)).status).toBe(401);
+    }
+  }
+
+  it('five failures from A lock out A only; B still gets 401', async () => {
+    await failTimes(5, A);
+    expect((await bridge('wrong', A)).status).toBe(429);
+    expect((await bridge('wrong', B)).status).toBe(401);
+    expect((await bridge('test-secret-token', B)).status).toBe(200);
+    expect((await bridge('test-secret-token')).status).toBe(200);
+  });
+
+  it("a loopback success does not clear A's failures", async () => {
+    await failTimes(4, A);
+    expect((await bridge('test-secret-token')).status).toBe(200);
+    await failTimes(1, A);
+    expect((await bridge('wrong', A)).status).toBe(429);
+  });
+
+  it('a success from A clears only A', async () => {
+    await failTimes(4, A);
+    await failTimes(4, B);
+    expect((await bridge('test-secret-token', A)).status).toBe(200);
+    await failTimes(1, B);
+    expect((await bridge('wrong', B)).status).toBe(429);
+    await failTimes(5, A);
+    expect((await bridge('wrong', A)).status).toBe(429);
+  });
+
+  it('malformed, listed, repeated and empty headers share the loopback bucket', async () => {
+    await failTimes(1, 'not-an-ip');
+    await failTimes(1, `${A}, ${B}`);
+    await failTimes(1, [A, B]);
+    await failTimes(1, '');
+    await failTimes(1);
+    expect((await bridge('wrong')).status).toBe(429);
+    expect((await bridge('wrong', A)).status).toBe(401);
+  });
+
+  it('IPv6 clients in one /64 share a bucket; another /64 does not', async () => {
+    await failTimes(3, '2001:db8:1:2::1');
+    await failTimes(2, '2001:0db8:0001:0002:0:0:0:ffff');
+    expect((await bridge('wrong', '2001:db8:1:2:abcd::9')).status).toBe(429);
+    expect((await bridge('wrong', '2001:db8:1:3::1')).status).toBe(401);
+  });
+
+  it('IPv4-mapped IPv6 shares the plain IPv4 bucket', async () => {
+    await failTimes(5, `::ffff:${A}`);
+    expect((await bridge('wrong', A)).status).toBe(429);
+  });
+
+  it('/widget/data with a bad bearer is limited per client', async () => {
+    const widget = (token: string, cfIp?: string) =>
+      req(lcPort, {
+        method: 'GET',
+        path: `/widget/data/${V2_ID}`,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Origin: WIDGET_ORIGIN,
+          ...(cfIp !== undefined ? { 'cf-connecting-ip': cfIp } : {}),
+        },
+      });
+    for (let i = 0; i < 5; i++) {
+      expect((await widget('wrong', A)).status).toBe(401);
+    }
+    expect((await widget('wrong', A)).status).toBe(429);
+    expect((await widget('wrong', B)).status).toBe(401);
+    expect((await widget('wrong')).status).toBe(401);
+    expect((await bridge('test-secret-token')).status).toBe(200);
   });
 });

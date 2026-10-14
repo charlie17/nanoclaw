@@ -162,6 +162,53 @@ export function checkToken(provided: string, expected: string): boolean {
   return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
 }
 
+/**
+ * Failed-auth limiter key for a request. Every internet request reaches this
+ * loopback-bound server through the local cloudflared tunnel, so the socket
+ * address is 127.0.0.1 for all of them; the client is named by the
+ * edge-overwritten `cf-connecting-ip` header instead. Only a single valid IP is
+ * trusted; anything else falls back to the socket address, so local callers
+ * share one bucket. IPv6 keys on its /64; IPv4-mapped IPv6 keys as the IPv4.
+ */
+export function rateLimitKey(req: IncomingMessage): string {
+  const header = req.headers['cf-connecting-ip'];
+  if (typeof header === 'string' && net.isIP(header) !== 0) {
+    return normalizeIpKey(header);
+  }
+  const remote = req.socket.remoteAddress;
+  return remote && net.isIP(remote) !== 0 ? normalizeIpKey(remote) : 'unknown';
+}
+
+// Expects a value net.isIP has accepted.
+function normalizeIpKey(addr: string): string {
+  if (net.isIP(addr) === 4) return addr;
+  let s = addr.toLowerCase();
+  const zone = s.indexOf('%');
+  if (zone !== -1) s = s.slice(0, zone);
+  const v4Tail = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+  if (v4Tail) {
+    const [a, b, c, d] = v4Tail.slice(1).map(Number);
+    const hi = ((a << 8) | b).toString(16);
+    const lo = ((c << 8) | d).toString(16);
+    s = `${s.slice(0, v4Tail.index)}${hi}:${lo}`;
+  }
+  const [headPart, tailPart] = s.split('::');
+  const head = headPart ? headPart.split(':') : [];
+  const tail = tailPart ? tailPart.split(':') : [];
+  const groups =
+    tailPart === undefined
+      ? head
+      : [...head, ...Array(8 - head.length - tail.length).fill('0'), ...tail];
+  const h = groups.map((g) => parseInt(g, 16));
+  if (h.slice(0, 5).every((x) => x === 0) && h[5] === 0xffff) {
+    return `${h[6] >> 8}.${h[6] & 0xff}.${h[7] >> 8}.${h[7] & 0xff}`;
+  }
+  return `${h
+    .slice(0, 4)
+    .map((x) => x.toString(16))
+    .join(':')}::/64`;
+}
+
 // Pattern from rozek/nanoclaw@9311ff1 — sanitize-name (Unicode control strip, L7)
 export function sanitizeFilename(raw: string): string | null {
   let s = raw
@@ -1169,7 +1216,7 @@ export class WebChannel implements Channel {
 
   private authorizeRequest(req: IncomingMessage, res: ServerResponse): boolean {
     if (!NANOCLAW_TOKEN) return true; // loopback-only trust model — D-S1.1
-    const ip = req.socket.remoteAddress ?? 'unknown';
+    const ip = rateLimitKey(req);
     const now = Date.now();
     if (this.isRateLimited(ip, now)) {
       res.writeHead(429, { 'Retry-After': '60' }).end('Too Many Requests');
@@ -1192,7 +1239,7 @@ export class WebChannel implements Channel {
       cookieToken !== null && checkToken(cookieToken, NANOCLAW_TOKEN);
 
     if (bearerValid || cookieValid) {
-      this.authAttempts.delete(ip); // clear on success
+      this.authAttempts.delete(ip); // clear this caller's key on success
       return true;
     }
 
@@ -1726,7 +1773,7 @@ export class WebChannel implements Channel {
     }
 
     // Brute-force throttle via the shared failed-auth limiter (clone of handleAuthLogin).
-    const ip = req.socket.remoteAddress ?? 'unknown';
+    const ip = rateLimitKey(req);
     const now = Date.now();
     if (this.isRateLimited(ip, now)) {
       res.writeHead(429, { 'Retry-After': '60' }).end('Too Many Requests');
@@ -1862,7 +1909,7 @@ export class WebChannel implements Channel {
       return;
     }
 
-    const ip = req.socket.remoteAddress ?? 'unknown';
+    const ip = rateLimitKey(req);
     const now = Date.now();
     if (this.isRateLimited(ip, now)) {
       res.writeHead(429, { 'Retry-After': '60' }).end('Too Many Requests');
@@ -1929,7 +1976,7 @@ export class WebChannel implements Channel {
       return false;
     }
 
-    const ip = req.socket.remoteAddress ?? 'unknown';
+    const ip = rateLimitKey(req);
     const now = Date.now();
     if (this.isRateLimited(ip, now)) {
       res.writeHead(429, { 'Retry-After': '60' }).end('Too Many Requests');
@@ -2412,7 +2459,7 @@ export class WebChannel implements Channel {
         .end('{"ok":true}');
       return;
     }
-    const ip = req.socket.remoteAddress ?? 'unknown';
+    const ip = rateLimitKey(req);
     const now = Date.now();
     if (this.isRateLimited(ip, now)) {
       // D-S1d.3: check before collectBody
@@ -3063,11 +3110,10 @@ export class WebChannel implements Channel {
       socket.destroy();
       return;
     }
-    // Vera iter-1 Should Fix #1: rate-limit WS upgrade auth path (mirror authorizeRequest).
-    // Without this, the WS path is an unhardened brute-force surface (HTTP path is rate-limited
-    // via recordFailedAuth + isRateLimited; WS path bypasses both).
+    // Same failed-auth limiter as authorizeRequest, so the upgrade path is not
+    // an unthrottled brute-force surface.
     if (NANOCLAW_TOKEN) {
-      const ip = req.socket.remoteAddress ?? 'unknown';
+      const ip = rateLimitKey(req);
       const now = Date.now();
       if (this.isRateLimited(ip, now)) {
         socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n');
@@ -3082,7 +3128,7 @@ export class WebChannel implements Channel {
         socket.destroy();
         return;
       }
-      this.authAttempts.delete(ip); // clear on success — mirrors authorizeRequest:1125
+      this.authAttempts.delete(ip); // clear this caller's key on success
     }
     // Strip /dash/private prefix when present; pass /ws/* through as-is.
     const reqUrl = req.url ?? '/dash/private/';
