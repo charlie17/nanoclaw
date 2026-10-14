@@ -1,6 +1,6 @@
 ---
 name: widget
-description: Generate an interactive single-page web widget (Arrow JS + Tailwind) from JT's prompt and ship it to Cloudflare Pages behind CF Access, returning a tappable Telegram link. Invoke on the explicit `/widget <prompt>` command, and conservatively when JT clearly wants to *interactively touch* something — "let me play with X", "let me tweak Y", "compare these N options" with sliders/inputs/drag. Produces ad-hoc widgets only (Daystrom-generated, one-shot). Do NOT invoke for plain "show me" / "summarize" / "list" requests — those are normal chat replies. ALSO consult this skill when an inbound message contains a widget-feedback envelope (the sentinel line `===WIDGET-FEEDBACK-ENVELOPE-v1===`) — that is a widget sending its state back for you to discuss; see "Handling widget feedback".
+description: Generate an interactive single-page web widget (Arrow JS + Tailwind) from JT's prompt and ship it to Cloudflare Pages behind CF Access, returning a tappable Telegram link. Invoke on the explicit `/widget <prompt>` command, and conservatively when JT clearly wants to *interactively touch* something — "let me play with X", "let me tweak Y", "compare these N options" with sliders/inputs/drag. Produces ad-hoc widgets only (Daystrom-generated, one-shot). Do NOT invoke for plain "show me" / "summarize" / "list" requests — those are normal chat replies. ALSO consult this skill when an inbound message contains a widget-feedback envelope (the sentinel line `===WIDGET-FEEDBACK-ENVELOPE-v1===`) — that is a widget sending its state back for you to discuss; see "Handling widget feedback". ALSO invoke when JT hands you a file (a Telegram attachment or a path he names) and explicitly asks to publish, upload, or host it, or for a link to it; see "Publishing a file JT hands you".
 ---
 
 # /widget — interactive web widgets (ad-hoc)
@@ -15,7 +15,7 @@ Canonical system explainer (read only if you need the why): `general/` is the va
 - **Conservative implicit:** JT clearly wants to *interactively manipulate* something — "let me play with these numbers", "let me reprioritise and you process it", "compare these 3 quotes side by side and let me weight them", anything that wants sliders / inputs / toggles / drag-reorder.
 - **Do NOT invoke** for plain display asks — "show me my projects", "summarise this", "list X". Those are ordinary chat replies. When unsure, ask JT "want an interactive widget for this, or just the answer here?" rather than silently building one.
 
-This skill builds **ad-hoc** widgets only — generated fresh, treated as throwaway (the URL stays live forever, but you don't maintain it; you regenerate). Standing widgets (the Projects Board) are hand-authored and pinned by the Three Man Team, not generated here.
+Everything you generate here is an **ad-hoc** widget (the one other lane is publishing a file JT supplies; see "Publishing a file JT hands you") — generated fresh, treated as throwaway (the URL stays live forever, but you don't maintain it; you regenerate). Standing widgets (the Projects Board) are hand-authored and pinned by the Three Man Team, not generated here.
 
 ## The flow (async — the host acks + ships; you stay silent)
 
@@ -299,13 +299,40 @@ mv "/workspace/extra/widget-queue/.$id.bundle.json.tmp" "/workspace/extra/widget
 
 The filename stem and the JSON `.id` are the same `"$id"` string by construction — see the slug rule.
 
+## Publishing a file JT hands you (`kind: "static"`)
+
+A passthrough lane: one file JT supplies ships byte-for-byte and he gets a link. Use it **only** when JT supplies the file (a Telegram attachment lands at `/workspace/group/attachments/<name>`, or he names a vault/workspace path) **and** explicitly asks to publish, upload, host, or give him a link to it. Never on your own initiative, and never for content you generated: generated interactive pages are `ad-hoc` Arrow widgets.
+
+- **Ship it verbatim.** Do not edit, wrap, or "fix" the file. The host adds no footer.
+- **Refuse before queuing** what the host would refuse, and tell JT why: SVG/XML/XHTML-family files (`.svg .svgz .xml .xhtml .xht .xsl .xslt .mht .mhtml .shtml .swf`, which can run script; offer a PNG/PDF, or the content inside an `.html` file), files over 25 MiB, and filenames with no extension.
+- **`<id>`** = kebab slug of the filename stem + `-YYYY-MM-DD` (ET: `TZ=America/New_York date +%F`), same slug rule as above.
+- **Bundle** `{ id, title, kind: "static", filename, content_b64 }`, built with node and dropped atomically. Node prints the filename as the host will stage it; use that name in the URL:
+
+```bash
+id="<id>"; title="<title>"; src="/workspace/group/attachments/<name>"
+node -e '
+  const fs = require("fs"), path = require("path");
+  const [src, id, title, out] = process.argv.slice(1);
+  const buf = fs.readFileSync(src);
+  if (buf.length === 0 || buf.length > 25 * 1024 * 1024) { console.error(`refused: ${buf.length} bytes`); process.exit(1); }
+  const filename = path.basename(src).replace(/[^A-Za-z0-9._-]/g, "").replace(/\.\./g, "");
+  fs.writeFileSync(out, JSON.stringify({ id, title, kind: "static", filename, content_b64: buf.toString("base64") }));
+  console.log(filename);
+' "$src" "$id" "$title" "/workspace/extra/widget-queue/.$id.bundle.json.tmp"
+mv "/workspace/extra/widget-queue/.$id.bundle.json.tmp" "/workspace/extra/widget-queue/$id.bundle.json"
+```
+
+- **URL:** `https://widgets.crystaldatalabs.com/files/<id>/` for `.html`/`.htm`; `https://widgets.crystaldatalabs.com/files/<id>/<filename>` for anything else.
+- **Vault stub** at `/workspace/extra/vault/widgets/<id>.md`, same rules as the widget stub, with `kind: static`, `source: <original filename>`, `created:`, `url:`, and `prompt:` holding JT's request verbatim; body is `# File — <filename>` plus an `[Open file](<URL>)` link.
+- **Messaging:** no host "working on it" ack fires on this path (that comes only from the `/widget` command), so send ONE short line, `Publishing <filename> — link incoming.`, then stay silent. The host sends the link.
+
 ## Hard constraints — do NOT
 
 - **Do NOT deploy, run `wrangler`, or touch Cloudflare** — deploy is host-side; you have no credentials and no internet, and that isolation must stay intact.
 - **Do NOT ask your container to fetch the internet** (no `curl`/`fetch`/`npm install` of widget deps). The widget's own `esm.sh` imports run in JT's *browser* at open-time — that's fine; your container fetching anything is not.
 - **Do NOT write the HTML and a manifest as two files** — one self-contained `<id>.bundle.json` only.
 - **Do NOT add a "Send to Daystrom" button speculatively.** Add it **only** when the prompt implies a round-trip (see "Send to Daystrom feedback button"); a purely-local widget gets none.
-- **Do NOT poll or wait for the deploy, and do NOT emit a building/ack line** — the host sends the ack and the shipped/failed message (FU-2: the ack is deterministic host-side, not your prose). Stay silent after queuing (or use `<internal>…</internal>`); the only thing you speak up about is a failed bundle *drop*.
+- **Do NOT poll or wait for the deploy, and do NOT emit a building/ack line** — the host sends the ack and the shipped/failed message (FU-2: the ack is deterministic host-side, not your prose). Stay silent after queuing (or use `<internal>…</internal>`); the only thing you speak up about is a failed bundle *drop*. (Static file publishing has its own one-line rule above.)
 
 ## Handling widget feedback (inbound — a widget sent you its state)
 
