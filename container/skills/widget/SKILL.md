@@ -336,7 +336,7 @@ node -e '
 ```
 
 - **Vault stub** at `/workspace/extra/vault/widgets/<id>.md`, same rules as the widget stub, with `kind: static`, `source: <original filename>`, `created:`, `url:` (the snippet's printed URL), and `prompt:` holding JT's request verbatim; body is `# File — <filename>` plus an `[Open file](<URL>)` link.
-- **Messaging:** no host "working on it" ack fires on this path (that comes only from the `/widget` command), so once the bundle is queued send ONE short line, `Publishing <filename> — link incoming.`, then stay silent. The host sends the link.
+- **Messaging:** the host's "📎 File published" Telegram (with the link) is the only confirmation, so after queuing stay silent — wrap any completion note in `<internal>…</internal>`. Your reply only goes out at the end of your turn, after the host has usually already sent the link. Speak up only when the snippet prints `refused: …` (tell JT the reason and a fix) or the bundle drop itself fails.
 
 ## Hard constraints — do NOT
 
@@ -344,7 +344,7 @@ node -e '
 - **Do NOT ask your container to fetch the internet** (no `curl`/`fetch`/`npm install` of widget deps). The widget's own `esm.sh` imports run in JT's *browser* at open-time — that's fine; your container fetching anything is not.
 - **Do NOT write the HTML and a manifest as two files** — one self-contained `<id>.bundle.json` only.
 - **Do NOT add a "Send to Daystrom" button speculatively.** Add it **only** when the prompt implies a round-trip (see "Send to Daystrom feedback button"); a purely-local widget gets none.
-- **Do NOT poll or wait for the deploy, and do NOT emit a building/ack line** — the host sends the ack and the shipped/failed message (FU-2: the ack is deterministic host-side, not your prose). Stay silent after queuing (or use `<internal>…</internal>`); the only thing you speak up about is a failed bundle *drop*. (Static file publishing has its own one-line rule above.)
+- **Do NOT poll or wait for the deploy, and do NOT emit a building/ack line** — the host sends the ack and the shipped/failed message (FU-2: the ack is deterministic host-side, not your prose). Stay silent after queuing (or use `<internal>…</internal>`); the only thing you speak up about is a failed bundle *drop*.
 
 ## Handling widget feedback (inbound — a widget sent you its state)
 
