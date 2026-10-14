@@ -3270,4 +3270,50 @@ describe('WebChannel HTTP — per-client failed-auth limiter', () => {
     expect((await widget('wrong')).status).toBe(401);
     expect((await bridge('test-secret-token')).status).toBe(200);
   });
+
+  // Only the gate's status matters; '{}' bodies may fail validation after it.
+  it.each([
+    ['feedback', 'POST', '/widget/feedback'],
+    ['data', 'GET', `/widget/data/${V2_ID}`],
+    ['state', 'POST', `/widget/state/${V2_ID}`],
+    ['insights-regen', 'POST', `/widget/insights-regen/${V2_ID}`],
+  ])(
+    "%s: a good bearer clears only the caller's failures",
+    async (_n, method, path) => {
+      const widget = (token: string, cfIp: string) =>
+        req(
+          lcPort,
+          {
+            method,
+            path,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Origin: WIDGET_ORIGIN,
+              'Content-Type': 'application/json',
+              'cf-connecting-ip': cfIp,
+            },
+          },
+          method === 'POST' ? '{}' : undefined,
+        );
+      const failTimesW = async (n: number, cfIp: string) => {
+        for (let i = 0; i < n; i++) {
+          expect((await widget('wrong', cfIp)).status).toBe(401);
+        }
+      };
+      const expectPastGate = async (cfIp: string) => {
+        const { status } = await widget('test-widget-token', cfIp);
+        expect(status).not.toBe(429);
+        expect(status).not.toBe(401);
+      };
+
+      await failTimesW(4, B);
+      await failTimesW(4, A);
+      await expectPastGate(A);
+      await failTimesW(4, A);
+      await expectPastGate(A);
+
+      await failTimesW(1, B);
+      expect((await widget('wrong', B)).status).toBe(429);
+    },
+  );
 });

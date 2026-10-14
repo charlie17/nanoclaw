@@ -1789,6 +1789,7 @@ export class WebChannel implements Channel {
       res.writeHead(401).end('Unauthorized');
       return;
     }
+    this.authAttempts.delete(ip); // clear this caller's key on success
 
     // Body — reuse the 1 MB clamp + drain-on-oversize.
     let body: string;
@@ -1924,6 +1925,7 @@ export class WebChannel implements Channel {
       res.writeHead(401).end('Unauthorized');
       return;
     }
+    this.authAttempts.delete(ip); // clear this caller's key on success
 
     // /widget/data/<id> — id charset-validated (kebab ASCII ≤64). Board v2 is
     // the only served board; anything else 404s.
@@ -1991,6 +1993,7 @@ export class WebChannel implements Channel {
       res.writeHead(401).end('Unauthorized');
       return false;
     }
+    this.authAttempts.delete(ip); // clear this caller's key on success
 
     const id = urlPath.slice(prefix.length);
     if (!/^[a-zA-Z0-9._-]{1,64}$/.test(id)) {
@@ -2491,6 +2494,7 @@ export class WebChannel implements Channel {
       res.writeHead(401).end('Unauthorized');
       return;
     }
+    this.authAttempts.delete(ip); // clear this caller's key on success
 
     // Pattern from rozek/nanoclaw@9311ff1 — cookie attribute set
     // JT: req.socket.encrypted is tls.TLSSocket-specific; cast needed
