@@ -304,27 +304,38 @@ The filename stem and the JSON `.id` are the same `"$id"` string by construction
 A passthrough lane: one file JT supplies ships byte-for-byte and he gets a link. Use it **only** when JT supplies the file (a Telegram attachment lands at `/workspace/group/attachments/<name>`, or he names a vault/workspace path) **and** explicitly asks to publish, upload, host, or give him a link to it. Never on your own initiative, and never for content you generated: generated interactive pages are `ad-hoc` Arrow widgets.
 
 - **Ship it verbatim.** Do not edit, wrap, or "fix" the file. The host adds no footer.
-- **Refuse before queuing** what the host would refuse, and tell JT why: SVG/XML/XHTML-family files (`.svg .svgz .xml .xhtml .xht .xsl .xslt .mht .mhtml .shtml .swf`, which can run script; offer a PNG/PDF, or the content inside an `.html` file), files over 25 MiB, and filenames with no extension.
 - **`<id>`** = kebab slug of the filename stem + `-YYYY-MM-DD` (ET: `TZ=America/New_York date +%F`), same slug rule as above.
-- **Bundle** `{ id, title, kind: "static", filename, content_b64 }`, built with node and dropped atomically. Node prints the filename as the host will stage it; use that name in the URL:
+- **Bundle** `{ id, title, kind: "static", filename, content_b64 }`, built and dropped by the snippet below. It applies the host's rules (publishable types, size, filename, id) before writing anything. On `refused: <reason>` it queues nothing: tell JT the reason (a PDF/PNG export or an `.html` wrapper usually works) and stop. On success it prints the file's URL; use exactly that URL, never a hand-built one.
 
 ```bash
 id="<id>"; title="<title>"; src="/workspace/group/attachments/<name>"
 node -e '
   const fs = require("fs"), path = require("path");
   const [src, id, title, out] = process.argv.slice(1);
-  const buf = fs.readFileSync(src);
-  if (buf.length === 0 || buf.length > 25 * 1024 * 1024) { console.error(`refused: ${buf.length} bytes`); process.exit(1); }
+  const ALLOW = ["html", "htm", "pdf", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "bmp",
+    "txt", "csv", "tsv", "json", "md", "log", "mp3", "m4a", "wav", "ogg", "oga", "flac",
+    "mp4", "m4v", "webm", "mov", "docx", "xlsx", "pptx", "doc", "xls", "ppt",
+    "odt", "ods", "odp", "rtf", "epub", "ics", "vcf"];
+  const refuse = (why) => { console.log("refused: " + why); process.exit(1); };
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(id) || /^[._]/.test(id) || id === "files") refuse("bad or reserved id " + id);
   const filename = path.basename(src).replace(/[^A-Za-z0-9._-]/g, "").replace(/\.\./g, "");
+  const dot = filename.lastIndexOf(".");
+  const ext = dot > 0 ? filename.slice(dot + 1).toLowerCase() : "";
+  if (!filename || filename.startsWith(".")) refuse("the filename is empty or starts with a dot");
+  if (!ext) refuse("the filename has no extension");
+  if (filename.length > 128) refuse("the filename is longer than 128 characters");
+  if (!ALLOW.includes(ext)) refuse("." + ext + " is not on the publishable list");
+  const buf = fs.readFileSync(src);
+  if (buf.length === 0 || buf.length > 25 * 1024 * 1024) refuse("the file is " + buf.length + " bytes (1 byte to 25 MiB)");
   fs.writeFileSync(out, JSON.stringify({ id, title, kind: "static", filename, content_b64: buf.toString("base64") }));
-  console.log(filename);
-' "$src" "$id" "$title" "/workspace/extra/widget-queue/.$id.bundle.json.tmp"
-mv "/workspace/extra/widget-queue/.$id.bundle.json.tmp" "/workspace/extra/widget-queue/$id.bundle.json"
+  const base = "https://widgets.crystaldatalabs.com/files/" + id + "/";
+  console.log(ext === "html" || ext === "htm" ? base : base + filename);
+' "$src" "$id" "$title" "/workspace/extra/widget-queue/.$id.bundle.json.tmp" \
+&& mv "/workspace/extra/widget-queue/.$id.bundle.json.tmp" "/workspace/extra/widget-queue/$id.bundle.json"
 ```
 
-- **URL:** `https://widgets.crystaldatalabs.com/files/<id>/` for `.html`/`.htm`; `https://widgets.crystaldatalabs.com/files/<id>/<filename>` for anything else.
-- **Vault stub** at `/workspace/extra/vault/widgets/<id>.md`, same rules as the widget stub, with `kind: static`, `source: <original filename>`, `created:`, `url:`, and `prompt:` holding JT's request verbatim; body is `# File — <filename>` plus an `[Open file](<URL>)` link.
-- **Messaging:** no host "working on it" ack fires on this path (that comes only from the `/widget` command), so send ONE short line, `Publishing <filename> — link incoming.`, then stay silent. The host sends the link.
+- **Vault stub** at `/workspace/extra/vault/widgets/<id>.md`, same rules as the widget stub, with `kind: static`, `source: <original filename>`, `created:`, `url:` (the snippet's printed URL), and `prompt:` holding JT's request verbatim; body is `# File — <filename>` plus an `[Open file](<URL>)` link.
+- **Messaging:** no host "working on it" ack fires on this path (that comes only from the `/widget` command), so once the bundle is queued send ONE short line, `Publishing <filename> — link incoming.`, then stay silent. The host sends the link.
 
 ## Hard constraints — do NOT
 
