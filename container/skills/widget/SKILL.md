@@ -191,13 +191,12 @@ document.getElementById('diagram').innerHTML = svg
 
 Some widgets are **conversational** — JT manipulates state, then wants *you* to receive that state and discuss/analyse it (not just compute locally). Add a **"Send to Daystrom" button** only when the prompt clearly implies a round-trip: interactive inputs **plus** "analyse this", "let me tweak it and you process it", "send me your read on these numbers", etc. A widget that's purely a local calculator/comparator needs **no** Send button — don't add one speculatively.
 
-When you do add it: a button POSTs the current widget state cross-origin to the Bridge, which routes it back to you as a normal Telegram message (you reply in JT's chat). The POST is to a **different host** than the widget (`widgets.…` → `daystrom.…`), so it's cross-origin — the endpoint's CORS allows exactly the widgets origin.
+When you do add it: a button POSTs the current widget state to the same-origin path `/api/widget/feedback`, which routes it back to you as a normal Telegram message (you reply in JT's chat). The widgets site's forwarder authenticates to Daystrom server-side, so the widget carries no token and no `Authorization` header — the host deploy refuses any widget that does.
 
 Recipe — drop this into the widget's `<script type="module">`, wired to your state:
 
 ```js
-const FEEDBACK_URL = 'https://daystrom.crystaldatalabs.com/widget/feedback'
-const FEEDBACK_TOKEN = 'WIDGET_FEEDBACK_TOKEN_VALUE'  // see note below
+const FEEDBACK_URL = '/api/widget/feedback'           // same-origin; no token
 const WIDGET_ID = '<id>'                               // this widget's id, verbatim
 
 const ui = reactive({ sending: false, sent: false, error: '' })
@@ -208,7 +207,8 @@ async function sendToDaystrom() {
   try {
     const res = await fetch(FEEDBACK_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${FEEDBACK_TOKEN}` },
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'conversational', widgetId: WIDGET_ID, state: state }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -223,8 +223,7 @@ async function sendToDaystrom() {
 const sendButton = html`
   <button
     @click="${sendToDaystrom}"
-    ?disabled="${() => ui.sending || ui.sent}"
-    class="px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-white font-medium">
+    class="${() => 'px-4 py-2 rounded-lg bg-sky-500 text-white font-medium ' + (ui.sending || ui.sent ? 'opacity-50 cursor-default' : 'hover:bg-sky-400')}">
     ${() => ui.sent ? '✅ Sent — Daystrom’s reviewing, check Telegram' : ui.sending ? 'Sending…' : 'Send to Daystrom'}
   </button>
   ${() => ui.error ? html`<p class="text-rose-400 text-sm mt-1">⚠️ ${() => ui.error}</p>` : ''}
@@ -234,12 +233,10 @@ const sendButton = html`
 Wiring rules:
 
 - **`state` is whatever your widget's reactive state object is** — pass the slice JT cares about (don't dump UI-only flags). Keep it JSON-serialisable (numbers, strings, arrays, plain objects).
-- **Soft-lock the button**: disabled while `ui.sending` and after `ui.sent` (bind `disabled` to `${() => ui.sending || ui.sent}` via an attribute — e.g. `<button ... ?disabled="${() => ui.sending || ui.sent}">`, or set `el.disabled` in an effect). One send per interaction; JT re-opens / re-runs to send again.
+- **Soft-lock the button**: inert while `ui.sending` and after `ui.sent` — the handler's early `return` does the locking and a reactive class shows it, exactly as in the recipe. Never use an Arrow `?disabled=` binding: it blanks the app on older iOS WebKit and the host deploy refuses it. One send per interaction; JT re-opens / re-runs to send again.
 - **Instant ack only** — flip to "✅ Sent…" on a 2xx and stop. **Do NOT** wait for, poll, or display Daystrom's analysis in the widget; that lands in Telegram. The widget's job ends at "Sent".
 - **`type: 'conversational'`** always for ad-hoc Send. (`write-back` / `refresh` are the standing Projects Board's types — not for ad-hoc widgets.)
 - **Dark palette still applies** — the Send button is `bg-sky-500`/`bg-emerald-500`-class on the dark surface, never a light button.
-
-**The token (`WIDGET_FEEDBACK_TOKEN_VALUE`).** The Send button authenticates with the shared `WIDGET_FEEDBACK_TOKEN`, embedded directly in the widget HTML (single-user, behind CF Access — JT-confirmed acceptable for v1). **You do not know the token value inside your container** (it's host-side, never injected here). So emit the literal placeholder string **`WIDGET_FEEDBACK_TOKEN_VALUE`** in the HTML exactly as written above — the host deploy worker substitutes the real token at deploy time. Do not invent, guess, or omit it; emit the placeholder verbatim and the host fills it in.
 
 ## Vault stub
 
