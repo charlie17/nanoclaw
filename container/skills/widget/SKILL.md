@@ -191,7 +191,7 @@ document.getElementById('diagram').innerHTML = svg
 
 Some widgets are **conversational** — JT manipulates state, then wants *you* to receive that state and discuss/analyse it (not just compute locally). Add a **"Send to Daystrom" button** only when the prompt clearly implies a round-trip: interactive inputs **plus** "analyse this", "let me tweak it and you process it", "send me your read on these numbers", etc. A widget that's purely a local calculator/comparator needs **no** Send button — don't add one speculatively.
 
-When you do add it: a button POSTs the current widget state to the same-origin path `/api/widget/feedback`, which routes it back to you as a normal Telegram message (you reply in JT's chat). The widgets site's forwarder authenticates to Daystrom server-side, so the widget carries no token and no `Authorization` header — the host deploy refuses any widget that does.
+When you do add it: a button POSTs the current widget state to the same-origin path `/api/widget/feedback`, which routes it back to you as a normal Telegram message (you reply in JT's chat). The widgets site's forwarder authenticates to Daystrom server-side, so the widget carries no token and never mentions authorization in any form — the host deploy refuses any widget whose HTML contains that word. Keep the `X-Widget-Request: '1'` header exactly as in the recipe: the forwarder refuses requests without it.
 
 Recipe — drop this into the widget's `<script type="module">`, wired to your state:
 
@@ -208,7 +208,7 @@ async function sendToDaystrom() {
     const res = await fetch(FEEDBACK_URL, {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Widget-Request': '1' },
       body: JSON.stringify({ type: 'conversational', widgetId: WIDGET_ID, state: state }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
