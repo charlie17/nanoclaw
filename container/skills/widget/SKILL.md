@@ -300,7 +300,8 @@ The filename stem and the JSON `.id` are the same `"$id"` string by construction
 
 A passthrough lane: one file JT supplies ships byte-for-byte and he gets a link. Use it **only** when JT supplies the file (a Telegram attachment lands at `/workspace/group/attachments/<name>`, or he names a vault/workspace path) **and** explicitly asks to publish, upload, host, or give him a link to it. Never on your own initiative, and never for content you generated: generated interactive pages are `ad-hoc` Arrow widgets.
 
-- **Ship it verbatim.** Do not edit, wrap, or "fix" the file. The host adds no footer.
+- **Ship it verbatim.** Do not edit, wrap, or "fix" the file on your own. The host adds no footer.
+- **JT asks for a change to a published file** → make exactly that change and republish under the original `<id>` (from its vault stub's `url:`), so the link stays the same.
 - **`<id>`** = kebab slug of the filename stem + `-YYYY-MM-DD` (ET: `TZ=America/New_York date +%F`), same slug rule as above.
 - **Bundle** `{ id, title, kind: "static", filename, content_b64 }`, built and dropped by the snippet below. It applies the host's rules (publishable types, size, filename, id) before writing anything. On `refused: <reason>` it queues nothing: tell JT the reason (a PDF/PNG export or an `.html` wrapper usually works) and stop. On success it prints the file's URL; use exactly that URL, never a hand-built one.
 
