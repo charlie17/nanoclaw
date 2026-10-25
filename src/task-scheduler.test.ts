@@ -177,19 +177,15 @@ describe('task scheduler', () => {
       );
     });
 
-    // Known defect in cron-parser 5.5.0: evaluated before the spring-forward
-    // gap, it skips that whole day. 5.10.2 returns the correct instant; this
-    // flips to a plain `it` (and must) once the dependency is bumped.
-    it.fails(
-      'keeps the same ET wall-clock time across the spring DST boundary',
-      () => {
-        // Saturday 2027-03-13 09:00 EST, then Sunday 2027-03-14 09:00 EDT.
-        vi.setSystemTime(new Date('2027-03-13T14:00:01.000Z'));
-        expect(computeNextRun(cronTask('America/New_York'))).toBe(
-          '2027-03-14T13:00:00.000Z',
-        );
-      },
-    );
+    // cron-parser before 5.6.0 skipped the whole spring-forward day when
+    // evaluated before the gap.
+    it('keeps the same ET wall-clock time across the spring DST boundary', () => {
+      // Saturday 2027-03-13 09:00 EST, then Sunday 2027-03-14 09:00 EDT.
+      vi.setSystemTime(new Date('2027-03-13T14:00:01.000Z'));
+      expect(computeNextRun(cronTask('America/New_York'))).toBe(
+        '2027-03-14T13:00:00.000Z',
+      );
+    });
 
     it('NULL schedule_tz parses in TIMEZONE exactly as before', () => {
       vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z'));

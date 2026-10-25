@@ -1,7 +1,5 @@
-import { CronExpressionParser } from 'cron-parser';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { TIMEZONE } from './config.js';
 import {
   _initTestDatabase,
   createTask,
@@ -586,6 +584,7 @@ describe('schedule_task / update_task schedule_tz', () => {
     );
 
   const update = (fields: {
+    prompt?: string;
     schedule_type?: string;
     schedule_value?: string;
   }) =>
@@ -654,8 +653,7 @@ describe('schedule_task / update_task schedule_tz', () => {
     expect(task.next_run).toBe('2026-12-15T15:00:00.000Z');
   });
 
-  it('update_task on a NULL-tz cron keeps parsing in TIMEZONE', async () => {
-    vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z'));
+  const createNullZoneCron = () =>
     createTask({
       id: 'tz-task',
       group_folder: 'other-group',
@@ -668,15 +666,36 @@ describe('schedule_task / update_task schedule_tz', () => {
       status: 'active',
       created_at: '2026-01-01T00:00:00.000Z',
     });
-    await update({ schedule_value: '0 4 * * *' });
+
+  it('update_task with a new value on a NULL-zone cron switches it to ET', async () => {
+    vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z')); // 08:00 EDT
+    createNullZoneCron();
+    await update({ schedule_value: '0 9 * * *' });
+
+    const task = getTaskById('tz-task')!;
+    expect(task.schedule_tz).toBe('America/New_York');
+    expect(task.next_run).toBe('2026-07-15T13:00:00.000Z');
+  });
+
+  it('prompt-only update_task leaves an ET zone and next_run untouched', async () => {
+    vi.setSystemTime(new Date('2026-12-15T12:00:00.000Z'));
+    await schedule('cron', '0 9 * * *');
+    await update({ prompt: 'reworded' });
+
+    const task = getTaskById('tz-task')!;
+    expect(task.prompt).toBe('reworded');
+    expect(task.schedule_tz).toBe('America/New_York');
+    expect(task.next_run).toBe('2026-12-15T14:00:00.000Z');
+  });
+
+  it('prompt-only update_task leaves a NULL zone NULL', async () => {
+    vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z'));
+    createNullZoneCron();
+    await update({ prompt: 'reworded' });
 
     const task = getTaskById('tz-task')!;
     expect(task.schedule_tz).toBeNull();
-    expect(task.next_run).toBe(
-      CronExpressionParser.parse('0 4 * * *', { tz: TIMEZONE })
-        .next()
-        .toISOString(),
-    );
+    expect(task.next_run).toBe('2026-07-16T03:00:00.000Z');
   });
 
   it('update_task converting interval to cron stores ET', async () => {

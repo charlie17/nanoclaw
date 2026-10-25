@@ -413,10 +413,13 @@ export async function processTaskIpc(
             ...updates,
           };
           if (updatedTask.schedule_type === 'cron') {
-            // A task already on cron keeps the zone it was authored in; one
-            // converted to cron here is agent-authored, so it reads in ET.
-            const convertingToCron = task.schedule_type !== 'cron';
-            const scheduleTz = convertingToCron
+            // A cron value written or adopted here is agent-authored, so it
+            // reads in ET whatever the task's previous zone; otherwise the
+            // stored zone stands.
+            const agentAuthored =
+              data.schedule_value !== undefined ||
+              task.schedule_type !== 'cron';
+            const scheduleTz = agentAuthored
               ? REMINDER_TIMEZONE
               : task.schedule_tz || null;
             try {
@@ -425,7 +428,7 @@ export async function processTaskIpc(
                 { tz: scheduleTz || TIMEZONE },
               );
               updates.next_run = interval.next().toISOString();
-              if (convertingToCron) updates.schedule_tz = scheduleTz;
+              if (agentAuthored) updates.schedule_tz = scheduleTz;
             } catch {
               logger.warn(
                 { taskId: data.taskId, value: updatedTask.schedule_value },
