@@ -106,6 +106,7 @@ import {
   runContainerAgent,
   ContainerOutput,
 } from './container-runner.js';
+import { DEFAULT_AGENT_MODEL_ID, MODEL_MAP } from './model-command.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -463,5 +464,44 @@ describe('container-runner idle timer (Impl-75 B1)', () => {
     expect(onOutput).toHaveBeenCalledWith(
       expect.objectContaining({ result: 'answer to the piped message' }),
     );
+  });
+});
+
+describe('container args: model pins', () => {
+  async function spawnedArgs(group: RegisteredGroup): Promise<string[]> {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+    const { spawn } = await import('child_process');
+    vi.mocked(spawn).mockClear();
+    const p = runContainerAgent(group, testInput, () => {}, vi.fn());
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await p;
+    vi.useRealTimers();
+    return vi.mocked(spawn).mock.calls[0][1] as string[];
+  }
+
+  it('pins the opus and sonnet aliases to the MODEL_MAP IDs', async () => {
+    const args = await spawnedArgs(testGroup);
+    expect(args).toContain(`ANTHROPIC_DEFAULT_OPUS_MODEL=${MODEL_MAP.opus.id}`);
+    expect(args).toContain(
+      `ANTHROPIC_DEFAULT_SONNET_MODEL=${MODEL_MAP.sonnet.id}`,
+    );
+    expect(
+      args.some((a) => a.startsWith('ANTHROPIC_DEFAULT_HAIKU_MODEL')),
+    ).toBe(false);
+  });
+
+  it('falls back to the default model when the group has none', async () => {
+    const args = await spawnedArgs(testGroup);
+    expect(args).toContain(`DAYSTROM_AGENT_MODEL=${DEFAULT_AGENT_MODEL_ID}`);
+  });
+
+  it('uses the group model when one is set', async () => {
+    const args = await spawnedArgs({
+      ...testGroup,
+      agentModel: MODEL_MAP.opus.id,
+    });
+    expect(args).toContain(`DAYSTROM_AGENT_MODEL=${MODEL_MAP.opus.id}`);
   });
 });
