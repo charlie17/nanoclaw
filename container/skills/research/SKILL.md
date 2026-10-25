@@ -98,7 +98,7 @@ type: research-report
 run-mode: sync
 created: {ISO8601}
 topic: "{JT's topic, verbatim}"
-model: "{model used, e.g. claude-opus-4-8}"
+model: "{model used, e.g. claude-opus-5-5}"
 sources: "{N Readwise items + N vault notes}"
 ---
 ```

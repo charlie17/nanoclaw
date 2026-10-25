@@ -4,6 +4,7 @@ import {
   ALLOWED_TOOLS,
   SDK_DISALLOWED_TOOLS,
   allowedToolsFor,
+  disallowedToolsFor,
 } from '../src/tool-policy.js';
 
 describe('allowedToolsFor', () => {
@@ -68,6 +69,35 @@ describe('SDK_DISALLOWED_TOOLS', () => {
   it('removes the builtins nanoclaw replaces', () => {
     for (const t of ['AskUserQuestion', 'CronCreate', 'ScheduleWakeup']) {
       expect(SDK_DISALLOWED_TOOLS).toContain(t);
+    }
+  });
+});
+
+describe('disallowedToolsFor', () => {
+  it('removes the web tools under NANOCLAW_STRIP_WEB_TOOLS=1', () => {
+    const tools = disallowedToolsFor({ NANOCLAW_STRIP_WEB_TOOLS: '1' });
+    expect(tools).toContain('WebSearch');
+    expect(tools).toContain('WebFetch');
+    for (const t of SDK_DISALLOWED_TOOLS) expect(tools).toContain(t);
+  });
+
+  it('leaves the web tools available when the flag is unset', () => {
+    const tools = disallowedToolsFor({});
+    expect(tools).not.toContain('WebSearch');
+    expect(tools).not.toContain('WebFetch');
+    expect(tools).toEqual([...SDK_DISALLOWED_TOOLS]);
+  });
+
+  it('only strips on the exact value 1', () => {
+    expect(
+      disallowedToolsFor({ NANOCLAW_STRIP_WEB_TOOLS: 'true' }),
+    ).not.toContain('WebFetch');
+  });
+
+  it('never disallows a tool the same env state auto-approves', () => {
+    for (const env of [{}, { NANOCLAW_STRIP_WEB_TOOLS: '1' }]) {
+      const allowed = allowedToolsFor(env);
+      for (const t of disallowedToolsFor(env)) expect(allowed).not.toContain(t);
     }
   });
 });

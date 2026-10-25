@@ -36,9 +36,9 @@ Each directory is an installed skill. The directory name is the skill name (e.g.
 
 Read the allowed tools from your SDK configuration. You always have access to:
 - **Core:** Bash, Read, Write, Edit, Glob, Grep
-- **Web:** WebSearch, WebFetch
-- **Orchestration:** Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage
-- **Other:** TodoWrite, ToolSearch, Skill, NotebookEdit
+- **Web (non-main groups only):** WebSearch, WebFetch
+- **Orchestration:** Agent (subagents and teammates), TaskStop, SendMessage, ListAgents, Workflow
+- **Other:** TaskCreate, TaskGet, TaskList, TaskUpdate, Monitor, ToolSearch, Skill, NotebookEdit
 - **MCP:** mcp__nanoclaw__* (messaging, tasks, group management)
 
 ### 3. MCP server tools
@@ -83,7 +83,7 @@ Present the report as a clean, readable message. Example:
 *Tools:*
 • Core: Bash, Read, Write, Edit, Glob, Grep
 • Web: WebSearch, WebFetch
-• Orchestration: Task, TeamCreate, SendMessage
+• Orchestration: Agent, SendMessage
 • MCP: send_message, schedule_task, list_tasks, pause/resume/cancel/update_task, register_group
 
 *Container Tools:*

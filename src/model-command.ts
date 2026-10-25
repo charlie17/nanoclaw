@@ -10,7 +10,7 @@ export type ParsedModelCommand =
 // The only place model IDs are written: containers receive them as the
 // opus/sonnet alias defaults, and saved per-group choices are normalized to them.
 export const MODEL_MAP: Record<string, { id: string; display: string }> = {
-  opus: { id: 'claude-opus-4-8', display: 'Opus' },
+  opus: { id: 'claude-opus-5-5', display: 'Opus' },
   sonnet: { id: 'claude-sonnet-5-5', display: 'Sonnet' },
 };
 

@@ -34,8 +34,8 @@ export const ALLOWED_TOOLS: readonly string[] = [
 const WEB_TOOLS = new Set(['WebSearch', 'WebFetch']);
 
 /**
- * SDK builtins removed from every container (`disallowedTools`) and blocked
- * again at call time by the PreToolUse hook: they bypass nanoclaw's
+ * SDK builtins removed from every container (`disallowedToolsFor`, also
+ * enforced at call time by the PreToolUse hook): they bypass nanoclaw's
  * scheduler/IPC, hang headless, or (RemoteTrigger, DesignSync) reach
  * claude.ai with the proxy-injected account credential.
  */
@@ -54,12 +54,23 @@ export const SDK_DISALLOWED_TOOLS: readonly string[] = [
   'ReportFindings',
 ];
 
-/**
- * NANOCLAW_STRIP_WEB_TOOLS=1 (set for main) drops the web tools from the
- * auto-approve list only; under bypassPermissions they stay available.
- */
+function stripsWebTools(env: NodeJS.ProcessEnv): boolean {
+  return env.NANOCLAW_STRIP_WEB_TOOLS === '1';
+}
+
 export function allowedToolsFor(env: NodeJS.ProcessEnv): string[] {
-  return env.NANOCLAW_STRIP_WEB_TOOLS === '1'
+  return stripsWebTools(env)
     ? ALLOWED_TOOLS.filter((t) => !WEB_TOOLS.has(t))
     : [...ALLOWED_TOOLS];
+}
+
+/**
+ * NANOCLAW_STRIP_WEB_TOOLS=1 (set for main) removes the web tools from the
+ * surface. Leaving them out of `allowedTools` is not enough: under
+ * bypassPermissions an unlisted tool is still available.
+ */
+export function disallowedToolsFor(env: NodeJS.ProcessEnv): string[] {
+  return stripsWebTools(env)
+    ? [...SDK_DISALLOWED_TOOLS, ...WEB_TOOLS]
+    : [...SDK_DISALLOWED_TOOLS];
 }
