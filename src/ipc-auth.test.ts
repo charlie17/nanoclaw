@@ -698,6 +698,47 @@ describe('schedule_task / update_task schedule_tz', () => {
     expect(task.next_run).toBe('2026-07-16T03:00:00.000Z');
   });
 
+  it('schedule_task with an empty or blank schedule_value creates nothing and tells JT', async () => {
+    const sent: string[] = [];
+    deps.sendMessage = async (_jid, text) => {
+      sent.push(text);
+    };
+    await schedule('cron', '');
+    await schedule('once', '   ');
+
+    expect(getAllTasks()).toHaveLength(0);
+    expect(sent).toHaveLength(2);
+  });
+
+  it('schedule_task with an unknown or empty schedule_type creates nothing', async () => {
+    await schedule('', '0 9 * * *');
+    await schedule('weekly', '0 9 * * *');
+
+    expect(getAllTasks()).toHaveLength(0);
+  });
+
+  it('update_task with an empty or blank schedule_value leaves the row unchanged', async () => {
+    vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z'));
+    createNullZoneCron();
+    const before = getTaskById('tz-task')!;
+
+    await update({ schedule_value: '' });
+    await update({ schedule_value: '  ', prompt: 'changed' });
+    await update({ schedule_type: 'cron', schedule_value: '' });
+
+    expect(getTaskById('tz-task')).toEqual(before);
+  });
+
+  it('update_task with an empty schedule_type leaves the row unchanged', async () => {
+    vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z'));
+    createNullZoneCron();
+    const before = getTaskById('tz-task')!;
+
+    await update({ schedule_type: '' });
+
+    expect(getTaskById('tz-task')).toEqual(before);
+  });
+
   it('update_task converting interval to cron stores ET', async () => {
     vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z')); // 08:00 EDT
     await schedule('interval', '3600000');

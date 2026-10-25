@@ -14,7 +14,7 @@ import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { zonedWallClockToUtc } from './timezone.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import { RegisteredGroup, ScheduledTask } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -160,6 +160,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
+type ScheduleType = ScheduledTask['schedule_type'];
+
+function isScheduleType(value: unknown): value is ScheduleType {
+  return value === 'cron' || value === 'interval' || value === 'once';
+}
+
 export async function processTaskIpc(
   data: {
     type: string;
@@ -190,8 +196,8 @@ export async function processTaskIpc(
     case 'schedule_task':
       if (
         data.prompt &&
-        data.schedule_type &&
-        data.schedule_value &&
+        data.schedule_type !== undefined &&
+        data.schedule_value !== undefined &&
         data.targetJid
       ) {
         // Resolve the target group from JID
@@ -217,7 +223,26 @@ export async function processTaskIpc(
           break;
         }
 
-        const scheduleType = data.schedule_type as 'cron' | 'interval' | 'once';
+        if (!isScheduleType(data.schedule_type)) {
+          logger.warn(
+            { scheduleType: data.schedule_type },
+            'Invalid schedule_type',
+          );
+          await deps.sendMessage(
+            targetJid,
+            "⚠️ I couldn't set that reminder — I couldn't tell what kind of schedule it was. Please try again.",
+          );
+          break;
+        }
+        if (!data.schedule_value.trim()) {
+          logger.warn('Empty schedule_value');
+          await deps.sendMessage(
+            targetJid,
+            "⚠️ I couldn't set that reminder — no time was given. Please try again with a time.",
+          );
+          break;
+        }
+        const scheduleType = data.schedule_type;
 
         let nextRun: string | null = null;
         // Agent-authored cron carries JT's ET wall-clock times; storing the
@@ -395,19 +420,34 @@ export async function processTaskIpc(
           break;
         }
 
+        // Presence, not truthiness, decides "schedule supplied": an empty
+        // value must be rejected here, never stored as a blank schedule.
+        const typeSupplied = data.schedule_type !== undefined;
+        const valueSupplied = data.schedule_value !== undefined;
+        if (typeSupplied && !isScheduleType(data.schedule_type)) {
+          logger.warn(
+            { taskId: data.taskId, scheduleType: data.schedule_type },
+            'Invalid schedule_type in task update',
+          );
+          break;
+        }
+        if (valueSupplied && !data.schedule_value!.trim()) {
+          logger.warn(
+            { taskId: data.taskId },
+            'Empty schedule_value in task update',
+          );
+          break;
+        }
+
         const updates: Parameters<typeof updateTask>[1] = {};
         if (data.prompt !== undefined) updates.prompt = data.prompt;
         if (data.script !== undefined) updates.script = data.script || null;
-        if (data.schedule_type !== undefined)
-          updates.schedule_type = data.schedule_type as
-            | 'cron'
-            | 'interval'
-            | 'once';
-        if (data.schedule_value !== undefined)
-          updates.schedule_value = data.schedule_value;
+        if (typeSupplied)
+          updates.schedule_type = data.schedule_type as ScheduleType;
+        if (valueSupplied) updates.schedule_value = data.schedule_value;
 
         // Recompute next_run if schedule changed
-        if (data.schedule_type || data.schedule_value) {
+        if (typeSupplied || valueSupplied) {
           const updatedTask = {
             ...task,
             ...updates,
@@ -417,8 +457,7 @@ export async function processTaskIpc(
             // reads in ET whatever the task's previous zone; otherwise the
             // stored zone stands.
             const agentAuthored =
-              data.schedule_value !== undefined ||
-              task.schedule_type !== 'cron';
+              valueSupplied || task.schedule_type !== 'cron';
             const scheduleTz = agentAuthored
               ? REMINDER_TIMEZONE
               : task.schedule_tz || null;
