@@ -11,8 +11,8 @@ Your model is the runtime "Active Model Identity" value (also `$DAYSTROM_AGENT_M
 **Before executing any research, do the following in order:**
 
 1. Ask, in one message:
-   - On Opus: `"Run now (vault + Readwise only, ~30-60s) or dispatch O'Brien to run a web search (~5-10 min)?"`
-   - On Sonnet: `"Research runs best on Opus and you're on Sonnet — send /model opus first if you want it. Run now (vault + Readwise only, ~30-60s) or dispatch O'Brien to run a web search (~5-10 min)?"`
+   - On Opus: `"Run now (vault + Readwise only, ~30-60s) or dispatch O'Brien to run a web search (~5-15 min)?"`
+   - On Sonnet: `"Research runs best on Opus and you're on Sonnet — send /model opus first if you want it. Run now (vault + Readwise only, ~30-60s) or dispatch O'Brien to run a web search (~5-15 min)?"`
 2. Wait for JT's reply before proceeding. If JT says "run now" (or equivalent affirmation), proceed to the sync path below. If JT says "O'Brien" or "web search" or "dispatch", proceed directly to the dispatch procedure below without running the sync path first.
 
 Never claim a model you are not running on.
@@ -168,11 +168,21 @@ When sync-path sources are insufficient — Readwise + vault too sparse for the 
 5. Reply to JT: "Research dispatched. You'll be pinged on Telegram when the results are ready for review."
 6. You are DONE with this request. Do not attempt to poll, wait, or read the result.
 
+## Checking on a dispatched job (only when JT asks)
+
+O'Brien runs the search on Opus 5.5; a long report can take 15 minutes or more. While a job runs it keeps a status file beside the entry: `/workspace/extra/research-queue/<id>.status`. It holds only fixed fields (`state`, `started`, `failed`, `reason`, `stop-reason`, `category`, `round`), never report text.
+
+- `state: in-progress` → still running; tell JT how long since `started` (in ET).
+- `state: failed` → it stopped without a report. Tell JT in plain English (e.g. `reason: refusal` = the model declined the request; `http-529` = Anthropic was overloaded) and that Archie should look. The entry stays in the queue on purpose.
+- No `.status` file and the entry gone from the queue → done; JT's Telegram ping has the link.
+
+Never rewrite, touch or re-save a failed entry, and never write a new entry to retry it: any write re-runs a paid search. Retrying is Archie's call on JT's word.
+
 **Note on filenames:** The quarantine file will be named `<topic-slug>-<YYYYMMDDHHMMSS>.md` (matching the queue entry `id` field), not just `<topic-slug>.md`. This ensures repeat queries on the same topic never overwrite each other. JT may rename the file during the clearance move to `general/research/` if desired.
 
 ## What you MUST NOT do
 
-- Do NOT make any Anthropic API call with `web_search_20250305` enabled. (The credential proxy will reject it with 403 anyway, but do not try.)
+- Do NOT make any Anthropic API call with a `web_search_*` tool enabled. (The credential proxy will reject it with 403 anyway, but do not try.)
 - Do NOT use `Bash` to `curl` Anthropic directly for any purpose. Your normal LLM API calls are mediated by NanoClaw's SDK layer — you don't need to construct them manually.
 - Do NOT write to `general/research/` for supplement results. The file lands in `quarantine/research/` (via O'Brien), not `general/research/`.
 - Do NOT inform JT of the quarantine file location manually. `obrien-notify.sh` sends the ping with the cf-worker link.
