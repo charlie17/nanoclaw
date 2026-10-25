@@ -1,3 +1,4 @@
+import Database from 'better-sqlite3';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import {
@@ -563,6 +564,80 @@ describe('task CRUD', () => {
 
     deleteTask('task-3');
     expect(getTaskById('task-3')).toBeUndefined();
+  });
+
+  it('migration adds schedule_tz as NULL on pre-existing rows', () => {
+    const legacy = new Database(':memory:');
+    legacy.exec(`
+      CREATE TABLE scheduled_tasks (
+        id TEXT PRIMARY KEY,
+        group_folder TEXT NOT NULL,
+        chat_jid TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        schedule_type TEXT NOT NULL,
+        schedule_value TEXT NOT NULL,
+        next_run TEXT,
+        last_run TEXT,
+        last_result TEXT,
+        status TEXT DEFAULT 'active',
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, next_run, status, created_at)
+      VALUES ('daystrom-nightly-report-v1', 'daystrom', 'tg:1', 'report', 'cron', '0 3 * * *', NULL, 'active', '2024-01-01T00:00:00.000Z');
+    `);
+
+    _initTestDatabase(legacy);
+
+    const task = getTaskById('daystrom-nightly-report-v1');
+    expect(task).toBeDefined();
+    expect(task!.schedule_tz).toBeNull();
+    expect(task!.schedule_value).toBe('0 3 * * *');
+  });
+
+  it('migration is idempotent across restarts', () => {
+    const database = new Database(':memory:');
+    _initTestDatabase(database);
+    expect(() => _initTestDatabase(database)).not.toThrow();
+    const cols = database
+      .prepare(`PRAGMA table_info(scheduled_tasks)`)
+      .all() as { name: string }[];
+    expect(cols.filter((c) => c.name === 'schedule_tz')).toHaveLength(1);
+  });
+
+  it('round-trips schedule_tz through createTask and updateTask', () => {
+    createTask({
+      id: 'task-tz',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'tz',
+      schedule_type: 'cron',
+      schedule_value: '0 9 * * *',
+      schedule_tz: 'America/New_York',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    expect(getTaskById('task-tz')!.schedule_tz).toBe('America/New_York');
+
+    updateTask('task-tz', { schedule_tz: null });
+    expect(getTaskById('task-tz')!.schedule_tz).toBeNull();
+  });
+
+  it('createTask without schedule_tz stores NULL', () => {
+    createTask({
+      id: 'task-no-tz',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'no tz',
+      schedule_type: 'cron',
+      schedule_value: '0 9 * * *',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    expect(getTaskById('task-no-tz')!.schedule_tz).toBeNull();
   });
 });
 
