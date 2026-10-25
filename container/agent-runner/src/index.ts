@@ -29,6 +29,7 @@ import {
   evaluateVaultGrepGate,
   isQmdQuerySuccess,
 } from './qmd-gate.js';
+import { SDK_DISALLOWED_TOOLS, allowedToolsFor } from './tool-policy.js';
 
 interface ContainerInput {
   prompt: string;
@@ -528,51 +529,27 @@ async function runQuery(
       // change the SDK's model, not just an informational env var. Falls back
       // to undefined (SDK default) if the env var is not set.
       model: process.env.DAYSTROM_AGENT_MODEL,
+      // snapshot: false — otherwise Claude Code records the prompt on a
+      // session's first request and resends it on every resume, so the model
+      // identity above would go stale after a /model switch.
       systemPrompt: systemPromptAppend
         ? {
             type: 'preset' as const,
             preset: 'claude_code' as const,
             append: systemPromptAppend,
+            snapshot: false,
           }
         : undefined,
-      // JT: Trifecta tool enforcement — strip web tools unconditionally for main (Daystrom).
-      // JT: Source: charlie17/nanoclaw commit f0b7efe (custom/daystrom-v1-archive).
-      //   NANOCLAW_STRIP_WEB_TOOLS=1 — set unconditionally for main group
-      allowedTools: (() => {
-        const all = [
-          'Bash',
-          'Read',
-          'Write',
-          'Edit',
-          'Glob',
-          'Grep',
-          'WebSearch',
-          'WebFetch',
-          'Task',
-          'TaskOutput',
-          'TaskStop',
-          'TeamCreate',
-          'TeamDelete',
-          'SendMessage',
-          'TodoWrite',
-          'ToolSearch',
-          'Skill',
-          'NotebookEdit',
-          'mcp__nanoclaw__*',
-          'mcp__qmd__*',
-          'mcp__readwise__*',
-        ];
-        const strip = new Set<string>();
-        if (process.env.NANOCLAW_STRIP_WEB_TOOLS === '1') {
-          strip.add('WebSearch');
-          strip.add('WebFetch');
-        }
-        return strip.size > 0 ? all.filter((t) => !strip.has(t)) : all;
-      })(),
+      allowedTools: allowedToolsFor(process.env),
+      disallowedTools: [...SDK_DISALLOWED_TOOLS],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
+      // Flag-level settings outrank the group's settings files. Opt out of
+      // syncing the claude.ai account's own skills and plugins into the
+      // container, which the proxy-injected credential would otherwise allow.
+      settings: { syncClaudeAiSkills: false, syncClaudeAiPlugins: false },
       mcpServers: {
         nanoclaw: {
           command: 'node',
@@ -602,27 +579,13 @@ async function runQuery(
         },
       },
       hooks: {
-        // C15-c2 cherry-pick: defense-in-depth blocklist for SDK builtins that
-        // either bypass our scheduler/IPC or hang in headless containers.
-        // The `allowedTools` whitelist above already excludes these, but the
-        // hook adds belt-and-suspenders protection if a future SDK release
-        // adds a tool not yet on our allowlist.
+        // Second line behind disallowedTools: blocks the same builtins at call
+        // time in case a tool reaches the model by another path.
         PreToolUse: [
           {
             hooks: [
               async (input) => {
                 const i = input as { tool_name?: string };
-                const SDK_DISALLOWED_TOOLS = [
-                  'AskUserQuestion', // SDK placeholder; we use mcp__nanoclaw__ask_user_question
-                  'EnterPlanMode',
-                  'ExitPlanMode',
-                  'EnterWorktree',
-                  'ExitWorktree',
-                  'CronCreate', // we use mcp__nanoclaw__schedule_task
-                  'CronDelete',
-                  'CronList',
-                  'ScheduleWakeup',
-                ];
                 const toolName = i.tool_name ?? '';
                 if (SDK_DISALLOWED_TOOLS.includes(toolName)) {
                   return {
@@ -731,7 +694,11 @@ async function runQuery(
 
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
-      log(`Session initialized: ${newSessionId}`);
+      // The tool surface is logged because SDK bumps change it silently.
+      const mcp = message.mcp_servers.map((s) => `${s.name}:${s.status}`);
+      log(
+        `Session initialized: ${newSessionId} cc=${message.claude_code_version} model=${message.model} mcp=${mcp.join(',')} tools=${message.tools.join(',')}`,
+      );
     }
 
     if (
@@ -752,8 +719,9 @@ async function runQuery(
       resultCount++;
       const textResult =
         'result' in message ? (message as { result?: string }).result : null;
+      const models = Object.keys(message.modelUsage ?? {}).join(',');
       log(
-        `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
+        `Result #${resultCount}: subtype=${message.subtype} models=${models}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
       );
       // JT: Impl-75 A1 — `subtype` was already in hand here and thrown away, and
       // JT: `status` was hardcoded 'success' regardless of it. An SDK result with
