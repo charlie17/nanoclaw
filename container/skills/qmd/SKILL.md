@@ -47,4 +47,4 @@ When you need to find vault content (past decisions, incidents, people, projects
 
 ## Rationale
 
-qmd is a local search engine over the vault. Two host daemons (general on port 8181, private on 8182) each own a SQLite index and embedding cache. The MCP server at `172.29.0.1:8181/mcp` (daystrom-net gateway) exposes the general namespace to your container via a socat gateway-IP bridge (D-95 amendment, Impl-28); external NICs cannot reach it. The private daemon is reachable only from OWUI per D-38.
+qmd is a local search engine over the vault. Two host daemons (general on port 8181, private on 8182) each own a SQLite index and embedding cache. The MCP server at `172.29.0.1:8181/mcp` (daystrom-net gateway) exposes the general namespace to your container via a socat gateway-IP bridge; external NICs cannot reach it. The private daemon is firewalled off from your container; never try to reach it.
