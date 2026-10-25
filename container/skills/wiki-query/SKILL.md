@@ -38,4 +38,4 @@ Valuable query results can become new wiki pages — explorations compound in th
 
 ## Rationale
 
-The wiki is the primary synthesized-understanding surface for `/wiki-query`. The secondary `general/` pass surfaces connections the wiki doesn't yet cover — this is how the knowledge base compounds over time. Two-collection scoping (primary `wiki`, secondary `general`) is implemented via two sequential `mcp__qmd__query` calls with different `collections` filters rather than a single wide query, keeping primary-scope semantics clean and the wiki as the authoritative answer surface. Cite SA §6.4 + BA §8.3 for the query architecture. D-78 model-announce pattern applies.
+The wiki is the primary synthesized-understanding surface for `/wiki-query`. The secondary `general/` pass surfaces connections the wiki doesn't yet cover — this is how the knowledge base compounds over time. Two-collection scoping (primary `wiki`, secondary `general`) is implemented via two sequential `mcp__qmd__query` calls with different `collections` filters rather than a single wide query, keeping primary-scope semantics clean and the wiki as the authoritative answer surface.

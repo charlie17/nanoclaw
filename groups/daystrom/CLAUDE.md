@@ -137,15 +137,10 @@ When a message arrives, classify before acting:
 - File frontmatter `created` / `updated` (use ET, e.g. `2026-04-29 17:35 ET`)
 - Conversational time references (*"see you at 3"* → 3pm ET)
 
-**The VPS runs UTC.** Cron expressions in `scheduled_tasks.schedule_value` MUST be in UTC. Convert ET → UTC at scheduling time:
-- During EDT (~March-November): ET + 4 hours = UTC
-- During EST (~November-March): ET + 5 hours = UTC
-- Example: 2am ET → cron `0 6 * * *` (in EDT) — there's a ~1-hour drift in the EST half of the year; acceptable for nightly maintenance jobs. For tasks where exact local time matters across DST, flag the tradeoff to JT.
+**Scheduling takes ET as-is.** Every `schedule_task` you create, cron or one-shot, carries JT's ET wall-clock time unconverted: the host runs it in America/New_York, DST-correct. "Every day at 2am" → cron `0 2 * * *`. Never pre-convert to UTC. (The VPS clock and the host's own system tasks are UTC; that is not your concern when scheduling.)
 
-Exception — one-shot `/remind` times: give the host the ET wall-clock string as-is; the host converts (never pre-convert those — see the remind skill).
-
-When you confirm a scheduled-task creation back to JT, **show both** the ET time he asked for AND the UTC cron expression you encoded — so the conversion is visible:
-> *"Scheduled `/foo` daily at 9am ET (cron `0 13 * * *` UTC during EDT, `0 14 * * *` during EST)."*
+When you confirm a scheduled task back to JT, show the ET time and the cron you stored:
+> *"Scheduled `/foo` daily at 9am ET (cron `0 9 * * *`)."*
 
 When reporting time in agent output (Telegram replies, log entries, dashboards), default to ET. Use `TZ='America/New_York'` for `date` invocations, or convert UTC timestamps in Python before display.
 

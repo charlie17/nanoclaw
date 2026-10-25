@@ -2,19 +2,20 @@
 
 ## Overview
 
-JT invokes `/research <query>`. Synthesize from three source pools: Readwise full library (MCP), vault (qmd), and prior research reports/wiki/images also discoverable via qmd. Two paths: **sync** (Readwise + vault sufficient — write directly to vault) and **supplement** (web search via O'Brien when sync sources are insufficient). Model: Opus default (D-78).
+JT invokes `/research <query>`. Synthesize from three source pools: Readwise full library (MCP), vault (qmd), and prior research reports/wiki/images also discoverable via qmd. Two paths: **sync** (Readwise + vault sufficient — write directly to vault) and **supplement** (web search via O'Brien when sync sources are insufficient). Research is meant to run on Opus.
 
-## Model dispatch
+## Model check
 
-Default model: Opus (D-78).
+Your model is the runtime "Active Model Identity" value (also `$DAYSTROM_AGENT_MODEL`). You cannot switch it yourself; JT does, with `/model opus` or `/model sonnet`, and the switch applies from his next message.
 
 **Before executing any research, do the following in order:**
 
-1. Announce: `"Using Opus for this research — switch to Sonnet if you'd like (/model sonnet)."`
-2. Ask: `"Run now (vault + Readwise only, ~30-60s) or dispatch O'Brien to run a web search (~5-10 min)?"`
-3. Wait for JT's reply before proceeding. If JT says "run now" (or equivalent affirmation), proceed to the sync path below. If JT says "O'Brien" or "web search" or "dispatch", proceed directly to the dispatch procedure below without running the sync path first.
+1. Ask, in one message:
+   - On Opus: `"Run now (vault + Readwise only, ~30-60s) or dispatch O'Brien to run a web search (~5-10 min)?"`
+   - On Sonnet: `"Research runs best on Opus and you're on Sonnet — send /model opus first if you want it. Run now (vault + Readwise only, ~30-60s) or dispatch O'Brien to run a web search (~5-10 min)?"`
+2. Wait for JT's reply before proceeding. If JT says "run now" (or equivalent affirmation), proceed to the sync path below. If JT says "O'Brien" or "web search" or "dispatch", proceed directly to the dispatch procedure below without running the sync path first.
 
-JT can switch models mid-conversation via the `/model` native Claude Code command. Do NOT change the default to Sonnet.
+Never claim a model you are not running on.
 
 ## Sync path
 
