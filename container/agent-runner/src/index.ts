@@ -30,6 +30,7 @@ import {
   isQmdQuerySuccess,
 } from './qmd-gate.js';
 import { allowedToolsFor, disallowedToolsFor } from './tool-policy.js';
+import { resolveEffort } from './effort.js';
 
 interface ContainerInput {
   prompt: string;
@@ -429,6 +430,9 @@ function waitForIpcMessage(): Promise<string | null> {
  */
 const qmdTurnState = createQmdTurnState();
 
+// Resolved once per container so an invalid value warns once, not per query.
+const agentEffort = resolveEffort(process.env.DAYSTROM_AGENT_EFFORT, log);
+
 /**
  * Run a single query and stream results via writeOutput.
  * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
@@ -530,6 +534,7 @@ async function runQuery(
       // change the SDK's model, not just an informational env var. Falls back
       // to undefined (SDK default) if the env var is not set.
       model: process.env.DAYSTROM_AGENT_MODEL,
+      ...(agentEffort ? { effort: agentEffort } : {}),
       // snapshot: false — otherwise Claude Code records the prompt on a
       // session's first request and resends it on every resume, so the model
       // identity above would go stale after a /model switch.

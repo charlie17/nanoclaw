@@ -5,6 +5,7 @@ import {
   DEFAULT_AGENT_MODEL_ID,
   displayName,
   MODEL_MAP,
+  effortFor,
   parseModelCommand,
 } from './model-command.js';
 
@@ -81,5 +82,16 @@ describe('currentModelId', () => {
     ]) {
       expect(currentModelId(odd), odd).toBeNull();
     }
+  });
+});
+
+describe('effortFor', () => {
+  it('returns high for the opus id and nothing for sonnet', () => {
+    expect(effortFor(MODEL_MAP.opus.id)).toBe('high');
+    expect(effortFor(MODEL_MAP.sonnet.id)).toBeUndefined();
+  });
+  it('returns nothing for an unmapped id', () => {
+    expect(effortFor('claude-opus-4-1')).toBeUndefined();
+    expect(effortFor('opus')).toBeUndefined();
   });
 });

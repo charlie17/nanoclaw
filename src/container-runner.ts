@@ -19,7 +19,11 @@ import {
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { DEFAULT_AGENT_MODEL_ID, MODEL_MAP } from './model-command.js';
+import {
+  DEFAULT_AGENT_MODEL_ID,
+  MODEL_MAP,
+  effortFor,
+} from './model-command.js';
 // JT: Trifecta network isolation constants (4d2827c).
 import {
   CONTAINER_HOST_GATEWAY,
@@ -390,10 +394,10 @@ function buildContainerArgs(
   // Unconditional: all group containers (Daystrom, Worf, future groups) benefit.
   // FU-27a: per-group override via /model command; fallback default preserves
   // pre-FU-27a behavior for any group never `/model`-set.
-  args.push(
-    '-e',
-    `DAYSTROM_AGENT_MODEL=${agentModel || DEFAULT_AGENT_MODEL_ID}`,
-  );
+  const resolvedModel = agentModel || DEFAULT_AGENT_MODEL_ID;
+  args.push('-e', `DAYSTROM_AGENT_MODEL=${resolvedModel}`);
+  const effort = effortFor(resolvedModel);
+  if (effort) args.push('-e', `DAYSTROM_AGENT_EFFORT=${effort}`);
   // Pin what the SDK's opus/sonnet aliases resolve to (subagents ask for the bare alias).
   args.push('-e', `ANTHROPIC_DEFAULT_OPUS_MODEL=${MODEL_MAP.opus.id}`);
   args.push('-e', `ANTHROPIC_DEFAULT_SONNET_MODEL=${MODEL_MAP.sonnet.id}`);

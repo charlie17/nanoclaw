@@ -504,4 +504,29 @@ describe('container args: model pins', () => {
     });
     expect(args).toContain(`DAYSTROM_AGENT_MODEL=${MODEL_MAP.opus.id}`);
   });
+
+  it('passes the opus effort when the group runs opus', async () => {
+    const args = await spawnedArgs({
+      ...testGroup,
+      agentModel: MODEL_MAP.opus.id,
+    });
+    expect(args).toContain('DAYSTROM_AGENT_EFFORT=high');
+  });
+
+  it('passes no effort for sonnet', async () => {
+    const args = await spawnedArgs({
+      ...testGroup,
+      agentModel: MODEL_MAP.sonnet.id,
+    });
+    expect(args.some((a) => a.startsWith('DAYSTROM_AGENT_EFFORT'))).toBe(false);
+  });
+
+  it('passes no effort for an unmapped model id', async () => {
+    const args = await spawnedArgs({
+      ...testGroup,
+      agentModel: 'claude-opus-4-1',
+    });
+    expect(args).toContain('DAYSTROM_AGENT_MODEL=claude-opus-4-1');
+    expect(args.some((a) => a.startsWith('DAYSTROM_AGENT_EFFORT'))).toBe(false);
+  });
 });

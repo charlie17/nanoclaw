@@ -9,8 +9,13 @@ export type ParsedModelCommand =
 // Short-name → SDK identifier + display label. Haiku intentionally omitted.
 // The only place model IDs are written: containers receive them as the
 // opus/sonnet alias defaults, and saved per-group choices are normalized to them.
-export const MODEL_MAP: Record<string, { id: string; display: string }> = {
-  opus: { id: 'claude-opus-5-5', display: 'Opus' },
+// `effort` is passed to the SDK when set; an entry without one gets the SDK default.
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export const MODEL_MAP: Record<
+  string,
+  { id: string; display: string; effort?: EffortLevel }
+> = {
+  opus: { id: 'claude-opus-5-5', display: 'Opus', effort: 'high' },
   sonnet: { id: 'claude-sonnet-5-5', display: 'Sonnet' },
 };
 
@@ -33,6 +38,11 @@ export function displayName(fullId: string): string {
     if (entry.id === fullId) return entry.display;
   }
   return fullId;
+}
+
+// Effort for an exact MODEL_MAP id; undefined for unmapped ids.
+export function effortFor(modelId: string): EffortLevel | undefined {
+  return Object.values(MODEL_MAP).find((e) => e.id === modelId)?.effort;
 }
 
 // Real Anthropic IDs only: claude-<family>-<version digits and dashes>.
