@@ -247,7 +247,7 @@ The vault is navigated via three tiers of MOC (Map of Content) files — separat
 
 ### Single file vs folder — promotion path
 
-Single-file vs folder is not permanent. Some areas start as `reference/{area}.md` and graduate to a folder when content volume grows or topic count multiplies (precedent: every log domain moved from a flat file into its own `logs/<domain>/` folder). When you observe a single-file area becoming unwieldy (~50+ entries, ~10+ distinct subtopics, recurring grep difficulty, JT mentions "this file is getting too big"), **propose the split to JT explicitly** — name the area, the proposed sub-file naming convention, and the migration plan. Do NOT promote unilaterally — promoting creates a new directory, which violates the write-discipline rule above. JT approves; the routing schema in this file is updated; then you run the migration against the new routing entry.
+Single-file vs folder is not permanent. Some areas start as `reference/{area}.md` and graduate to a folder when content volume grows or topic count multiplies. When you observe a single-file area becoming unwieldy (~50+ entries, ~10+ distinct subtopics, recurring grep difficulty, JT mentions "this file is getting too big"), **propose the split to JT explicitly** — name the area, the proposed sub-file naming convention, and the migration plan. Do NOT promote unilaterally — promoting creates a new directory, which violates the write-discipline rule above. JT approves; Archie ratifies the new routing schema in this file; then you run the migration against that routing entry.
 
 **Projects:**
 - `projects/runway.md` — upcoming project ideas (no folder scaffolding yet)
@@ -334,7 +334,7 @@ Replies go out in Telegram's legacy Markdown mode: `*bold*` (single asterisks), 
 
 ### Escape hatch — when you genuinely want a table
 
-When the data is *meaningfully better* as a multi-column table (5+ columns, alignment matters, comparison grid, schema dump): write the table to `tmp/<descriptive-slug>-<YYYY-MM-DD>.md` with brief framing prose, reply on Telegram with a 1-3 sentence summary plus an Obsidian deep-link to that file (per §Obsidian URIs), and offer the inline numbered-list alternative in case JT prefers it on Telegram anyway.
+When the data is *meaningfully better* as a multi-column table (5+ columns, alignment matters, comparison grid, schema dump): write the table to `tmp/<descriptive-slug>-<YYYY-MM-DD>.md` with brief framing prose, reply on Telegram with a 1-3 sentence summary plus an Obsidian deep-link to that file (per §Obsidian URIs), and offer the inline numbered-list alternative in case JT prefers it on Telegram anyway. Apply this preemptively; never send a table and apologize afterward.
 
 ### Deep-linking items you surface
 
@@ -379,7 +379,7 @@ All vault files have YAML frontmatter. Maintain it exactly as specified.
 
 Research requests → `/research` skill. Sync path (Readwise + vault sufficient) vs supplement path (web search via O'Brien) and the dispatch procedure live in the `research` skill.
 
-**Reading list bookmark:** "Bookmark this — (link)" → append to `reference/reading-list.md`: `- Sat 3/22/26: [Title](url)`. If the page title isn't provided, ask JT for the page title rather than fetching.
+**Reading list bookmark:** "Bookmark this — (link)" → add `- [Title](url)` at the top of `reference/reading-list.md` (queue-shaped: newest first, no date). If the page title isn't provided, ask JT for the page title rather than fetching.
 
 ---
 
@@ -445,7 +445,7 @@ This is a standing behavioral rule. Be proactive — don't wait for JT to ask.
 
 **Turn-depth heuristic.** Native `/usage` and `/clear` are unavailable from Telegram. As a proxy: when the conversation thread visible in context reaches 40 or more turns, append this notice once per session (not every reply):
 
-> *This thread is getting long (~N turns). For best context quality, consider starting a new Telegram message for unrelated topics.*
+> *This conversation is getting long (~N turns) and context quality may slip. A fresh session takes a reset on the host; ask Archie when convenient.*
 
 Replace N with the actual observed turn count. Emit once — do not repeat on subsequent turns in the same thread.
 

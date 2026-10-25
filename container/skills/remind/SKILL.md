@@ -16,7 +16,7 @@ Route by intent. When phrasing is ambiguous across the three paths, show the opt
 Parse JT's natural-language input into `schedule_type` + `schedule_value`. Use Claude's temporal reasoning — do NOT codify NL→schedule rules as a rulebook.
 
 - **once:** "at 3pm today", "tomorrow at 9am", "on April 25 at noon" → `YYYY-MM-DDTHH:MM:SS` local time. No Z suffix — the scheduler rejects it. The value is ET wall-clock; the host converts ET→UTC deterministically (Impl-74) — do NOT pre-convert to UTC in the skill.
-- **cron:** "every weekday at 9am" → `0 9 * * 1-5`. "every Friday at 10am" → `0 10 * * 5`. "every morning" → ask JT for the time.
+- **cron:** the scheduler reads cron in **UTC**, so convert JT's ET time before encoding: add 4 hours during EDT (March–November), 5 during EST. "every weekday at 9am" → `0 13 * * 1-5` (EDT). "every Friday at 10am" → `0 14 * * 5` (EDT). An ET evening time can cross UTC midnight: shift the day-of-week field with it ("every Monday at 9pm" → `0 1 * * 2` in EDT). A UTC cron drifts one hour local across each DST change; say so in the confirmation. "every morning" → ask JT for the time.
 - **interval:** "every 2 hours" → `7200000` (milliseconds).
 
 If the schedule is ambiguous (e.g., "tomorrow" with no time), ask ONE clarifying question before proceeding. Do not guess.
@@ -40,14 +40,14 @@ One line, plain-text, no table.
 
 ## Time/cron rendering
 
-Convert cron expressions to prose for display. Reference table — agent extrapolates for unlisted patterns:
+Convert cron expressions to prose for display. A stored cron is UTC: convert it to ET at the current offset (EDT −4, EST −5) before rendering, shifting the weekday if the conversion crosses midnight. Reference table (EDT) — agent extrapolates for unlisted patterns:
 
-| Cron expression  | Prose form (with ET suffix)   |
-|------------------|-------------------------------|
-| `0 9 * * 1-5`   | every weekday at 9:00 AM ET   |
-| `0 10 * * 5`    | every Friday at 10:00 AM ET   |
-| `30 14 * * *`   | every day at 2:30 PM ET       |
-| `0 8 * * 1`     | every Monday at 8:00 AM ET    |
+| Cron expression (UTC) | Prose form (with ET suffix)   |
+|-----------------------|-------------------------------|
+| `0 13 * * 1-5`        | every weekday at 9:00 AM ET   |
+| `0 14 * * 5`          | every Friday at 10:00 AM ET   |
+| `30 18 * * *`         | every day at 2:30 PM ET       |
+| `0 1 * * 2`           | every Monday at 9:00 PM ET    |
 | `*/15 * * * *`  | every 15 minutes              |
 | `0 */2 * * *`   | every 2 hours                 |
 
@@ -98,7 +98,7 @@ JT: `remind me at 3pm today to call the dentist`
 
 **Recurring cron create:**
 JT: `remind me every Friday at 10am to review my goals`
-→ `mcp__nanoclaw__schedule_task({prompt: "...The reminder text is: review my goals", schedule_type: "cron", schedule_value: "0 10 * * 5", context_mode: "isolated"})`
+→ `mcp__nanoclaw__schedule_task({prompt: "...The reminder text is: review my goals", schedule_type: "cron", schedule_value: "0 14 * * 5", context_mode: "isolated"})`
 → `✓ Reminder set: "review my goals" — every Friday at 10:00 AM ET. ID: task-1745337600001-def456`
 
 **List:**
