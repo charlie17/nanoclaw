@@ -7,10 +7,15 @@ export type ParsedModelCommand =
   | null;
 
 // Short-name → SDK identifier + display label. Haiku intentionally omitted.
+// The only place model IDs are written: containers receive them as the
+// opus/sonnet alias defaults, and saved per-group choices are normalized to them.
 export const MODEL_MAP: Record<string, { id: string; display: string }> = {
   opus: { id: 'claude-opus-4-8', display: 'Opus' },
-  sonnet: { id: 'claude-sonnet-5', display: 'Sonnet' },
+  sonnet: { id: 'claude-sonnet-5-5', display: 'Sonnet' },
 };
+
+// Used when a group has never run /model.
+export const DEFAULT_AGENT_MODEL_ID = MODEL_MAP.sonnet.id;
 
 export function parseModelCommand(text: string): ParsedModelCommand {
   const tokens = text.trim().split(/\s+/);
@@ -28,4 +33,13 @@ export function displayName(fullId: string): string {
     if (entry.id === fullId) return entry.display;
   }
   return fullId;
+}
+
+// Maps a saved identifier to the current ID of its family (opus/sonnet), so a
+// MODEL_MAP bump carries stored choices along. Null when the family is unknown.
+export function currentModelId(saved: string): string | null {
+  for (const [family, entry] of Object.entries(MODEL_MAP)) {
+    if (saved === entry.id || saved.includes(family)) return entry.id;
+  }
+  return null;
 }

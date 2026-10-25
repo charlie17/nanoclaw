@@ -36,6 +36,7 @@ import {
 import {
   getAllChats,
   getAllRegisteredGroups,
+  normalizeGroupAgentModels,
   getAllSessions,
   deleteSession,
   getAllTasks,
@@ -51,7 +52,12 @@ import {
   storeChatMetadata,
   storeMessage,
 } from './db.js';
-import { displayName, MODEL_MAP, parseModelCommand } from './model-command.js';
+import {
+  DEFAULT_AGENT_MODEL_ID,
+  displayName,
+  MODEL_MAP,
+  parseModelCommand,
+} from './model-command.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
@@ -100,6 +106,7 @@ function loadState(): void {
     lastAgentTimestamp = {};
   }
   sessions = getAllSessions();
+  normalizeGroupAgentModels();
   registeredGroups = getAllRegisteredGroups();
   logger.info(
     { groupCount: Object.keys(registeredGroups).length },
@@ -611,7 +618,7 @@ async function maybeHandleModelCommand(
     reply =
       'Unknown model. Use /model opus or /model sonnet (or /model to show current).';
   } else if (parsed.kind === 'show') {
-    const current = group.agentModel || 'claude-sonnet-5';
+    const current = group.agentModel || DEFAULT_AGENT_MODEL_ID;
     reply = `Currently using ${displayName(current)} (${current}).`;
   } else {
     const fullId = MODEL_MAP[parsed.model].id;

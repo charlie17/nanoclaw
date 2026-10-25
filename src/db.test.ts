@@ -13,12 +13,15 @@ import {
   getMessagesSince,
   getNewMessages,
   getTaskById,
+  normalizeGroupAgentModels,
   setGroupAgentModel,
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
   updateTask,
 } from './db.js';
+import { logger } from './logger.js';
+import { MODEL_MAP } from './model-command.js';
 import { formatMessages } from './router.js';
 
 beforeEach(() => {
@@ -668,7 +671,6 @@ describe('registered group R-6 folder collision', () => {
     });
 
     // Capture logger.warn calls during the colliding write.
-    const { logger } = await import('./logger.js');
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     // Second registration: different jid, same folder. INSERT OR REPLACE
@@ -709,7 +711,6 @@ describe('registered group R-6 folder collision', () => {
       isMain: true,
     });
 
-    const { logger } = await import('./logger.js');
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     // Same jid + same folder — normal idempotent update path, no eviction.
@@ -753,6 +754,48 @@ describe('registered group agentModel', () => {
       added_at: '2024-01-01T00:00:00.000Z',
     });
     expect(getGroupAgentModel('worf')).toBeNull();
+  });
+});
+
+describe('normalizeGroupAgentModels', () => {
+  function addGroup(folder: string, model: string | null): void {
+    setRegisteredGroup(`${folder}@s.whatsapp.net`, {
+      name: folder,
+      folder,
+      trigger: `@${folder}`,
+      added_at: '2024-01-01T00:00:00.000Z',
+    });
+    setGroupAgentModel(folder, model);
+  }
+
+  it('rewrites superseded IDs to the current ID of their family', () => {
+    addGroup('a', 'claude-opus-4-7');
+    addGroup('b', 'claude-sonnet-5');
+    addGroup('c', 'claude-sonnet-4-6');
+    normalizeGroupAgentModels();
+    expect(getGroupAgentModel('a')).toBe(MODEL_MAP.opus.id);
+    expect(getGroupAgentModel('b')).toBe(MODEL_MAP.sonnet.id);
+    expect(getGroupAgentModel('c')).toBe(MODEL_MAP.sonnet.id);
+  });
+
+  it('leaves current, null and unknown values untouched', () => {
+    addGroup('cur', MODEL_MAP.opus.id);
+    addGroup('none', null);
+    addGroup('odd', 'mistral:7b');
+    normalizeGroupAgentModels();
+    expect(getGroupAgentModel('cur')).toBe(MODEL_MAP.opus.id);
+    expect(getGroupAgentModel('none')).toBeNull();
+    expect(getGroupAgentModel('odd')).toBe('mistral:7b');
+  });
+
+  it('is a no-op on a second run', () => {
+    addGroup('a', 'claude-sonnet-5');
+    normalizeGroupAgentModels();
+    const infoSpy = vi.spyOn(logger, 'info');
+    normalizeGroupAgentModels();
+    expect(getGroupAgentModel('a')).toBe(MODEL_MAP.sonnet.id);
+    expect(infoSpy).not.toHaveBeenCalled();
+    infoSpy.mockRestore();
   });
 });
 

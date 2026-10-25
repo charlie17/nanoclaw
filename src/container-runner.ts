@@ -19,6 +19,7 @@ import {
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { DEFAULT_AGENT_MODEL_ID, MODEL_MAP } from './model-command.js';
 // JT: Trifecta network isolation constants (4d2827c).
 import {
   CONTAINER_HOST_GATEWAY,
@@ -389,7 +390,13 @@ function buildContainerArgs(
   // Unconditional: all group containers (Daystrom, Worf, future groups) benefit.
   // FU-27a: per-group override via /model command; fallback default preserves
   // pre-FU-27a behavior for any group never `/model`-set.
-  args.push('-e', `DAYSTROM_AGENT_MODEL=${agentModel || 'claude-sonnet-5'}`);
+  args.push(
+    '-e',
+    `DAYSTROM_AGENT_MODEL=${agentModel || DEFAULT_AGENT_MODEL_ID}`,
+  );
+  // Pin what the SDK's opus/sonnet aliases resolve to (subagents ask for the bare alias).
+  args.push('-e', `ANTHROPIC_DEFAULT_OPUS_MODEL=${MODEL_MAP.opus.id}`);
+  args.push('-e', `ANTHROPIC_DEFAULT_SONNET_MODEL=${MODEL_MAP.sonnet.id}`);
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),

@@ -5,6 +5,7 @@ import path from 'path';
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import { currentModelId } from './model-command.js';
 import {
   NewMessage,
   RegisteredGroup,
@@ -796,6 +797,30 @@ export function setGroupAgentModel(folder: string, model: string | null): void {
   db.prepare(
     `UPDATE registered_groups SET agent_model = ? WHERE folder = ?`,
   ).run(model, folder);
+}
+
+// Boot-time: rewrites saved models to the current ID of their family. Idempotent.
+export function normalizeGroupAgentModels(): void {
+  const rows = db
+    .prepare(
+      'SELECT folder, agent_model FROM registered_groups WHERE agent_model IS NOT NULL',
+    )
+    .all() as Array<{ folder: string; agent_model: string }>;
+  for (const row of rows) {
+    const next = currentModelId(row.agent_model);
+    if (next === null) {
+      logger.warn(
+        { folder: row.folder, agentModel: row.agent_model },
+        'Saved agent model matches no known family; left unchanged',
+      );
+    } else if (next !== row.agent_model) {
+      setGroupAgentModel(row.folder, next);
+      logger.info(
+        { folder: row.folder, from: row.agent_model, to: next },
+        'Saved agent model updated to current ID',
+      );
+    }
+  }
 }
 
 export function getGroupAgentModel(folder: string): string | null {
