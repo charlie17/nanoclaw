@@ -788,6 +788,21 @@ describe('normalizeGroupAgentModels', () => {
     expect(getGroupAgentModel('odd')).toBe('mistral:7b');
   });
 
+  it('warns and leaves a look-alike value unchanged', () => {
+    addGroup('odd', 'custom-opus-router');
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    normalizeGroupAgentModels();
+    expect(getGroupAgentModel('odd')).toBe('custom-opus-router');
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        folder: 'odd',
+        agentModel: 'custom-opus-router',
+      }),
+      expect.stringContaining('left unchanged'),
+    );
+    warnSpy.mockRestore();
+  });
+
   it('is a no-op on a second run', () => {
     addGroup('a', 'claude-sonnet-5');
     normalizeGroupAgentModels();

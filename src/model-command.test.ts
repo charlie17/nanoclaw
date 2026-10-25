@@ -63,7 +63,23 @@ describe('currentModelId', () => {
     expect(currentModelId(MODEL_MAP.opus.id)).toBe(MODEL_MAP.opus.id);
     expect(currentModelId(MODEL_MAP.sonnet.id)).toBe(MODEL_MAP.sonnet.id);
   });
-  it('returns null for an unknown family', () => {
-    expect(currentModelId('mistral:7b')).toBeNull();
+  it('maps dated snapshot IDs', () => {
+    expect(currentModelId('claude-sonnet-4-20250514')).toBe(
+      MODEL_MAP.sonnet.id,
+    );
+  });
+  it('returns null for anything that is not a real opus/sonnet ID', () => {
+    for (const odd of [
+      'mistral:7b',
+      'custom-opus-router',
+      'claude-sonnet-5-opus',
+      'claude-opus-router',
+      'opus',
+      'sonnet',
+      'claude-haiku-4-5',
+      '',
+    ]) {
+      expect(currentModelId(odd), odd).toBeNull();
+    }
   });
 });
