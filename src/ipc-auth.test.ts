@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { CronExpressionParser } from 'cron-parser';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
+import { TIMEZONE } from './config.js';
 import {
   _initTestDatabase,
   createTask,
@@ -554,6 +556,138 @@ describe('schedule_task schedule types', () => {
     );
 
     expect(getAllTasks()).toHaveLength(0);
+  });
+});
+
+// --- schedule timezone: agent-created cron reads in ET ---
+
+describe('schedule_task / update_task schedule_tz', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const schedule = (schedule_type: string, schedule_value: string) =>
+    processTaskIpc(
+      {
+        type: 'schedule_task',
+        taskId: 'tz-task',
+        prompt: 'reminder',
+        schedule_type,
+        schedule_value,
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+  const update = (fields: {
+    schedule_type?: string;
+    schedule_value?: string;
+  }) =>
+    processTaskIpc(
+      { type: 'update_task', taskId: 'tz-task', ...fields },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+  it('cron created in EDT stores ET and next_run 13:00Z', async () => {
+    vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z')); // 08:00 EDT
+    await schedule('cron', '0 9 * * *');
+
+    const task = getTaskById('tz-task')!;
+    expect(task.schedule_tz).toBe('America/New_York');
+    expect(task.next_run).toBe('2026-07-15T13:00:00.000Z');
+  });
+
+  it('cron created in EST gets next_run 14:00Z', async () => {
+    vi.setSystemTime(new Date('2026-12-15T12:00:00.000Z')); // 07:00 EST
+    await schedule('cron', '0 9 * * *');
+
+    expect(getTaskById('tz-task')!.next_run).toBe('2026-12-15T14:00:00.000Z');
+  });
+
+  it('cron created the day before fall-back lands at 09:00 EST', async () => {
+    vi.setSystemTime(new Date('2026-10-31T14:00:00.000Z')); // Sat 10:00 EDT
+    await schedule('cron', '0 9 * * *');
+
+    expect(getTaskById('tz-task')!.next_run).toBe('2026-11-01T14:00:00.000Z');
+  });
+
+  it('once and interval tasks store no schedule_tz and behave as before', async () => {
+    vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z'));
+    await schedule('once', '2026-07-15T09:30:00');
+    const once = getTaskById('tz-task')!;
+    expect(once.schedule_tz).toBeNull();
+    expect(once.next_run).toBe('2026-07-15T13:30:00.000Z');
+
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        taskId: 'tz-interval',
+        prompt: 'interval',
+        schedule_type: 'interval',
+        schedule_value: '3600000',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    const interval = getTaskById('tz-interval')!;
+    expect(interval.schedule_tz).toBeNull();
+    expect(interval.next_run).toBe('2026-07-15T13:00:00.000Z');
+  });
+
+  it('update_task on an ET cron re-parses in ET', async () => {
+    vi.setSystemTime(new Date('2026-12-15T12:00:00.000Z')); // 07:00 EST
+    await schedule('cron', '0 9 * * *');
+    await update({ schedule_value: '0 10 * * *' });
+
+    const task = getTaskById('tz-task')!;
+    expect(task.schedule_tz).toBe('America/New_York');
+    expect(task.next_run).toBe('2026-12-15T15:00:00.000Z');
+  });
+
+  it('update_task on a NULL-tz cron keeps parsing in TIMEZONE', async () => {
+    vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z'));
+    createTask({
+      id: 'tz-task',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'system',
+      schedule_type: 'cron',
+      schedule_value: '0 3 * * *',
+      context_mode: 'isolated',
+      next_run: '2026-07-16T03:00:00.000Z',
+      status: 'active',
+      created_at: '2026-01-01T00:00:00.000Z',
+    });
+    await update({ schedule_value: '0 4 * * *' });
+
+    const task = getTaskById('tz-task')!;
+    expect(task.schedule_tz).toBeNull();
+    expect(task.next_run).toBe(
+      CronExpressionParser.parse('0 4 * * *', { tz: TIMEZONE })
+        .next()
+        .toISOString(),
+    );
+  });
+
+  it('update_task converting interval to cron stores ET', async () => {
+    vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z')); // 08:00 EDT
+    await schedule('interval', '3600000');
+    await update({ schedule_type: 'cron', schedule_value: '0 9 * * *' });
+
+    const task = getTaskById('tz-task')!;
+    expect(task.schedule_type).toBe('cron');
+    expect(task.schedule_tz).toBe('America/New_York');
+    expect(task.next_run).toBe('2026-07-15T13:00:00.000Z');
   });
 });
 

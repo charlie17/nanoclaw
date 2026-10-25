@@ -1,5 +1,7 @@
+import { CronExpressionParser } from 'cron-parser';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TIMEZONE } from './config.js';
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import {
   _resetSchedulerLoopForTests,
@@ -130,6 +132,85 @@ describe('task scheduler', () => {
     const offset =
       (new Date(nextRun!).getTime() - new Date(scheduledTime).getTime()) % ms;
     expect(offset).toBe(0);
+  });
+
+  describe('cron schedule_tz', () => {
+    const cronTask = (schedule_tz: string | null, value = '0 9 * * *') => ({
+      id: 'cron-tz',
+      group_folder: 'test',
+      chat_jid: 'test@g.us',
+      prompt: 'test',
+      schedule_type: 'cron' as const,
+      schedule_value: value,
+      schedule_tz,
+      context_mode: 'isolated' as const,
+      next_run: null,
+      last_run: null,
+      last_result: null,
+      status: 'active' as const,
+      created_at: '2026-01-01T00:00:00.000Z',
+    });
+
+    it('reads an ET cron in EDT as 13:00Z', () => {
+      vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z')); // 08:00 EDT
+      expect(computeNextRun(cronTask('America/New_York'))).toBe(
+        '2026-07-15T13:00:00.000Z',
+      );
+    });
+
+    it('reads an ET cron in EST as 14:00Z', () => {
+      vi.setSystemTime(new Date('2026-12-15T12:00:00.000Z')); // 07:00 EST
+      expect(computeNextRun(cronTask('America/New_York'))).toBe(
+        '2026-12-15T14:00:00.000Z',
+      );
+    });
+
+    it('keeps the same ET wall-clock time across the fall DST boundary', () => {
+      // Saturday 2026-10-31 09:00 EDT, then Sunday 2026-11-01 09:00 EST.
+      vi.setSystemTime(new Date('2026-10-31T12:00:00.000Z'));
+      const first = computeNextRun(cronTask('America/New_York'));
+      expect(first).toBe('2026-10-31T13:00:00.000Z');
+
+      vi.setSystemTime(new Date(first!).getTime() + 1000);
+      expect(computeNextRun(cronTask('America/New_York'))).toBe(
+        '2026-11-01T14:00:00.000Z',
+      );
+    });
+
+    // Known defect in cron-parser 5.5.0: evaluated before the spring-forward
+    // gap, it skips that whole day. 5.10.2 returns the correct instant; this
+    // flips to a plain `it` (and must) once the dependency is bumped.
+    it.fails(
+      'keeps the same ET wall-clock time across the spring DST boundary',
+      () => {
+        // Saturday 2027-03-13 09:00 EST, then Sunday 2027-03-14 09:00 EDT.
+        vi.setSystemTime(new Date('2027-03-13T14:00:01.000Z'));
+        expect(computeNextRun(cronTask('America/New_York'))).toBe(
+          '2027-03-14T13:00:00.000Z',
+        );
+      },
+    );
+
+    it('NULL schedule_tz parses in TIMEZONE exactly as before', () => {
+      vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z'));
+      const expected = CronExpressionParser.parse('0 9 * * *', {
+        tz: TIMEZONE,
+      })
+        .next()
+        .toISOString();
+      expect(computeNextRun(cronTask(null))).toBe(expected);
+    });
+
+    it('reads schedule_tz from the stored row', () => {
+      vi.setSystemTime(new Date('2026-12-15T12:00:00.000Z'));
+      createTask({
+        ...cronTask('America/New_York'),
+        id: 'stored-et-cron',
+      });
+      expect(computeNextRun(getTaskById('stored-et-cron')!)).toBe(
+        '2026-12-15T14:00:00.000Z',
+      );
+    });
   });
 
   describe('backfill missing next_run on startup', () => {

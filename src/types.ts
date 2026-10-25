@@ -66,6 +66,8 @@ export interface ScheduledTask {
   script?: string | null;
   schedule_type: 'cron' | 'interval' | 'once';
   schedule_value: string;
+  // IANA zone a cron schedule_value is read in; null means TIMEZONE.
+  schedule_tz?: string | null;
   context_mode: 'group' | 'isolated';
   next_run: string | null;
   last_run: string | null;

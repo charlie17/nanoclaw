@@ -174,6 +174,14 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Zone a cron schedule is read in. NULL keeps existing and host-inserted
+  // rows on TIMEZONE; agent-created cron tasks store REMINDER_TIMEZONE.
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN schedule_tz TEXT`);
+  } catch {
+    /* column already exists */
+  }
 }
 
 export function initDatabase(): void {
@@ -187,9 +195,14 @@ export function initDatabase(): void {
   migrateJsonState();
 }
 
-/** @internal - for tests only. Creates a fresh in-memory database. */
-export function _initTestDatabase(): void {
-  db = new Database(':memory:');
+/**
+ * @internal - for tests only. Creates a fresh in-memory database, or runs
+ * schema + migrations over a supplied one (to exercise pre-existing rows).
+ */
+export function _initTestDatabase(
+  database: Database.Database = new Database(':memory:'),
+): void {
+  db = database;
   createSchema(db);
 }
 
@@ -468,8 +481,8 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, script, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, script, schedule_type, schedule_value, schedule_tz, context_mode, next_run, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -479,6 +492,7 @@ export function createTask(
     task.script || null,
     task.schedule_type,
     task.schedule_value,
+    task.schedule_tz || null,
     task.context_mode || 'isolated',
     task.next_run,
     task.status,
@@ -515,6 +529,7 @@ export function updateTask(
       | 'script'
       | 'schedule_type'
       | 'schedule_value'
+      | 'schedule_tz'
       | 'next_run'
       | 'status'
     >
@@ -538,6 +553,10 @@ export function updateTask(
   if (updates.schedule_value !== undefined) {
     fields.push('schedule_value = ?');
     values.push(updates.schedule_value);
+  }
+  if (updates.schedule_tz !== undefined) {
+    fields.push('schedule_tz = ?');
+    values.push(updates.schedule_tz || null);
   }
   if (updates.next_run !== undefined) {
     fields.push('next_run = ?');

@@ -36,7 +36,7 @@ export function computeNextRun(task: ScheduledTask): string | null {
 
   if (task.schedule_type === 'cron') {
     const interval = CronExpressionParser.parse(task.schedule_value, {
-      tz: TIMEZONE,
+      tz: task.schedule_tz || TIMEZONE,
     });
     return interval.next().toISOString();
   }

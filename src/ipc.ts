@@ -220,11 +220,15 @@ export async function processTaskIpc(
         const scheduleType = data.schedule_type as 'cron' | 'interval' | 'once';
 
         let nextRun: string | null = null;
+        // Agent-authored cron carries JT's ET wall-clock times; storing the
+        // zone keeps every later recompute DST-correct.
+        let scheduleTz: string | null = null;
         if (scheduleType === 'cron') {
           try {
             const interval = CronExpressionParser.parse(data.schedule_value, {
-              tz: TIMEZONE,
+              tz: REMINDER_TIMEZONE,
             });
+            scheduleTz = REMINDER_TIMEZONE;
             nextRun = interval.next().toISOString();
           } catch {
             logger.warn(
@@ -302,6 +306,7 @@ export async function processTaskIpc(
           script: data.script || null,
           schedule_type: scheduleType,
           schedule_value: data.schedule_value,
+          schedule_tz: scheduleTz,
           context_mode: contextMode,
           next_run: nextRun,
           status: 'active',
@@ -408,12 +413,19 @@ export async function processTaskIpc(
             ...updates,
           };
           if (updatedTask.schedule_type === 'cron') {
+            // A task already on cron keeps the zone it was authored in; one
+            // converted to cron here is agent-authored, so it reads in ET.
+            const convertingToCron = task.schedule_type !== 'cron';
+            const scheduleTz = convertingToCron
+              ? REMINDER_TIMEZONE
+              : task.schedule_tz || null;
             try {
               const interval = CronExpressionParser.parse(
                 updatedTask.schedule_value,
-                { tz: TIMEZONE },
+                { tz: scheduleTz || TIMEZONE },
               );
               updates.next_run = interval.next().toISOString();
+              if (convertingToCron) updates.schedule_tz = scheduleTz;
             } catch {
               logger.warn(
                 { taskId: data.taskId, value: updatedTask.schedule_value },
