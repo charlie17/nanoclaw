@@ -91,7 +91,7 @@ Produce a **structured research note** — not a raw search dump, not a list of 
 
 ### Output
 
-Path: `general/research/research-{YYYY-MM-DD}-{topic-slug}.md` (matches `groups/daystrom/CLAUDE.md:91` convention). Frontmatter:
+Path: `research/research-{YYYY-MM-DD}-{topic-slug}.md` (container-relative, per CLAUDE.md §Vault path semantics). Frontmatter:
 
 ```yaml
 ---
@@ -184,7 +184,7 @@ Never rewrite, touch or re-save a failed entry, and never write a new entry to r
 
 - Do NOT make any Anthropic API call with a `web_search_*` tool enabled. (The credential proxy will reject it with 403 anyway, but do not try.)
 - Do NOT use `Bash` to `curl` Anthropic directly for any purpose. Your normal LLM API calls are mediated by NanoClaw's SDK layer — you don't need to construct them manually.
-- Do NOT write to `general/research/` for supplement results. The file lands in `quarantine/research/` (via O'Brien), not `general/research/`.
+- Do NOT write supplement results to `research/`. The file lands in the quarantine (via O'Brien), outside your mount.
 - Do NOT inform JT of the quarantine file location manually. `obrien-notify.sh` sends the ping with the cf-worker link.
 - Do NOT attempt to read from `/vault/quarantine/` — the folder is not bind-mounted into your container and does not exist in your filesystem.
 

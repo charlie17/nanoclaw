@@ -10,7 +10,7 @@ Announce model at start: "Running `/wiki-query` with Opus." Offer to switch: "Sa
      sub-query with rerank:false. rerank:true is CPU-bound (47s–474s) and is used only if JT explicitly asks
      for deeper retrieval and accepts the wait. Full recipes: container/skills/qmd/SKILL.md. -->
 
-1. Read `general/wiki/!index.md` first to identify candidate pages relevant to JT's question (Karpathy index-first discipline).
+1. Read `wiki/!index.md` first to identify candidate pages relevant to JT's question (Karpathy index-first discipline).
 2. **Primary search:** `mcp__qmd__query {"searches":[{"type":"vec","query":"<question>"}],"rerank":false,"collections":["wiki"]}` — scoped to the `wiki` sub-collection (`general/wiki/`). Read the surfaced pages in full. If the question contains exact terms or proper nouns, add a second sub-query `{"type":"lex","query":"<terms>"}` to the same call.
 3. **Secondary search:** the same call with `"collections":["general"]` — cross-reference pass over the full `general` namespace. Use results for connection surfacing only — research notes, learning entries, brainstorm artifacts, and project notes that carry query-relevant value the wiki doesn't yet cover. This is supplementary, not primary synthesis.
 4. Synthesize an answer from the primary wiki results, enriched with connections from the secondary pass. Cite source wiki pages with `[[wikilinks]]`.
@@ -25,7 +25,7 @@ Select the form that fits JT's question shape:
 ## Filing back
 
 Valuable query results can become new wiki pages — explorations compound in the knowledge base just like ingested sources. Before filing, ask JT: "Want me to file this back as a wiki page?" On confirmation:
-- Write `general/wiki/<slug>.md` with standard wiki-page frontmatter (see `wiki/SKILL.md`)
+- Write `wiki/<slug>.md` (container-relative) with standard wiki-page frontmatter (see `wiki/SKILL.md`)
 - Set `provenance.source: vault` (or `readwise` if the synthesis drew primarily from Readwise-sourced wiki pages), `provenance.via: /wiki-query`, `source-refs: []` (or list relevant Readwise doc IDs)
 - Update `!index.md` with the new page entry
 - Append to `log.md`: `## [YYYY-MM-DD] query-filed | <Title>`

@@ -64,7 +64,7 @@ Per CLAUDE.md `## Reply Discipline (executive tone)`. Outcomes-first prose, plai
 
 - **Prose paragraph** (default) — flowing summary per repo. Lead with what got built or shipped (executive framing), then mention commit count and branches as supporting context. Notable patterns or themes (e.g., "lots of refactoring this week", "new feature work concentrated in `jt-daystrom`") get one closing sentence.
 - **Bullet list** — if JT asks for a list. Loose (blank line between items), each item ≤ 2 lines, plain-English description of what each commit/branch achieved.
-- **Save to vault** (on explicit JT request only): write `general/research/coding-recap-<YYYY-MM-DD>-<scope>.md` with frontmatter:
+- **Save to vault** (on explicit JT request only): write `research/coding-recap-<YYYY-MM-DD>-<scope>.md` (container-relative) with frontmatter:
   ```
   trust: trusted
   type: coding-recap
