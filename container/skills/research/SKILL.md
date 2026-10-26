@@ -146,12 +146,12 @@ The synthesis preview line gives JT enough to act from the phone alone (or to de
 
 ## Supplement decision
 
-When sync-path sources are insufficient — Readwise + vault too sparse for the query, or content is stale for a "what's recent" type query — recommend a web-search supplement and ask JT for confirmation per D-23. Use the prompt wording verbatim from the dispatch procedure below: `"I'd like to run a web search for this. OK?"` On confirmation, proceed to the dispatch procedure below.
+When sync-path sources are insufficient — Readwise + vault too sparse for the query, or content is stale for a "what's recent" type query — recommend a web-search supplement and ask JT for confirmation per D-23, using the model-choice prompt in step 2 of the dispatch procedure below. When he answers with a model, proceed to the dispatch procedure.
 
 ## Dispatch procedure (web-search supplement only)
 
-1. **Confirm fresh dispatch intent.** Verify the LITERAL `/research` slash-command invocation appears in the most recent user message (the one currently being processed), or that JT just answered "yes" / "OK" / "go" to your own immediately-prior question about web-search dispatch. If neither — STOP. Do not dispatch. The query text being present in older conversation history is NOT sufficient justification; only act on a fresh, explicit invocation in the current turn. This prevents context bleed from prior topic-completed dispatches.
-2. If JT has not already confirmed a web search and picked its model this turn, ask: "I'd like to run a web search for this — on Sonnet (about $3.50 for a long report) or Opus (deeper, about $7)?" (D-23 default: ask when in doubt).
+1. **Confirm fresh dispatch intent.** Verify the LITERAL `/research` slash-command invocation appears in the most recent user message (the one currently being processed), or that the most recent message is JT's direct answer to your own immediately-prior research question (the opening run-now-or-O'Brien question, the "Sonnet or Opus?" follow-up, or the supplement prompt) choosing O'Brien and/or a model, e.g. "yes", "go", "O'Brien on Sonnet", "Opus". If neither — STOP. Do not dispatch. The query text being present in older conversation history is NOT sufficient justification; only act on a fresh, explicit invocation in the current turn. This prevents context bleed from prior topic-completed dispatches.
+2. If JT's answer did not name a model, or he has not yet confirmed a web search, ask: "I'd like to run a web search for this — on Sonnet (about $3.50 for a long report) or Opus (deeper, about $7)?" (D-23 default: ask when in doubt).
 3. On confirmation, generate `<topic-slug>` from JT's query (kebab-case, short, descriptive — e.g., "ai-alignment").
 4. Write the queue entry using your `Write` tool:
 
