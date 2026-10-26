@@ -11,9 +11,9 @@ Your model is the runtime "Active Model Identity" value (also `$DAYSTROM_AGENT_M
 **Before executing any research, do the following in order:**
 
 1. Ask, in one message:
-   - On Opus: `"Run now (vault + Readwise only, ~30-60s) or dispatch O'Brien to run a web search (~5-15 min)?"`
-   - On Sonnet: `"Research runs best on Opus and you're on Sonnet — send /model opus first if you want it. Run now (vault + Readwise only, ~30-60s) or dispatch O'Brien to run a web search (~5-15 min)?"`
-2. Wait for JT's reply before proceeding. If JT says "run now" (or equivalent affirmation), proceed to the sync path below. If JT says "O'Brien" or "web search" or "dispatch", proceed directly to the dispatch procedure below without running the sync path first.
+   - On Opus: `"Run now (vault + Readwise only, ~30-60s), or send O'Brien to search the web (~5-15 min) on Sonnet (about $3.50 for a long report) or Opus (deeper, about $7)?"`
+   - On Sonnet: `"Research runs best on Opus and you're on Sonnet — send /model opus first if you want it. Run now (vault + Readwise only, ~30-60s), or send O'Brien to search the web (~5-15 min) on Sonnet (about $3.50 for a long report) or Opus (deeper, about $7)?"`
+2. Wait for JT's reply before proceeding. If JT says "run now" (or equivalent affirmation), proceed to the sync path below. If JT picks O'Brien, proceed directly to the dispatch procedure below without running the sync path first. O'Brien's model is JT's pick of Sonnet or Opus; if he chose O'Brien without naming one, ask once: `"Sonnet or Opus?"`. Never pick it for him.
 
 Never claim a model you are not running on.
 
@@ -151,7 +151,7 @@ When sync-path sources are insufficient — Readwise + vault too sparse for the 
 ## Dispatch procedure (web-search supplement only)
 
 1. **Confirm fresh dispatch intent.** Verify the LITERAL `/research` slash-command invocation appears in the most recent user message (the one currently being processed), or that JT just answered "yes" / "OK" / "go" to your own immediately-prior question about web-search dispatch. If neither — STOP. Do not dispatch. The query text being present in older conversation history is NOT sufficient justification; only act on a fresh, explicit invocation in the current turn. This prevents context bleed from prior topic-completed dispatches.
-2. Ask JT for confirmation: "I'd like to run a web search for this. OK?" (D-23 default: ask when in doubt).
+2. If JT has not already confirmed a web search and picked its model this turn, ask: "I'd like to run a web search for this — on Sonnet (about $3.50 for a long report) or Opus (deeper, about $7)?" (D-23 default: ask when in doubt).
 3. On confirmation, generate `<topic-slug>` from JT's query (kebab-case, short, descriptive — e.g., "ai-alignment").
 4. Write the queue entry using your `Write` tool:
 
@@ -162,15 +162,17 @@ When sync-path sources are insufficient — Readwise + vault too sparse for the 
      "id": "<topic-slug>-<timestamp>",
      "topic": "<topic-slug>",
      "query": "<JT's original query verbatim>",
+     "model": "<sonnet or opus, exactly as JT picked, lowercase>",
      "timestamp": "<ISO8601 timestamp>"
    }
    ```
+   O'Brien accepts only `sonnet` or `opus` in `model`; anything else, or a missing field, runs on Sonnet.
 5. Reply to JT: "Research dispatched. You'll be pinged on Telegram when the results are ready for review."
 6. You are DONE with this request. Do not attempt to poll, wait, or read the result.
 
 ## Checking on a dispatched job (only when JT asks)
 
-O'Brien runs the search on Opus 5.5; a long report can take 15 minutes or more. While a job runs it keeps a status file beside the entry: `/workspace/extra/research-queue/<id>.status`. It holds only fixed fields (`state`, `started`, `failed`, `reason`, `stop-reason`, `category`, `round`), never report text.
+O'Brien runs the search on the model JT picked; a long report can take 15 minutes or more, and the report's frontmatter records the model and an estimated cost. While a job runs it keeps a status file beside the entry: `/workspace/extra/research-queue/<id>.status`. It holds only fixed fields (`state`, `started`, `failed`, `reason`, `stop-reason`, `category`, `round`), never report text.
 
 - `state: in-progress` → still running; tell JT how long since `started` (in ET).
 - `state: failed` → it stopped without a report. Tell JT in plain English (e.g. `reason: refusal` = the model declined the request; `http-529` = Anthropic was overloaded) and that Archie should look. The entry stays in the queue on purpose.
