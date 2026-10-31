@@ -31,6 +31,7 @@ import {
 } from './qmd-gate.js';
 import { allowedToolsFor, disallowedToolsFor } from './tool-policy.js';
 import { resolveEffort } from './effort.js';
+import { backgroundTaskLevel } from './background-tasks.js';
 
 interface ContainerInput {
   prompt: string;
@@ -68,6 +69,12 @@ interface ContainerOutput {
   error?: string;
   kind?: OutputKind;
   subtype?: string;
+  /**
+   * On 'result' only: live background tasks when the turn ended. Non-zero
+   * means the agent will resume when they report back, so the host must not
+   * treat this result as the end of the run.
+   */
+  backgroundTasks?: number;
 }
 
 interface SessionEntry {
@@ -486,6 +493,9 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  // Per query(): each query spawns its own CLI process, and the SDK's
+  // background-task level is per process.
+  let backgroundTasks = 0;
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -725,13 +735,19 @@ async function runQuery(
       );
     }
 
+    const level = backgroundTaskLevel(message);
+    if (level !== null) {
+      backgroundTasks = level;
+      log(`Background tasks: ${backgroundTasks}`);
+    }
+
     if (message.type === 'result') {
       resultCount++;
       const textResult =
         'result' in message ? (message as { result?: string }).result : null;
       const models = Object.keys(message.modelUsage ?? {}).join(',');
       log(
-        `Result #${resultCount}: subtype=${message.subtype} models=${models}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
+        `Result #${resultCount}: subtype=${message.subtype} models=${models} backgroundTasks=${backgroundTasks}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
       );
       // JT: Impl-75 A1 — `subtype` was already in hand here and thrown away, and
       // JT: `status` was hardcoded 'success' regardless of it. An SDK result with
@@ -749,6 +765,7 @@ async function runQuery(
         newSessionId,
         kind: 'result',
         subtype: message.subtype,
+        backgroundTasks,
       });
     }
   }

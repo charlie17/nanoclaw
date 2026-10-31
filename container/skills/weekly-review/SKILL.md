@@ -115,11 +115,13 @@ Run both queries; include file path + ~200-char excerpt per hit:
 If either query returns zero hits, include `[empty]` for that entry.
 
 **Step 3 — Invoke Opus sub-agent.**
+Run it in the foreground (`run_in_background: false`): the scheduled run is closed shortly after your first reply, so a background sub-agent's result would arrive after the container is gone.
 ```
 Agent({
   description: "Pattern recognition analysis (Lens A + Lens B)",
   prompt: "[Lens A bundle]\n\n[Lens B bundle]\n\nReview window: <data.window_start> to <data.window_end>. Review #<data.review_count + 1>.\n\nFormat: Two labeled bold sections — **Lens 1 — System / Process** and **Lens 2 — Human / Experiential**. Under each, bullet each observation (no wall-of-text paragraphs). Frame static backlogs (IPS, options) as possibly deliberate parking — neutral framing, do not assert 'X is your stated most important project.' Keep under ~400 words total. Run /pattern-recognition.",
-  model: "opus"
+  model: "opus",
+  run_in_background: false
 })
 ```
 

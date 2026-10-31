@@ -2,6 +2,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TIMEZONE } from './config.js';
+import type { ContainerOutput } from './container-runner.js';
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import {
   _resetSchedulerLoopForTests,
@@ -559,6 +560,132 @@ describe('task scheduler', () => {
         chatJid: 'jt@g.us',
         isScheduledTask: true,
       });
+    });
+  });
+
+  // A result reporting live SDK background tasks must not start the
+  // post-result close: the agent resumes when they report back.
+  describe('background tasks hold the post-result close', () => {
+    const CLOSE_DELAY_MS = 10_000;
+
+    async function startTask() {
+      const { runContainerAgent } = await import('./container-runner.js');
+      const runMock = vi.mocked(runContainerAgent);
+      runMock.mockReset();
+      let onOutput!: (output: ContainerOutput) => Promise<void>;
+      let finish!: (output: ContainerOutput) => void;
+      runMock.mockImplementation((_group, _input, _onProcess, cb) => {
+        onOutput = cb!;
+        return new Promise<ContainerOutput>((resolve) => {
+          finish = resolve;
+        });
+      });
+
+      createTask({
+        id: 'daystrom-weekly-review',
+        group_folder: 'daystrom',
+        chat_jid: 'jt@g.us',
+        prompt: '/weekly-review',
+        schedule_type: 'cron',
+        schedule_value: '0 9 * * 6',
+        context_mode: 'isolated',
+        next_run: new Date(Date.now() - 60_000).toISOString(),
+        status: 'active',
+        created_at: '2026-10-31T00:00:00.000Z',
+      });
+
+      const closeStdin = vi.fn();
+      const notifyIdle = vi.fn();
+      startSchedulerLoop({
+        registeredGroups: () => ({
+          'jt@g.us': {
+            name: 'Daystrom',
+            folder: 'daystrom',
+            trigger: '@d',
+            added_at: '2026-10-31T00:00:00.000Z',
+            isMain: true,
+          },
+        }),
+        getSessions: () => ({}),
+        queue: {
+          enqueueTask: (_jid: string, _id: string, fn: () => Promise<void>) => {
+            void fn();
+          },
+          notifyIdle,
+          closeStdin,
+        } as any,
+        onProcess: () => {},
+        sendMessage: async () => {},
+      });
+      await vi.advanceTimersByTimeAsync(50);
+
+      const emit = async (output: Partial<ContainerOutput>) => {
+        await onOutput({
+          status: 'success',
+          result: null,
+          kind: 'result',
+          subtype: 'success',
+          ...output,
+        });
+      };
+      const done = async () => {
+        finish({ status: 'success', result: null });
+        await vi.advanceTimersByTimeAsync(0);
+      };
+      return { emit, done, closeStdin, notifyIdle };
+    }
+
+    it('holds while backgroundTasks > 0, closes 10s after a later zero result', async () => {
+      const t = await startTask();
+      await t.emit({ result: 'running in the background', backgroundTasks: 1 });
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS * 3);
+      expect(t.closeStdin).not.toHaveBeenCalled();
+      expect(t.notifyIdle).not.toHaveBeenCalled();
+
+      await t.emit({ result: 'report written', backgroundTasks: 0 });
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS - 100);
+      expect(t.closeStdin).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(t.closeStdin).toHaveBeenCalledTimes(1);
+      expect(t.notifyIdle).toHaveBeenCalled();
+      await t.done();
+    });
+
+    it('closes 10s after a result without the field (older runner)', async () => {
+      const t = await startTask();
+      await t.emit({ result: 'done', kind: undefined, subtype: undefined });
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS - 100);
+      expect(t.closeStdin).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(t.closeStdin).toHaveBeenCalledTimes(1);
+      await t.done();
+    });
+
+    it('a background result cancels a close already pending from a zero result', async () => {
+      const t = await startTask();
+      await t.emit({ result: 'first', backgroundTasks: 0 });
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS / 2);
+      await t.emit({ result: 'now waiting', backgroundTasks: 1 });
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS * 3);
+      expect(t.closeStdin).not.toHaveBeenCalled();
+
+      await t.emit({ result: 'finished', backgroundTasks: 0 });
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS + 100);
+      expect(t.closeStdin).toHaveBeenCalledTimes(1);
+      await t.done();
+    });
+
+    it('repeated zero results do not re-arm or double the pending close', async () => {
+      const t = await startTask();
+      await t.emit({ result: 'one', backgroundTasks: 0 });
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS / 2);
+      await t.emit({ result: 'two', backgroundTasks: 0 });
+      // Fires on the first result's schedule, not pushed back by the second.
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS / 2 + 100);
+      expect(t.closeStdin).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS * 2);
+      expect(t.closeStdin).toHaveBeenCalledTimes(1);
+      await t.done();
     });
   });
 });

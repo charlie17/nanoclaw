@@ -177,6 +177,10 @@ async function runTask(
       deps.queue.closeStdin(task.chat_jid);
     }, TASK_CLOSE_DELAY_MS);
   };
+  const cancelClose = () => {
+    if (closeTimer) clearTimeout(closeTimer);
+    closeTimer = null;
+  };
 
   try {
     const output = await runContainerAgent(
@@ -194,6 +198,20 @@ async function runTask(
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
+        // A turn that ended with SDK background tasks live is not the end of
+        // the run: the agent resumes when they report back. Closing or idling
+        // the container now would kill that resumed turn.
+        const awaitingBackground = (streamedOutput.backgroundTasks ?? 0) > 0;
+        if (awaitingBackground) {
+          cancelClose();
+          logger.debug(
+            {
+              taskId: task.id,
+              backgroundTasks: streamedOutput.backgroundTasks,
+            },
+            'Task result with background tasks running; holding container open',
+          );
+        }
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Errors-only tasks (board-synth nightly): silence on success is
@@ -209,9 +227,9 @@ async function runTask(
             // Forward result to user (sendMessage handles formatting)
             await deps.sendMessage(task.chat_jid, streamedOutput.result);
           }
-          scheduleClose();
+          if (!awaitingBackground) scheduleClose();
         }
-        if (streamedOutput.status === 'success') {
+        if (streamedOutput.status === 'success' && !awaitingBackground) {
           deps.queue.notifyIdle(task.chat_jid);
           scheduleClose(); // Close promptly even when result is null (e.g. IPC-only tasks)
         }

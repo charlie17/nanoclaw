@@ -5,7 +5,7 @@ description: Two-lens weekly Pattern Recognition (System/Process + Human/Experie
 
 ## Invocation
 
-This skill is invoked by the weekly-review agent as an Opus sub-agent via `Agent({model: "opus"})`. The invoking agent assembles the full context bundle and passes it in the prompt. Manual invocation from Telegram (`/pattern-recognition`) is also supported — JT provides the context bundle in the message body using the Input format below.
+This skill is invoked by the weekly-review agent as an Opus sub-agent via `Agent({model: "opus", run_in_background: false})`. The invoking agent assembles the full context bundle and passes it in the prompt. Manual invocation from Telegram (`/pattern-recognition`) is also supported — JT provides the context bundle in the message body using the Input format below.
 
 ## Input
 

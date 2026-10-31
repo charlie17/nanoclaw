@@ -72,6 +72,11 @@ export interface ContainerOutput {
   error?: string;
   kind?: OutputKind;
   subtype?: string;
+  /**
+   * On 'result' only: live SDK background tasks when the turn ended. Non-zero
+   * means the agent resumes when they report back. Absent from older runners.
+   */
+  backgroundTasks?: number;
 }
 
 /**
