@@ -404,6 +404,103 @@ describe('container-runner reaper (Impl-75 A4)', () => {
   });
 });
 
+describe('container-runner background tasks', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const taskInput = { ...testInput, isScheduledTask: true };
+
+  async function reapAfter(
+    input: typeof testInput & { isScheduledTask?: boolean },
+    outputs: ContainerOutput[],
+  ): Promise<ContainerOutput> {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      input,
+      () => {},
+      vi.fn(async () => {}),
+    );
+    for (const o of outputs) emitOutputMarker(fakeProc, o);
+    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(1830000);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+    return resultPromise;
+  }
+
+  const reply = (backgroundTasks: number): ContainerOutput => ({
+    status: 'success',
+    result: 'running in the background',
+    kind: 'result',
+    subtype: 'success',
+    backgroundTasks,
+  });
+
+  it('a scheduled task timing out with background tasks outstanding is an error', async () => {
+    const result = await reapAfter(taskInput, [reply(1)]);
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('background task');
+  });
+
+  it('a scheduled task timing out after a zero count is still idle cleanup', async () => {
+    const result = await reapAfter(taskInput, [reply(1), reply(0)]);
+    expect(result.status).toBe('success');
+  });
+
+  it('an envelope without the field keeps the last count', async () => {
+    const result = await reapAfter(taskInput, [
+      reply(1),
+      { status: 'success', result: null, kind: 'session-update' },
+    ]);
+    expect(result.status).toBe('error');
+  });
+
+  it('an interactive container timing out is idle cleanup whatever the count', async () => {
+    const result = await reapAfter(testInput, [reply(1)]);
+    expect(result.status).toBe('success');
+  });
+
+  it('onParsedOutput sees each envelope while an earlier onOutput is still pending', async () => {
+    let release!: () => void;
+    const onOutput = vi
+      .fn<(o: ContainerOutput) => Promise<void>>()
+      .mockImplementationOnce(() => new Promise<void>((r) => (release = r)))
+      .mockResolvedValue(undefined);
+    const onParsedOutput = vi.fn();
+    const resultPromise = runContainerAgent(
+      testGroup,
+      taskInput,
+      () => {},
+      onOutput,
+      undefined,
+      undefined,
+      onParsedOutput,
+    );
+
+    emitOutputMarker(fakeProc, reply(0));
+    emitOutputMarker(fakeProc, reply(2));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(onParsedOutput).toHaveBeenCalledTimes(2);
+    expect(onParsedOutput).toHaveBeenLastCalledWith(
+      expect.objectContaining({ backgroundTasks: 2 }),
+    );
+    expect(onOutput).toHaveBeenCalledTimes(1);
+
+    release();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(onOutput).toHaveBeenCalledTimes(2);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await resultPromise).status).toBe('success');
+  });
+});
+
 // --- Impl-75 B1: an IPC-consume marker must reset the hard idle timer ---
 
 describe('container-runner idle timer (Impl-75 B1)', () => {

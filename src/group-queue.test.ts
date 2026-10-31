@@ -736,6 +736,79 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
+  it('markActive after notifyIdle re-arms the no-output watchdog', async () => {
+    const { stopContainer } = await import('./container-runtime.js');
+    const stopMock = vi.mocked(stopContainer);
+    stopMock.mockClear();
+
+    let resolveTask: () => void = () => {};
+    queue.enqueueTask(
+      'A@g.us',
+      'task-1',
+      () =>
+        new Promise<void>((resolve) => {
+          resolveTask = resolve;
+        }),
+      'daystrom',
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'A@g.us',
+      {} as any,
+      'nanoclaw-daystrom-mark',
+      'daystrom',
+    );
+
+    queue.notifyIdle('A@g.us');
+    queue.markActive('A@g.us');
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1000);
+    expect(stopMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(stopMock).toHaveBeenCalledWith('nanoclaw-daystrom-mark');
+
+    resolveTask();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('markActive after notifyIdle stops a queued task from pre-empting the container', async () => {
+    const fs = await import('fs');
+    let resolveTask: () => void = () => {};
+    queue.enqueueTask(
+      'A@g.us',
+      'task-1',
+      () =>
+        new Promise<void>((resolve) => {
+          resolveTask = resolve;
+        }),
+      'daystrom',
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'A@g.us',
+      {} as any,
+      'nanoclaw-daystrom-mark2',
+      'daystrom',
+    );
+
+    queue.notifyIdle('A@g.us');
+    queue.markActive('A@g.us');
+
+    const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    writeFileSync.mockClear();
+    queue.enqueueTask(
+      'A@g.us',
+      'task-2',
+      vi.fn(async () => {}),
+    );
+    const closeWrites = writeFileSync.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+    );
+    expect(closeWrites).toHaveLength(0);
+
+    resolveTask();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
   it('FU-30 — closeStdin watchdog force-stops container if it does not exit within deadline', async () => {
     const { stopContainer } = await import('./container-runtime.js');
     const stopMock = vi.mocked(stopContainer);

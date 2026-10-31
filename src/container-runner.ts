@@ -449,6 +449,12 @@ export async function runContainerAgent(
   // JT: emissions (e.g., long Edit / Write / Read cascades) gets killed
   // JT: spuriously by the 10-min watchdog. See post-mortem 2026-05-03.
   onAgentActivity?: (groupJid: string) => void,
+  /**
+   * Called synchronously for each streamed envelope as it is parsed, before
+   * onOutput is queued behind earlier deliveries. For lifecycle decisions
+   * that must not wait on outbound sends. Must not block; a throw is logged.
+   */
+  onParsedOutput?: (output: ContainerOutput) => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
@@ -559,6 +565,19 @@ export async function runContainerAgent(
             if (typeof parsed.result === 'string' && parsed.result.trim()) {
               hadRealResult = true;
             }
+            if (typeof parsed.backgroundTasks === 'number') {
+              backgroundTasks = parsed.backgroundTasks;
+            }
+            if (onParsedOutput) {
+              try {
+                onParsedOutput(parsed);
+              } catch (err) {
+                logger.warn(
+                  { group: group.name, error: err },
+                  'onParsedOutput threw',
+                );
+              }
+            }
             // Activity detected — reset the hard timeout
             resetTimeout();
             // Call onOutput for all markers (including null results)
@@ -626,6 +645,8 @@ export async function runContainerAgent(
     let timedOut = false;
     let hadStreamingOutput = false;
     let hadRealResult = false;
+    // Latest SDK background-task count reported on a result envelope.
+    let backgroundTasks = 0;
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
@@ -676,6 +697,25 @@ export async function runContainerAgent(
             `Had Real Result: ${hadRealResult}`,
           ].join('\n'),
         );
+
+        // A scheduled task held open for background work that never reported
+        // back did not finish, whatever it said earlier. Interactive containers
+        // are not held, so their reap stays idle cleanup below.
+        if (input.isScheduledTask && backgroundTasks > 0) {
+          logger.error(
+            { group: group.name, containerName, duration, backgroundTasks },
+            'Scheduled task timed out with background tasks still running',
+          );
+          outputChain.then(() => {
+            resolve({
+              status: 'error',
+              result: null,
+              newSessionId,
+              error: `Container timed out after ${configTimeout}ms with ${backgroundTasks} background task(s) still running; the run never finished.`,
+            });
+          });
+          return;
+        }
 
         // Timeout after a REAL reply = idle cleanup, not failure.
         // The agent already sent its response; this is just the

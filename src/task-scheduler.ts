@@ -169,9 +169,12 @@ async function runTask(
   // query loop to time out. A short delay handles any final MCP calls.
   const TASK_CLOSE_DELAY_MS = 10000;
   let closeTimer: ReturnType<typeof setTimeout> | null = null;
+  // Latest SDK background-task count, set at parse time. While non-zero the
+  // agent resumes when those tasks report back, so the run is not finished.
+  let backgroundTasks = 0;
 
   const scheduleClose = () => {
-    if (closeTimer) return; // already scheduled
+    if (closeTimer || backgroundTasks > 0) return;
     closeTimer = setTimeout(() => {
       logger.debug({ taskId: task.id }, 'Closing task container after result');
       deps.queue.closeStdin(task.chat_jid);
@@ -180,6 +183,19 @@ async function runTask(
   const cancelClose = () => {
     if (closeTimer) clearTimeout(closeTimer);
     closeTimer = null;
+  };
+  // Runs at parse time, ahead of any pending delivery, so a close armed by an
+  // earlier result cannot fire before a later background count is seen.
+  const holdForBackground = (parsed: ContainerOutput) => {
+    if (typeof parsed.backgroundTasks !== 'number') return;
+    backgroundTasks = parsed.backgroundTasks;
+    if (backgroundTasks === 0) return;
+    cancelClose();
+    deps.queue.markActive(task.chat_jid);
+    logger.debug(
+      { taskId: task.id, backgroundTasks },
+      'Task result with background tasks running; holding container open',
+    );
   };
 
   try {
@@ -198,20 +214,6 @@ async function runTask(
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
-        // A turn that ended with SDK background tasks live is not the end of
-        // the run: the agent resumes when they report back. Closing or idling
-        // the container now would kill that resumed turn.
-        const awaitingBackground = (streamedOutput.backgroundTasks ?? 0) > 0;
-        if (awaitingBackground) {
-          cancelClose();
-          logger.debug(
-            {
-              taskId: task.id,
-              backgroundTasks: streamedOutput.backgroundTasks,
-            },
-            'Task result with background tasks running; holding container open',
-          );
-        }
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Errors-only tasks (board-synth nightly): silence on success is
@@ -227,9 +229,11 @@ async function runTask(
             // Forward result to user (sendMessage handles formatting)
             await deps.sendMessage(task.chat_jid, streamedOutput.result);
           }
-          if (!awaitingBackground) scheduleClose();
+          scheduleClose();
         }
-        if (streamedOutput.status === 'success' && !awaitingBackground) {
+        // Re-read after the await above: a later envelope may have reported
+        // background work while this one was being delivered.
+        if (streamedOutput.status === 'success' && backgroundTasks === 0) {
           deps.queue.notifyIdle(task.chat_jid);
           scheduleClose(); // Close promptly even when result is null (e.g. IPC-only tasks)
         }
@@ -249,6 +253,7 @@ async function runTask(
       // JT: here.
       deps.onRateLimitEvent,
       deps.onAgentActivity,
+      holdForBackground,
     );
 
     if (closeTimer) clearTimeout(closeTimer);

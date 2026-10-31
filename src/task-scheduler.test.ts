@@ -573,13 +573,17 @@ describe('task scheduler', () => {
       const runMock = vi.mocked(runContainerAgent);
       runMock.mockReset();
       let onOutput!: (output: ContainerOutput) => Promise<void>;
+      let onParsed: ((output: ContainerOutput) => void) | undefined;
       let finish!: (output: ContainerOutput) => void;
-      runMock.mockImplementation((_group, _input, _onProcess, cb) => {
-        onOutput = cb!;
-        return new Promise<ContainerOutput>((resolve) => {
-          finish = resolve;
-        });
-      });
+      runMock.mockImplementation(
+        (_group, _input, _onProcess, cb, _onRate, _onActivity, parsedCb) => {
+          onOutput = cb!;
+          onParsed = parsedCb;
+          return new Promise<ContainerOutput>((resolve) => {
+            finish = resolve;
+          });
+        },
+      );
 
       createTask({
         id: 'daystrom-weekly-review',
@@ -596,6 +600,8 @@ describe('task scheduler', () => {
 
       const closeStdin = vi.fn();
       const notifyIdle = vi.fn();
+      const markActive = vi.fn();
+      const sendMessage = vi.fn(async (_jid: string, _text: string) => {});
       startSchedulerLoop({
         registeredGroups: () => ({
           'jt@g.us': {
@@ -613,26 +619,44 @@ describe('task scheduler', () => {
           },
           notifyIdle,
           closeStdin,
+          markActive,
         } as any,
         onProcess: () => {},
-        sendMessage: async () => {},
+        sendMessage,
       });
       await vi.advanceTimersByTimeAsync(50);
 
-      const emit = async (output: Partial<ContainerOutput>) => {
-        await onOutput({
+      // Mirrors container-runner: the parse hook runs synchronously, onOutput
+      // is chained behind earlier deliveries.
+      let chain = Promise.resolve();
+      const parse = (output: Partial<ContainerOutput>) => {
+        const envelope: ContainerOutput = {
           status: 'success',
           result: null,
           kind: 'result',
           subtype: 'success',
           ...output,
-        });
+        };
+        onParsed?.(envelope);
+        chain = chain.then(() => onOutput(envelope));
+        return chain;
+      };
+      const emit = async (output: Partial<ContainerOutput>) => {
+        await parse(output);
       };
       const done = async () => {
         finish({ status: 'success', result: null });
         await vi.advanceTimersByTimeAsync(0);
       };
-      return { emit, done, closeStdin, notifyIdle };
+      return {
+        parse,
+        emit,
+        done,
+        closeStdin,
+        notifyIdle,
+        markActive,
+        sendMessage,
+      };
     }
 
     it('holds while backgroundTasks > 0, closes 10s after a later zero result', async () => {
@@ -684,6 +708,52 @@ describe('task scheduler', () => {
       await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS / 2 + 100);
       expect(t.closeStdin).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS * 2);
+      expect(t.closeStdin).toHaveBeenCalledTimes(1);
+      await t.done();
+    });
+
+    it('a background result after an idle zero result marks the container active again', async () => {
+      const t = await startTask();
+      await t.emit({ result: 'first', backgroundTasks: 0 });
+      expect(t.notifyIdle).toHaveBeenCalledTimes(1);
+
+      await t.emit({ result: 'now waiting', backgroundTasks: 1 });
+      expect(t.markActive).toHaveBeenCalledWith('jt@g.us');
+      expect(t.markActive.mock.invocationCallOrder[0]).toBeGreaterThan(
+        t.notifyIdle.mock.invocationCallOrder[0],
+      );
+      expect(t.notifyIdle).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS * 3);
+      expect(t.closeStdin).not.toHaveBeenCalled();
+      await t.done();
+    });
+
+    it('a background count parsed during a pending delivery cancels the close before it fires', async () => {
+      const t = await startTask();
+      await t.emit({ result: 'first', backgroundTasks: 0 });
+
+      let release!: () => void;
+      t.sendMessage.mockImplementationOnce(
+        () => new Promise<void>((r) => (release = r)),
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+      void t.parse({ result: 'slow delivery', backgroundTasks: 0 });
+      await vi.advanceTimersByTimeAsync(2_000);
+      void t.parse({ result: 'now waiting', backgroundTasks: 1 });
+
+      // Past the close armed by the first result; delivery still pending.
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS);
+      expect(t.closeStdin).not.toHaveBeenCalled();
+      const idleCalls = t.notifyIdle.mock.calls.length;
+
+      // The stale zero envelope finishing delivery must not re-arm the close.
+      release();
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS * 3);
+      expect(t.closeStdin).not.toHaveBeenCalled();
+      expect(t.notifyIdle).toHaveBeenCalledTimes(idleCalls);
+
+      await t.emit({ result: 'finished', backgroundTasks: 0 });
+      await vi.advanceTimersByTimeAsync(CLOSE_DELAY_MS + 100);
       expect(t.closeStdin).toHaveBeenCalledTimes(1);
       await t.done();
     });

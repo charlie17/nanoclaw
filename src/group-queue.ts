@@ -389,7 +389,7 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     state.idleWaiting = true;
     // No-output watchdog applies only to actively-processing containers.
-    // Clear when entering idle-wait; re-armed by sendMessage's idleWaiting=false.
+    // Clear when entering idle-wait; re-armed by markActive.
     this.clearNoOutputWatchdog(state);
     const lock = state.groupFolder
       ? this.folderLocks.get(state.groupFolder)
@@ -400,6 +400,17 @@ export class GroupQueue {
   }
 
   /**
+   * Undo notifyIdle: the container is processing again, so it is no longer
+   * pre-emptible and the no-output watchdog applies to it.
+   */
+  markActive(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    if (!state.active) return;
+    state.idleWaiting = false;
+    this.armNoOutputWatchdog(state, groupJid);
+  }
+
+  /**
    * Send a follow-up message to the active container via IPC file.
    * Returns true if the message was written, false if no active container.
    */
@@ -407,9 +418,7 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder || state.isTaskContainer)
       return false;
-    state.idleWaiting = false; // Agent is about to receive work, no longer idle
-    // Re-arm the no-output watchdog: container is processing again.
-    this.armNoOutputWatchdog(state, groupJid);
+    this.markActive(groupJid); // Agent is about to receive work
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
